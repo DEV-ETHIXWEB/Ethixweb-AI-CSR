@@ -1,0 +1,602 @@
+// Ethixweb AI CSR Platform — Prisma schema.
+//
+// Source of truth: docs/06-database-schema.md, AS AMENDED BY
+// docs/20-architecture-decision-records.md ADR-013. That doc's prose claimed
+// every tenant-scoped table carries `tenant_id`, but its own ER diagram only
+// showed it on four tables — a real conflict found while writing this file.
+// ADR-013 resolves it: `tenant_id` is denormalized onto every tenant-scoped
+// table below, so every RLS policy is the identical simple predicate
+// (see prisma/migrations/*_rls_policies/migration.sql), never a subquery
+// join through business_id. The application layer always derives tenant_id
+// from the authenticated business context server-side — it is never accepted
+// as separate client input on any create/update DTO.
+//
+// This file also adds two tables the architecture describes in prose/diagrams
+// but never listed in docs/06's ER table (not a new design decision, just
+// closing a schema-completeness gap found during implementation):
+//   - OutboxEvent   — the transactional outbox, docs/01-architecture-overview.md §5
+//   - WebhookEvent  — the inbound-webhook dedup table, docs/01 §7 ("webhook_events
+//                     table, dedup on provider_event_id"), distinct from
+//                     WebhookSubscription/WebhookDelivery which are OUTBOUND.
+//   Both are platform-infrastructure tables processed only by trusted internal
+//   workers (the outbox relay, the webhook receiver), never queried directly
+//   through tenant-scoped application code paths — so tenant_id is nullable
+//   on both and RLS is intentionally not applied to them.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Prisma 7 moved connection URLs out of the schema file and into
+// prisma.config.ts (CLI/Migrate) plus an explicit driver adapter passed to
+// the PrismaClient constructor at runtime (apps/core-api/src/shared/prisma/prisma.service.ts)
+// — see https://pris.ly/d/prisma7-client-config. This datasource block only
+// declares the provider now.
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums — only for fields whose value set is actually decided in the
+// architecture docs. Every other "status"-shaped field is intentionally left
+// as String, matching the ER diagram literally, until a real design decision
+// enumerates it (see docs/20-architecture-decision-records.md for the ADR
+// process new enumerations should go through).
+// ---------------------------------------------------------------------------
+
+/// Tenant lifecycle state machine — docs/15-tenant-lifecycle-billing-and-analytics.md §2
+enum TenantStatus {
+  trial
+  active
+  past_due
+  suspended
+  offboarding
+  archived
+  expired
+}
+
+/// RBAC roles — docs/08-security-observability-reliability.md §1.1
+enum UserRole {
+  owner
+  admin
+  dispatcher
+  viewer
+}
+
+/// Lead status state machine — docs/06-database-schema.md §2
+enum LeadStatus {
+  new
+  notified
+  claimed
+  converted_to_job
+  expired
+  duplicate
+  abandoned
+}
+
+// ---------------------------------------------------------------------------
+// Tenants module (this turn's implementation focus)
+// ---------------------------------------------------------------------------
+
+/// The root of multi-tenancy. Deliberately has NO tenant_id column (it IS the
+/// tenant) and NO RLS policy — access control here is app-layer only (who is
+/// authenticated as belonging to which tenant), per docs/01 §10.
+model Tenant {
+  id        String       @id @default(uuid()) @db.Uuid
+  name      String
+  planTier  String       @default("trial") @map("plan_tier")
+  status    TenantStatus @default(trial)
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  businesses Business[]
+  users      User[]
+  apiKeys    ApiKey[]
+  auditLogs  AuditLog[]
+
+  @@map("tenants")
+}
+
+model Business {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  name      String
+  timezone  String
+  crmType   String   @map("crm_type")
+  status    String   @default("active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant               Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  integrations         Integration[]
+  agentConfigs         AgentConfig[]
+  emergencyRules       EmergencyRule[]
+  businessHours        BusinessHour[]
+  onCallRotations      OnCallRotation[]
+  notificationChannels NotificationChannel[]
+  customers            Customer[]
+  calls                Call[]
+  webhookSubscriptions WebhookSubscription[]
+
+  @@index([tenantId])
+  @@map("businesses")
+}
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  email        String
+  /// bcryptjs hash — never the plaintext password, never logged (docs/08 §1.1).
+  /// Added in migration 00000000000003, after the initial schema/RLS
+  /// migrations — the `auth` module is what first needed credential
+  /// storage; the `tenants` module (which originally modeled this table)
+  /// never touched authentication.
+  passwordHash String    @map("password_hash")
+  role         UserRole
+  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  onCallShifts OnCallShift[]
+  leadClaims   LeadClaim[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("users")
+}
+
+model ApiKey {
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String    @map("tenant_id") @db.Uuid
+  keyHash   String    @map("key_hash")
+  scopes    String    @default("read_only")
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([keyHash])
+  @@index([tenantId])
+  @@map("api_keys")
+}
+
+// ---------------------------------------------------------------------------
+// CRM integration configuration (docs/05-crm-integration.md)
+// ---------------------------------------------------------------------------
+
+model Integration {
+  id                   String    @id @default(uuid()) @db.Uuid
+  tenantId             String    @map("tenant_id") @db.Uuid
+  businessId           String    @map("business_id") @db.Uuid
+  crmType              String    @map("crm_type")
+  authType             String    @map("auth_type")
+  encryptedCredentials Bytes     @map("encrypted_credentials")
+  config               Json      @default("{}")
+  status               String    @default("pending_verification")
+  lastVerifiedAt       DateTime? @map("last_verified_at") @db.Timestamptz(6)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business   Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  crmSyncLog CrmSyncLog[]
+
+  @@index([tenantId])
+  @@index([businessId])
+  @@map("integrations")
+}
+
+// ---------------------------------------------------------------------------
+// Conversation engine configuration (docs/03-conversation-engine.md)
+// ---------------------------------------------------------------------------
+
+model AgentConfig {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  businessId   String   @map("business_id") @db.Uuid
+  version      Int
+  promptConfig Json     @map("prompt_config")
+  voiceVendor  String   @map("voice_vendor")
+  voiceId      String   @map("voice_id")
+  llmModel     String   @map("llm_model")
+  isActive     Boolean  @default(false) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, version])
+  @@index([tenantId])
+  @@index([businessId, isActive])
+  @@map("agent_configs")
+}
+
+// ---------------------------------------------------------------------------
+// Emergency escalation (docs/07-notification-and-emergency.md)
+// ---------------------------------------------------------------------------
+
+model EmergencyRule {
+  id               String  @id @default(uuid()) @db.Uuid
+  tenantId         String  @map("tenant_id") @db.Uuid
+  businessId       String  @map("business_id") @db.Uuid
+  keywordOrPattern String  @map("keyword_or_pattern")
+  severity         String
+  escalationAction String  @map("escalation_action")
+  isActive         Boolean @default(true) @map("is_active")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([businessId])
+  @@map("emergency_rules")
+}
+
+model BusinessHour {
+  id                 String   @id @default(uuid()) @db.Uuid
+  tenantId           String   @map("tenant_id") @db.Uuid
+  businessId         String   @map("business_id") @db.Uuid
+  dayOfWeek          Int      @map("day_of_week")
+  openTime           DateTime @map("open_time") @db.Time(6)
+  closeTime          DateTime @map("close_time") @db.Time(6)
+  holidayCalendarRef String?  @map("holiday_calendar_ref")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([businessId])
+  @@map("business_hours")
+}
+
+model OnCallRotation {
+  id         String @id @default(uuid()) @db.Uuid
+  tenantId   String @map("tenant_id") @db.Uuid
+  businessId String @map("business_id") @db.Uuid
+  name       String
+  strategy   String
+
+  business Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  shifts   OnCallShift[]
+
+  @@index([tenantId])
+  @@index([businessId])
+  @@map("oncall_rotations")
+}
+
+model OnCallShift {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  rotationId    String   @map("rotation_id") @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  startsAt      DateTime @map("starts_at") @db.Timestamptz(6)
+  endsAt        DateTime @map("ends_at") @db.Timestamptz(6)
+  phoneOverride String?  @map("phone_override")
+
+  rotation OnCallRotation @relation(fields: [rotationId], references: [id], onDelete: Cascade)
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([rotationId, startsAt, endsAt])
+  @@map("oncall_shifts")
+}
+
+// ---------------------------------------------------------------------------
+// Notifications (docs/07-notification-and-emergency.md)
+// ---------------------------------------------------------------------------
+
+model NotificationChannel {
+  id            String  @id @default(uuid()) @db.Uuid
+  tenantId      String  @map("tenant_id") @db.Uuid
+  businessId    String  @map("business_id") @db.Uuid
+  channelType   String  @map("channel_type")
+  destination   Json
+  isActive      Boolean @default(true) @map("is_active")
+  priorityOrder Int     @default(0) @map("priority_order")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([businessId])
+  @@map("notification_channels")
+}
+
+model Notification {
+  id           String    @id @default(uuid()) @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  leadId       String    @map("lead_id") @db.Uuid
+  channelType  String    @map("channel_type")
+  destination  String
+  status       String    @default("pending")
+  dedupKey     String    @map("dedup_key")
+  attemptCount Int       @default(0) @map("attempt_count")
+  sentAt       DateTime? @map("sent_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([dedupKey])
+  @@index([tenantId])
+  @@index([status, createdAt])
+  @@map("notifications")
+}
+
+// ---------------------------------------------------------------------------
+// Customers (docs/05-crm-integration.md §4)
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  businessId    String   @map("business_id") @db.Uuid
+  crmCustomerId String?  @map("crm_customer_id")
+  phoneE164     String   @map("phone_e164")
+  name          String
+  email         String?
+  address       Json?
+  crmRawCache   Json?    @map("crm_raw_cache")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  calls    Call[]
+  leads    Lead[]
+
+  @@unique([businessId, phoneE164])
+  @@index([tenantId])
+  @@map("customers")
+}
+
+// ---------------------------------------------------------------------------
+// Calls / voice sessions / transcripts / tool calls (docs/06 §1, docs/08)
+// ---------------------------------------------------------------------------
+
+model Call {
+  id               String    @id @default(uuid()) @db.Uuid
+  tenantId         String    @map("tenant_id") @db.Uuid
+  businessId       String    @map("business_id") @db.Uuid
+  customerId       String?   @map("customer_id") @db.Uuid
+  direction        String
+  fromNumber       String    @map("from_number")
+  toNumber         String    @map("to_number")
+  telephonyCallSid String    @unique @map("telephony_call_sid")
+  status           String
+  endReason        String?   @map("end_reason")
+  durationSeconds  Int?      @map("duration_seconds")
+  recordingUrl     String?   @map("recording_url")
+  startedAt        DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  endedAt          DateTime? @map("ended_at") @db.Timestamptz(6)
+
+  business     Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer     Customer?     @relation(fields: [customerId], references: [id])
+  voiceSession VoiceSession?
+  transcripts  Transcript[]
+  toolCalls    ToolCall[]
+  lead         Lead?
+
+  @@index([tenantId])
+  @@index([businessId, startedAt])
+  @@map("calls")
+}
+
+model VoiceSession {
+  id             String  @id @default(uuid()) @db.Uuid
+  tenantId       String  @map("tenant_id") @db.Uuid
+  callId         String  @unique @map("call_id") @db.Uuid
+  sttProvider    String  @map("stt_provider")
+  ttsProvider    String  @map("tts_provider")
+  llmModel       String  @map("llm_model")
+  totalLlmTokens Int     @default(0) @map("total_llm_tokens")
+  totalCostUsd   Decimal @default(0) @map("total_cost_usd") @db.Decimal(10, 6)
+  latencyMetrics Json    @default("{}") @map("latency_metrics")
+
+  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("voice_sessions")
+}
+
+model Transcript {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  callId     String   @map("call_id") @db.Uuid
+  turnIndex  Int      @map("turn_index")
+  speaker    String
+  text       String
+  confidence Decimal? @db.Decimal(4, 3)
+  offsetMs   Int      @map("offset_ms")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([callId, turnIndex])
+  @@map("transcripts")
+}
+
+model ToolCall {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  callId         String   @map("call_id") @db.Uuid
+  toolName       String   @map("tool_name")
+  input          Json
+  output         Json?
+  status         String
+  idempotencyKey String   @map("idempotency_key")
+  durationMs     Int?     @map("duration_ms")
+  errorMessage   String?  @map("error_message")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@unique([idempotencyKey])
+  @@index([tenantId])
+  @@index([callId])
+  @@map("tool_calls")
+}
+
+// ---------------------------------------------------------------------------
+// Leads (docs/04-ai-tool-architecture.md §3.3, docs/07)
+// ---------------------------------------------------------------------------
+
+model Lead {
+  id                String     @id @default(uuid()) @db.Uuid
+  tenantId          String     @map("tenant_id") @db.Uuid
+  businessId        String     @map("business_id") @db.Uuid
+  customerId        String     @map("customer_id") @db.Uuid
+  callId            String     @unique @map("call_id") @db.Uuid
+  crmLeadId         String?    @map("crm_lead_id")
+  problemSummary    String     @map("problem_summary")
+  priority          String
+  leadType          String     @map("lead_type")
+  status            LeadStatus @default(new)
+  qualificationData Json       @default("{}") @map("qualification_data")
+  createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  customer      Customer       @relation(fields: [customerId], references: [id])
+  call          Call           @relation(fields: [callId], references: [id], onDelete: Cascade)
+  notifications Notification[]
+  claim         LeadClaim?
+
+  @@index([tenantId])
+  @@index([businessId, status, createdAt(sort: Desc)])
+  @@map("leads")
+}
+
+model LeadClaim {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  leadId          String   @unique @map("lead_id") @db.Uuid
+  claimedByUserId String   @map("claimed_by_user_id") @db.Uuid
+  claimMethod     String   @map("claim_method")
+  claimedAt       DateTime @default(now()) @map("claimed_at") @db.Timestamptz(6)
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [claimedByUserId], references: [id])
+
+  @@index([tenantId])
+  @@map("lead_claims")
+}
+
+// ---------------------------------------------------------------------------
+// CRM sync log (docs/05-crm-integration.md, docs/13 crm-integration module)
+// ---------------------------------------------------------------------------
+
+model CrmSyncLog {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  integrationId   String   @map("integration_id") @db.Uuid
+  operation       String
+  entityType      String   @map("entity_type")
+  entityId        String?  @map("entity_id")
+  status          String
+  idempotencyKey  String   @map("idempotency_key")
+  requestPayload  Json?    @map("request_payload")
+  responsePayload Json?    @map("response_payload")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  integration Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@unique([idempotencyKey])
+  @@index([tenantId])
+  @@index([integrationId])
+  @@map("crm_sync_log")
+}
+
+// ---------------------------------------------------------------------------
+// Audit log — append-only (docs/08-security-observability-reliability.md §1.7)
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  actorId      String?  @map("actor_id") @db.Uuid
+  actorType    String   @map("actor_type")
+  action       String
+  resourceType String   @map("resource_type")
+  resourceId   String   @map("resource_id")
+  before       Json?
+  after        Json?
+  ipAddress    String?  @map("ip_address")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Outbound webhooks (docs/06 ER diagram) — tenant subscribing to platform events
+// ---------------------------------------------------------------------------
+
+model WebhookSubscription {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  businessId String   @map("business_id") @db.Uuid
+  targetUrl  String   @map("target_url")
+  secretHash String   @map("secret_hash")
+  eventTypes String[] @map("event_types")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  business   Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+
+  @@index([tenantId])
+  @@index([businessId])
+  @@map("webhook_subscriptions")
+}
+
+model WebhookDelivery {
+  id             String    @id @default(uuid()) @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  subscriptionId String    @map("subscription_id") @db.Uuid
+  eventType      String    @map("event_type")
+  payload        Json
+  responseStatus Int?      @map("response_status")
+  attemptCount   Int       @default(0) @map("attempt_count")
+  status         String    @default("pending")
+  deliveredAt    DateTime? @map("delivered_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  subscription WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([status, createdAt])
+  @@map("webhook_deliveries")
+}
+
+// ---------------------------------------------------------------------------
+// Platform-infrastructure tables — see the file-level comment above for why
+// tenant_id is nullable and RLS is intentionally not applied here.
+// ---------------------------------------------------------------------------
+
+model WebhookEvent {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String?   @map("tenant_id") @db.Uuid
+  provider        String
+  providerEventId String    @map("provider_event_id")
+  payload         Json
+  processedAt     DateTime? @map("processed_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([provider, providerEventId])
+  @@map("webhook_events")
+}
+
+model OutboxEvent {
+  id            String    @id @default(uuid()) @db.Uuid
+  tenantId      String?   @map("tenant_id") @db.Uuid
+  aggregateType String    @map("aggregate_type")
+  aggregateId   String    @map("aggregate_id")
+  eventType     String    @map("event_type")
+  payload       Json
+  status        String    @default("pending")
+  dedupKey      String?   @map("dedup_key")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  dispatchedAt  DateTime? @map("dispatched_at") @db.Timestamptz(6)
+
+  @@unique([dedupKey])
+  @@index([status, createdAt])
+  @@map("outbox_events")
+}

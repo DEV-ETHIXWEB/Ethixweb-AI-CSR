@@ -1,0 +1,11 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# @nestjs/core's postinstall is only an opencollective donation prompt (not a
+# build step producing required artifacts) — its POSIX-shell script fails
+# under the Windows dev shell, so it's disabled rather than left as permanent
+# install-time noise/failure. Moved here from package.json's "pnpm" field,
+# which newer pnpm no longer reads (see https://pnpm.io/settings).
+neverBuiltDependencies:
+  - "@nestjs/core"

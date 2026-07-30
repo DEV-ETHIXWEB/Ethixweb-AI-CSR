@@ -1,0 +1,79 @@
+name: CI
+
+# Phase 0 scope only — lint, typecheck, unit tests, build, and Prisma schema
+# validation. Integration-test (testcontainers), contract-test, AI-eval-gate,
+# and deploy stages from docs/10-deployment-cicd.md §2 are added to this
+# workflow as each of those pieces actually exists — not stubbed in now as
+# jobs that would just report a hollow green check for work that hasn't been
+# written yet.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+  PNPM_VERSION: "9.15.0"
+  # Syntactically-valid but non-functional connection strings — sufficient
+  # for `prisma validate`/`generate` and for the app's own build/typecheck,
+  # none of which open a real connection at this CI stage. Never real
+  # credentials. Two distinct values (not the same URL twice) so a future
+  # regression that points prisma.config.ts back at the app's runtime role
+  # — the exact bug fixed in docs/20 ADR-013/ADR-014's review pass — would
+  # at least be visually inconsistent here, even though this stage can't
+  # catch it functionally (that needs the integration-test stage against a
+  # real Postgres, tracked in docs/13-implementation-backlog.md).
+  MIGRATION_DATABASE_URL: "postgresql://ci_owner:ci@localhost:5432/ci?schema=public"
+  DATABASE_URL: "postgresql://app_runtime:ci@localhost:5432/ci?schema=public"
+  REDIS_URL: "redis://localhost:6379"
+  # CI-only placeholders — real secrets are never committed, per
+  # docs/08-security-observability-reliability.md §1.2. Only
+  # jwt-token.service.spec.ts actually constructs a real JwtTokenService in
+  # this stage (it sets its own values regardless); these exist so that
+  # changes if/when a full app bootstrap is added.
+  JWT_ACCESS_SECRET: "ci-only-access-secret-not-a-real-credential"
+  JWT_REFRESH_SECRET: "ci-only-refresh-secret-not-a-real-credential"
+
+jobs:
+  lint-typecheck-test-build:
+    name: Lint, typecheck, unit test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate Prisma schema
+        run: pnpm --filter @ethixweb/database run validate
+
+      - name: Generate Prisma client
+        run: pnpm --filter @ethixweb/database run generate
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Unit tests
+        run: pnpm run test:unit
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Format check
+        run: pnpm run format:check

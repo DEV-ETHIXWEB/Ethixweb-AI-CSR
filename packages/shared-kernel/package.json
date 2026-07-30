@@ -1,0 +1,24 @@
+{
+  "name": "@ethixweb/shared-kernel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cross-cutting infrastructure shared by every service: retry/circuit-breaker, idempotency, structured logging, outbox contracts (docs/01 §5-6, docs/08, docs/13 shared/kernel module, docs/14 §1)",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {
+    "ioredis": "^5.4.1",
+    "pino": "^9.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "ioredis-mock": "^8.9.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}

@@ -1,0 +1,16 @@
+-- Adds credential storage to `users`, needed by the `auth` module
+-- (docs/13-implementation-backlog.md "auth module" §1-2).
+--
+-- NOT NULL with no default/backfill step is only safe here because no real
+-- environment has ever been deployed yet (infra/terraform has never been
+-- applied — see infra/terraform/README.md) -- there are provably zero
+-- existing rows in every environment this migration will ever run against
+-- for the first time. This is NOT the general pattern to follow going
+-- forward: once a real environment holds actual user rows, adding a
+-- required NOT NULL column needs the expand/contract discipline from
+-- docs/15-tenant-lifecycle-billing-and-analytics.md §5.1 (add nullable,
+-- backfill, then a separate follow-up migration adds the NOT NULL
+-- constraint) -- enforced by the migration-lint CI check described in
+-- docs/10-deployment-cicd.md §4. Recorded here explicitly so this
+-- migration isn't mistaken for precedent once that's no longer true.
+ALTER TABLE "users" ADD COLUMN "password_hash" TEXT NOT NULL;
