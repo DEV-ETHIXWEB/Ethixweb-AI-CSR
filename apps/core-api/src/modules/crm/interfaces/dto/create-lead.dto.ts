@@ -1,13 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { IsIn, IsOptional, IsString, IsUUID, Length, MaxLength } from "class-validator";
 
-export const LEAD_PRIORITIES = ["low", "normal", "high", "emergency"] as const;
-export const LEAD_TYPES = [
-  "service_call",
-  "quote_request",
-  "emergency",
-  "general_inquiry",
-] as const;
+// Matches docs/04-ai-tool-architecture.md §3.3's authoritative `createLead`
+// tool contract exactly — found to be mismatched during the leads module's
+// build-out (this DTO previously used an unrelated ad hoc enum here that
+// never matched the documented tool contract this CRM endpoint exists to
+// serve).
+export const LEAD_PRIORITIES = ["emergency", "urgent", "routine", "estimate"] as const;
+export const LEAD_TYPES = ["residential", "commercial"] as const;
 
 export class CreateLeadDto {
   @ApiProperty()

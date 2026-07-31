@@ -87,12 +87,23 @@ export class ResolveCustomerUseCase {
       }
 
       if (cached) {
-        return this.customerRepository.updateCrmCache(db, command.tenantId, cached.id, {
-          crmCustomerId: crmResult.crmCustomerId,
-          name: crmResult.name,
-          email: crmResult.email,
-          crmRawCache: crmResult.raw,
+        const refreshed = await this.customerRepository.updateCrmCache(
+          db,
+          command.tenantId,
+          cached.id,
+          {
+            crmCustomerId: crmResult.crmCustomerId,
+            name: crmResult.name,
+            email: crmResult.email,
+            crmRawCache: crmResult.raw,
+          },
+        );
+        this.logger.info("customer cache refreshed from CRM (stale TTL)", {
+          tenantId: command.tenantId,
+          businessId: command.businessId,
+          customerId: refreshed.id,
         });
+        return refreshed;
       }
 
       const { customer, created } = await this.cacheUpserter.upsert(db, {

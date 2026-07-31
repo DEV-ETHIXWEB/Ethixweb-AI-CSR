@@ -1,9 +1,11 @@
 import { Module } from "@nestjs/common";
 import { CrmModule } from "../crm/crm.module";
+import { CUSTOMER_LOOKUP_PORT } from "../leads/domain/ports/customer-lookup.port";
 import { OUTBOX_WRITER_FACTORY } from "../../shared/outbox/outbox-writer-factory";
 import { PrismaOutboxWriterFactory } from "../../shared/outbox/prisma-outbox-writer-factory";
 import { CreateCustomerUseCase } from "./application/create-customer.use-case";
 import { CustomerCacheUpserter } from "./application/customer-cache-upserter";
+import { CustomerLookupAdapter } from "./application/customer-lookup.adapter";
 import { GetCustomerUseCase } from "./application/get-customer.use-case";
 import { ListCustomersUseCase } from "./application/list-customers.use-case";
 import { ResolveCustomerUseCase } from "./application/resolve-customer.use-case";
@@ -32,6 +34,9 @@ import { CustomersController } from "./interfaces/customers.controller";
     CreateCustomerUseCase,
     GetCustomerUseCase,
     ListCustomersUseCase,
+    CustomerLookupAdapter,
+    { provide: CUSTOMER_LOOKUP_PORT, useExisting: CustomerLookupAdapter },
   ],
+  exports: [CUSTOMER_LOOKUP_PORT],
 })
 export class CustomersModule {}

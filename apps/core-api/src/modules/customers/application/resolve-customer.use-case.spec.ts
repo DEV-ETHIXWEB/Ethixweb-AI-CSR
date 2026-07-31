@@ -146,4 +146,38 @@ describe("ResolveCustomerUseCase", () => {
 
     expect(result?.id).toBe("customer-1"); // stale data, but still returned
   });
+
+  it(
+    "CONCURRENCY: two simultaneous resolve() calls that BOTH miss the local cache and BOTH " +
+      "find the same NEW CRM customer never write back two rows — the same race-safe upsert " +
+      "path createCustomer uses, exercised through resolve() specifically",
+    async () => {
+      const customerRepository = new FakeCustomerRepository();
+      const crmCustomerSyncPort = new FakeCrmCustomerSyncPort();
+      crmCustomerSyncPort.searchResults.set("+15551234567", {
+        crmCustomerId: "crm-customer-99",
+        name: "Jane Doe",
+        phoneE164: "+15551234567",
+        raw: {},
+      });
+      const outboxWriterFactory = new FakeOutboxWriterFactory();
+      const useCase = buildUseCase(customerRepository, crmCustomerSyncPort, outboxWriterFactory);
+      const command = { tenantId: "tenant-1", businessId: "business-1", phoneE164: "+15551234567" };
+
+      const [first, second] = await Promise.all([
+        useCase.execute(command),
+        useCase.execute(command),
+      ]);
+
+      expect(first?.id).toBe(second?.id);
+      expect(outboxWriterFactory.writtenEvents).toHaveLength(1); // never published twice
+      const { items } = await customerRepository.listByBusiness(
+        undefined as never,
+        "tenant-1",
+        "business-1",
+        { page: 1, pageSize: 10 },
+      );
+      expect(items).toHaveLength(1); // never a duplicate local row
+    },
+  );
 });

@@ -1,4 +1,4 @@
-import { ApiPropertyOptional } from "@nestjs/swagger";
+import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { Type } from "class-transformer";
 import { IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from "class-validator";
 
@@ -7,7 +7,12 @@ const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
 
 export class ListCustomersQueryDto {
-  @ApiPropertyOptional()
+  // Genuinely required (no @IsOptional here) — found during review:
+  // this was previously documented as @ApiPropertyOptional, which would
+  // have told OpenAPI consumers they could omit it, while class-validator
+  // would reject that same omitted request. The Swagger annotation must
+  // match the actual validation behavior, not just look permissive.
+  @ApiProperty()
   @IsUUID()
   businessId!: string;
 

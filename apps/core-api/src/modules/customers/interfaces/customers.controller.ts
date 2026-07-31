@@ -9,7 +9,14 @@ import {
   Post,
   Query,
 } from "@nestjs/common";
-import { ApiBearerAuth, ApiOperation, ApiResponse, ApiSecurity, ApiTags } from "@nestjs/swagger";
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiResponse,
+  ApiSecurity,
+  ApiTags,
+} from "@nestjs/swagger";
 import { CurrentPrincipal } from "../../../shared/auth/current-principal.decorator";
 import { Roles } from "../../../shared/auth/roles.decorator";
 import type { AuthPrincipal } from "../../../shared/auth/request-principal";
@@ -54,6 +61,7 @@ export class CustomersController {
     description: "Match found, or null if none",
     type: CustomerResponseDto,
   })
+  @ApiResponse({ status: 403, description: "Caller's role is not one of owner/admin/dispatcher" })
   @ApiResponse({
     status: 404,
     description: "No active CRM integration configured for this business",
@@ -80,6 +88,7 @@ export class CustomersController {
     description: "Customer created (or the existing row, if this raced with a concurrent create)",
     type: CustomerResponseDto,
   })
+  @ApiResponse({ status: 403, description: "Caller's role is not one of owner/admin/dispatcher" })
   @ApiResponse({
     status: 404,
     description: "No active CRM integration configured for this business",
@@ -100,6 +109,7 @@ export class CustomersController {
   }
 
   @Get()
+  @ApiQuery({ name: "businessId", required: true })
   @ApiOperation({
     summary: "List customers for one of the caller's businesses, paginated and optionally filtered",
   })
@@ -108,6 +118,7 @@ export class CustomersController {
     description: "A page of customers",
     type: PaginatedCustomersResponseDto,
   })
+  @ApiResponse({ status: 403, description: "Caller's role is not one of owner/admin/dispatcher" })
   async list(
     @CurrentPrincipal() principal: AuthPrincipal,
     @Query() query: ListCustomersQueryDto,
@@ -125,6 +136,7 @@ export class CustomersController {
   @Get(":id")
   @ApiOperation({ summary: "Fetch one of the caller's own tenant's customers by id" })
   @ApiResponse({ status: 200, description: "The customer", type: CustomerResponseDto })
+  @ApiResponse({ status: 403, description: "Caller's role is not one of owner/admin/dispatcher" })
   @ApiResponse({ status: 404, description: "No such customer for the caller's tenant" })
   async findOne(
     @CurrentPrincipal() principal: AuthPrincipal,

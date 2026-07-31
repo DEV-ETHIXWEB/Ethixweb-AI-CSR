@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { CircuitBreakerRegistry, RedisIdempotencyStore } from "@ethixweb/shared-kernel";
 import { CRM_CUSTOMER_SYNC_PORT } from "../customers/domain/ports/crm-customer-sync.port";
+import { CRM_LEAD_SYNC_PORT } from "../leads/domain/ports/crm-lead-sync.port";
 import { IDEMPOTENCY_STORE } from "../../shared/idempotency/idempotency-store.token";
 import { OUTBOX_WRITER_FACTORY } from "../../shared/outbox/outbox-writer-factory";
 import { PrismaOutboxWriterFactory } from "../../shared/outbox/prisma-outbox-writer-factory";
@@ -9,6 +10,7 @@ import { WEBHOOK_EVENT_STORE } from "../../shared/webhooks/webhook-event-store";
 import { PrismaWebhookEventStore } from "../../shared/webhooks/prisma-webhook-event.store";
 import { ConnectIntegrationUseCase } from "./application/connect-integration.use-case";
 import { CrmCustomerSyncAdapter } from "./application/crm-customer-sync.adapter";
+import { CrmLeadSyncAdapter } from "./application/crm-lead-sync.adapter";
 import { CreateCustomerUseCase } from "./application/create-customer.use-case";
 import { CreateLeadUseCase } from "./application/create-lead.use-case";
 import { DisconnectIntegrationUseCase } from "./application/disconnect-integration.use-case";
@@ -69,7 +71,9 @@ import { IntegrationsController } from "./interfaces/integrations.controller";
     ReceiveCrmWebhookUseCase,
     CrmCustomerSyncAdapter,
     { provide: CRM_CUSTOMER_SYNC_PORT, useExisting: CrmCustomerSyncAdapter },
+    CrmLeadSyncAdapter,
+    { provide: CRM_LEAD_SYNC_PORT, useExisting: CrmLeadSyncAdapter },
   ],
-  exports: [CRM_CUSTOMER_SYNC_PORT],
+  exports: [CRM_CUSTOMER_SYNC_PORT, CRM_LEAD_SYNC_PORT],
 })
 export class CrmModule {}
