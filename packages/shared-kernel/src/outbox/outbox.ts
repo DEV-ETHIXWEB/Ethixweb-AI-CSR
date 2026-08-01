@@ -7,13 +7,13 @@
  * polling/publish/mark-dispatched/error-handling logic is written once.
  */
 export interface OutboxEventInput {
-  tenantId?: string;
+  tenantId?: string | undefined;
   aggregateType: string;
   aggregateId: string;
   eventType: string;
   payload: unknown;
   /** Enforces "publish this event at most once per business action" — see docs/07 §2. */
-  dedupKey?: string;
+  dedupKey?: string | undefined;
 }
 
 export interface OutboxRecord extends OutboxEventInput {

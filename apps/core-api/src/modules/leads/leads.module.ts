@@ -59,6 +59,13 @@ import { LeadsToolController } from "./interfaces/leads-tool.controller";
     // future webhook-event consumer to invoke once one exists — see its
     // own comment on why nothing calls it automatically yet.
     HandleLeadConvertedFromCrmUseCase,
+    // GetLeadUseCase/ClaimLeadUseCase: the notifications module needs the
+    // former to build a NotificationPayload from a lead.created event, and
+    // the latter to fulfil docs/07 §4's "Reply CLAIM" flow via the exact
+    // same race-safe claim logic the dispatcher-facing REST endpoint uses
+    // — never a second, parallel claim implementation.
+    GetLeadUseCase,
+    ClaimLeadUseCase,
   ],
 })
 export class LeadsModule {}

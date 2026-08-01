@@ -18,6 +18,10 @@ const DEFAULT_BASE_URL = "http://localhost:3000/v1";
 export class HttpCoreApiClient implements CoreApiClientPort {
   private readonly baseUrl = process.env["CORE_API_BASE_URL"] ?? DEFAULT_BASE_URL;
 
+  async get<T>(path: string): Promise<T> {
+    return this.request<T>("GET", path, undefined);
+  }
+
   async post<T>(path: string, body: unknown): Promise<T> {
     return this.request<T>("POST", path, body);
   }
@@ -35,7 +39,7 @@ export class HttpCoreApiClient implements CoreApiClientPort {
     const response = await fetch(`${this.baseUrl}${path}`, {
       method,
       headers: { "Content-Type": "application/json", "X-Api-Key": apiKey },
-      body: JSON.stringify(body),
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
 
     if (!response.ok) {

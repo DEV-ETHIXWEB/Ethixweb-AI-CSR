@@ -38,6 +38,8 @@ import { CustomersToolController } from "./interfaces/customers-tool.controller"
     CustomerLookupAdapter,
     { provide: CUSTOMER_LOOKUP_PORT, useExisting: CustomerLookupAdapter },
   ],
-  exports: [CUSTOMER_LOOKUP_PORT],
+  // GetCustomerUseCase: the notifications module needs it to resolve a
+  // lead's customer name/phone/address for the notification payload.
+  exports: [CUSTOMER_LOOKUP_PORT, GetCustomerUseCase],
 })
 export class CustomersModule {}

@@ -1,0 +1,249 @@
+import type { TenantContextService } from "../../../shared/prisma/tenant-context.service";
+import type { GetCustomerUseCase } from "../../customers/application/get-customer.use-case";
+import type { GetLeadUseCase } from "../../leads/application/get-lead.use-case";
+import type { NotificationChannelSender } from "../domain/ports/notification-channel-sender.port";
+import type { RedisClaimMappingStore } from "../infrastructure/redis-claim-mapping.store";
+import { FakeNotificationChannelRepository } from "./__fakes__/fake-notification-channel-repository";
+import { FakeNotificationRepository } from "./__fakes__/fake-notification-repository";
+import { FakeTenantContextService } from "./__fakes__/fake-tenant-context";
+import { createNoopLogger } from "./__fakes__/fake-logger";
+import { ChannelSenderRegistry } from "./channel-sender-registry";
+import { SendLeadNotificationUseCase } from "./send-lead-notification.use-case";
+
+function fakeLead() {
+  return {
+    execute: jest.fn().mockResolvedValue({
+      id: "lead-1",
+      customerId: "customer-1",
+      priority: "urgent",
+      leadType: "residential",
+      problemSummary: "Water heater leaking",
+    }),
+  } as unknown as GetLeadUseCase;
+}
+
+function fakeCustomer() {
+  return {
+    execute: jest.fn().mockResolvedValue({
+      name: "Jane Doe",
+      phoneE164: "+15551234567",
+      address: { street: "123 Main St", city: "Chicago", state: "IL", zip: "60601" },
+    }),
+  } as unknown as GetCustomerUseCase;
+}
+
+function fakeSender(channelType: string, success = true) {
+  const send = jest.fn().mockResolvedValue({ success });
+  return { send, sender: { channelType, send } as unknown as NotificationChannelSender };
+}
+
+function fakeClaimMappingStore() {
+  const remember = jest.fn();
+  return { remember, store: { remember, resolve: jest.fn() } as unknown as RedisClaimMappingStore };
+}
+
+describe("SendLeadNotificationUseCase", () => {
+  it("fans out to every active channel and records a Notification row per channel", async () => {
+    const channelRepository = new FakeNotificationChannelRepository();
+    channelRepository.seed({
+      id: "chan-1",
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      channelType: "sms",
+      destination: { phone: "+15559999999" },
+      isActive: true,
+      priorityOrder: 0,
+    });
+    channelRepository.seed({
+      id: "chan-2",
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      channelType: "webhook",
+      destination: { webhookUrl: "https://example.com/hook" },
+      isActive: true,
+      priorityOrder: 1,
+    });
+    const notificationRepository = new FakeNotificationRepository();
+    const registry = new ChannelSenderRegistry();
+    const sms = fakeSender("sms");
+    const webhook = fakeSender("webhook");
+    registry.register(sms.sender);
+    registry.register(webhook.sender);
+    const useCase = new SendLeadNotificationUseCase(
+      new FakeTenantContextService() as unknown as TenantContextService,
+      channelRepository,
+      notificationRepository,
+      registry,
+      fakeLead(),
+      fakeCustomer(),
+      fakeClaimMappingStore().store,
+      createNoopLogger(),
+    );
+
+    const outcomes = await useCase.execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      leadId: "lead-1",
+    });
+
+    expect(outcomes).toEqual([
+      { channelType: "sms", success: true },
+      { channelType: "webhook", success: true },
+    ]);
+    expect(sms.send).toHaveBeenCalledTimes(1);
+    expect(webhook.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("one channel failing does not block the others", async () => {
+    const channelRepository = new FakeNotificationChannelRepository();
+    channelRepository.seed({
+      id: "chan-1",
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      channelType: "sms",
+      destination: { phone: "+15559999999" },
+      isActive: true,
+      priorityOrder: 0,
+    });
+    channelRepository.seed({
+      id: "chan-2",
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      channelType: "webhook",
+      destination: { webhookUrl: "https://example.com/hook" },
+      isActive: true,
+      priorityOrder: 1,
+    });
+    const registry = new ChannelSenderRegistry();
+    registry.register(fakeSender("sms", false).sender);
+    registry.register(fakeSender("webhook", true).sender);
+    const useCase = new SendLeadNotificationUseCase(
+      new FakeTenantContextService() as unknown as TenantContextService,
+      channelRepository,
+      new FakeNotificationRepository(),
+      registry,
+      fakeLead(),
+      fakeCustomer(),
+      fakeClaimMappingStore().store,
+      createNoopLogger(),
+    );
+
+    const outcomes = await useCase.execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      leadId: "lead-1",
+    });
+
+    expect(outcomes[0]?.success).toBe(false);
+    expect(outcomes[1]?.success).toBe(true);
+  });
+
+  it("never sends twice for the same lead+channel (dedup key), and reports it as success without re-invoking the sender", async () => {
+    const channelRepository = new FakeNotificationChannelRepository();
+    channelRepository.seed({
+      id: "chan-1",
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      channelType: "sms",
+      destination: { phone: "+15559999999" },
+      isActive: true,
+      priorityOrder: 0,
+    });
+    const registry = new ChannelSenderRegistry();
+    const sms = fakeSender("sms");
+    registry.register(sms.sender);
+    const notificationRepository = new FakeNotificationRepository();
+    // Pre-seed as if this channel already got a successful send for this lead.
+    await notificationRepository.create(undefined as never, {
+      tenantId: "tenant-1",
+      leadId: "lead-1",
+      channelType: "sms",
+      destination: "{}",
+      status: "sent",
+      dedupKey: "notification:lead-1:sms",
+    });
+    const useCase = new SendLeadNotificationUseCase(
+      new FakeTenantContextService() as unknown as TenantContextService,
+      channelRepository,
+      notificationRepository,
+      registry,
+      fakeLead(),
+      fakeCustomer(),
+      fakeClaimMappingStore().store,
+      createNoopLogger(),
+    );
+
+    const outcomes = await useCase.execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      leadId: "lead-1",
+    });
+
+    expect(outcomes).toEqual([{ channelType: "sms", success: true }]);
+    expect(sms.send).not.toHaveBeenCalled();
+  });
+
+  it("remembers a phone->lead claim mapping after a successful SMS send when the channel is tagged with a userId", async () => {
+    const channelRepository = new FakeNotificationChannelRepository();
+    channelRepository.seed({
+      id: "chan-1",
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      channelType: "sms",
+      destination: { phone: "+15559999999", userId: "user-1" },
+      isActive: true,
+      priorityOrder: 0,
+    });
+    const registry = new ChannelSenderRegistry();
+    registry.register(fakeSender("sms", true).sender);
+    const claimMappingStore = fakeClaimMappingStore();
+    const useCase = new SendLeadNotificationUseCase(
+      new FakeTenantContextService() as unknown as TenantContextService,
+      channelRepository,
+      new FakeNotificationRepository(),
+      registry,
+      fakeLead(),
+      fakeCustomer(),
+      claimMappingStore.store,
+      createNoopLogger(),
+    );
+
+    await useCase.execute({ tenantId: "tenant-1", businessId: "business-1", leadId: "lead-1" });
+
+    expect(claimMappingStore.remember).toHaveBeenCalledWith("+15559999999", {
+      tenantId: "tenant-1",
+      leadId: "lead-1",
+      userId: "user-1",
+    });
+  });
+
+  it("does not remember a claim mapping for a channel with no configured userId", async () => {
+    const channelRepository = new FakeNotificationChannelRepository();
+    channelRepository.seed({
+      id: "chan-1",
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      channelType: "sms",
+      destination: { phone: "+15559999999" },
+      isActive: true,
+      priorityOrder: 0,
+    });
+    const registry = new ChannelSenderRegistry();
+    registry.register(fakeSender("sms", true).sender);
+    const claimMappingStore = fakeClaimMappingStore();
+    const useCase = new SendLeadNotificationUseCase(
+      new FakeTenantContextService() as unknown as TenantContextService,
+      channelRepository,
+      new FakeNotificationRepository(),
+      registry,
+      fakeLead(),
+      fakeCustomer(),
+      claimMappingStore.store,
+      createNoopLogger(),
+    );
+
+    await useCase.execute({ tenantId: "tenant-1", businessId: "business-1", leadId: "lead-1" });
+
+    expect(claimMappingStore.remember).not.toHaveBeenCalled();
+  });
+});
