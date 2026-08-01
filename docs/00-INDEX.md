@@ -53,6 +53,9 @@ This blueprint was reviewed a second time specifically to challenge its own assu
 20. [20-architecture-decision-records.md](20-architecture-decision-records.md) — every major decision's alternatives, trade-offs, and revisit triggers. This is a living document — new decisions and reversals are appended here, never edited into old entries.
 21. [21-provider-abstraction-and-vendor-risk.md](21-provider-abstraction-and-vendor-risk.md) — LLM/STT/TTS/voice-runtime provider ports, vendor risk register, 10x/100x scale stress-test, multi-country considerations.
 22. [22-design-review-traceability-matrix.md](22-design-review-traceability-matrix.md) — per-module design-review coverage (why/alternatives/failure-modes/security/performance/scalability/cost/extensibility/testing/ops), gaps closed inline.
+23. [23-phase7-emergency-notification-sequences.md](23-phase7-emergency-notification-sequences.md) — as-built sequence diagrams for emergency escalation, notification fan-out, and the Dead Letter Queue redrive path.
+24. [24-runtime-orchestrator-contract.md](24-runtime-orchestrator-contract.md) — as-built Voice Runtime ↔ Orchestrator HTTP contract (Phase 8), turn-idempotency requirements, and the concrete checklist for wiring up a live runtime.
+25. [25-service-credential-provisioning.md](25-service-credential-provisioning.md) — the exact HTTP call to mint voice-orchestrator's core-api service API key.
 
 ## What's not yet decided (open items requiring your sign-off before Phase 0 repo scaffold)
 

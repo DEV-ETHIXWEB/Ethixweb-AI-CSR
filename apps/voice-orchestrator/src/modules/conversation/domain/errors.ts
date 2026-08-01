@@ -20,3 +20,11 @@ export class ConversationAlreadyExistsError extends ConflictDomainError {
     this.name = "ConversationAlreadyExistsError";
   }
 }
+
+/** Mirrors ToolCallInFlightError's exact role, one layer up: a Voice Runtime retry for a turn still being processed, not a genuinely new turn. */
+export class TurnAlreadyInFlightError extends ConflictDomainError {
+  constructor(public readonly idempotencyKey: string) {
+    super(`An identical turn is already in flight: ${idempotencyKey}`);
+    this.name = "TurnAlreadyInFlightError";
+  }
+}

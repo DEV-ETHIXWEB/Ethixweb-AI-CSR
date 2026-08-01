@@ -4,25 +4,40 @@ import { E164_PATTERN } from "../../../../shared/domain/e164";
 
 /**
  * Twilio's real inbound-SMS webhook natively POSTs
- * `application/x-www-form-urlencoded` (`From`/`To`/`Body` fields) — this
- * endpoint expects the equivalent JSON shape below. Wiring the raw
- * Twilio form-encoded payload to this shape needs a form-body parser
- * (e.g. `@fastify/formbody`) registered ahead of this route, which this
- * build does not add speculatively (no live Twilio number in this
- * environment to verify the wiring against, same "don't guess" discipline
- * as everywhere else in this build) — a real, named, small integration
- * step for whoever connects a live Twilio number, not a hidden gap.
+ * `application/x-www-form-urlencoded` with its own field names (`From`,
+ * `To`, `Body`, `MessageSid`, plus others this handler doesn't need) — this
+ * DTO now matches that shape directly (form body parsing is wired via
+ * `@fastify/formbody`, see main.ts) rather than a hand-shaped JSON
+ * approximation. `@Body()` + the global ValidationPipe's `transform: true`
+ * (main.ts) still validate/coerce it exactly like any other DTO;
+ * `forbidNonWhitelisted` is what makes the extra fields Twilio sends
+ * (`MessageSid`, `AccountSid`, `NumMedia`, ...) get silently stripped
+ * instead of rejecting the request outright — see SmsWebhooksController's
+ * own comment for the small mapping step from these Twilio field names to
+ * HandleSmsClaimReplyUseCase's existing (fromPhone, body) signature, kept
+ * untouched here to avoid cascading this change through that use case.
  */
 export class SmsClaimReplyDto {
   @ApiProperty({
     example: "+15551234567",
     description: "The technician's phone number (Twilio's `From`).",
   })
-  @Matches(E164_PATTERN, { message: "fromPhone must be a valid E.164 phone number" })
-  fromPhone!: string;
+  @Matches(E164_PATTERN, { message: "From must be a valid E.164 phone number" })
+  From!: string;
+
+  @ApiProperty({
+    example: "+15559999999",
+    description: "The platform's Twilio number (Twilio's `To`).",
+  })
+  @Matches(E164_PATTERN, { message: "To must be a valid E.164 phone number" })
+  To!: string;
 
   @ApiProperty({ example: "CLAIM" })
   @IsString()
-  @Length(1, 160)
-  body!: string;
+  @Length(1, 1600)
+  Body!: string;
+
+  @ApiProperty({ example: "SMxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" })
+  @IsString()
+  MessageSid!: string;
 }

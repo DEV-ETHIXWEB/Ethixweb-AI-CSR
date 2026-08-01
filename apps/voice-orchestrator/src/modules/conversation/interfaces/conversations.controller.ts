@@ -14,6 +14,7 @@ import { EndConversationUseCase } from "../application/end-conversation.use-case
 import { GetConversationUseCase } from "../application/get-conversation.use-case";
 import { HandleTurnUseCase } from "../application/handle-turn.use-case";
 import { StartConversationUseCase } from "../application/start-conversation.use-case";
+import { TransitionConversationStateUseCase } from "../application/transition-conversation-state.use-case";
 import {
   ConversationResponseDto,
   TranscriptTurnResponseDto,
@@ -21,6 +22,7 @@ import {
 } from "./dto/conversation-response.dto";
 import { EndConversationDto } from "./dto/end-conversation.dto";
 import { HandleTurnDto } from "./dto/handle-turn.dto";
+import { InterruptConversationDto } from "./dto/interrupt-conversation.dto";
 import { StartConversationDto } from "./dto/start-conversation.dto";
 
 /**
@@ -46,6 +48,7 @@ export class ConversationsController {
     private readonly handleTurn: HandleTurnUseCase,
     private readonly endConversation: EndConversationUseCase,
     private readonly getConversation: GetConversationUseCase,
+    private readonly transitionState: TransitionConversationStateUseCase,
   ) {}
 
   @Post()
@@ -74,7 +77,11 @@ export class ConversationsController {
   })
   @ApiResponse({ status: 200, description: "The agent's response", type: TurnResultResponseDto })
   @ApiResponse({ status: 404, description: "No such conversation for this tenant" })
-  @ApiResponse({ status: 409, description: "Conversation has already ended" })
+  @ApiResponse({
+    status: 409,
+    description:
+      "Conversation has already ended, or an identical turn (same idempotencyKey) is already in flight",
+  })
   async turn(
     @Param("id", ParseUUIDPipe) id: string,
     @Body() dto: HandleTurnDto,
@@ -82,12 +89,46 @@ export class ConversationsController {
     const result = await this.handleTurn.execute({
       tenantId: dto.tenantId,
       conversationId: id,
+      idempotencyKey: dto.idempotencyKey,
       transcript: dto.transcript,
       sttConfidence: dto.sttConfidence,
       offsetMs: dto.offsetMs,
       allowedTools: dto.allowedTools,
     });
     return new TurnResultResponseDto(result);
+  }
+
+  @Post(":id/interrupt")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "Barge-in: the caller started speaking while TTS was still playing",
+  })
+  @ApiResponse({
+    status: 200,
+    description: "Conversation transitioned",
+    type: ConversationResponseDto,
+  })
+  @ApiResponse({ status: 404, description: "No such conversation for this tenant" })
+  @ApiResponse({
+    status: 409,
+    description: "Illegal state transition, or conversation has already ended",
+  })
+  async interrupt(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() dto: InterruptConversationDto,
+  ): Promise<ConversationResponseDto> {
+    // docs/03 §6 + 01 §3 model barge-in as TTS-cancel/LLM-continue with NO
+    // state-machine transition (VAD -.-> LLM Gateway directly) — that's
+    // handleTurn's abort `signal`, already implemented. `silence` is in
+    // fact the OPPOSITE documented case (VAD timeout: caller says
+    // nothing). No state is documented for "caller interrupted", so
+    // targeting `silence` here is an INFERRED default, flagged per this
+    // codebase's convention (see tool-catalog.ts's getServiceAreas
+    // comment) — it's the only state shaped like an interrupted call
+    // needs: reachable from greeting/identifying/qualifying, recovers back
+    // to qualifying.
+    const conversation = await this.transitionState.execute(dto.tenantId, id, "silence");
+    return ConversationResponseDto.fromDomain(conversation);
   }
 
   @Post(":id/end")

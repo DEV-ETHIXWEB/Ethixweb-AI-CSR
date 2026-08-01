@@ -9,6 +9,7 @@ import { HealthModule } from "./modules/health/health.module";
 import { LeadsModule } from "./modules/leads/leads.module";
 import { NotificationsModule } from "./modules/notifications/notifications.module";
 import { TenantsModule } from "./modules/tenants/tenants.module";
+import { validate } from "./shared/config/env.schema";
 import { DomainExceptionFilter } from "./shared/http/domain-exception.filter";
 import { AppLoggerModule } from "./shared/observability/app-logger.module";
 import { PrismaModule } from "./shared/prisma/prisma.module";
@@ -16,7 +17,11 @@ import { RedisModule } from "./shared/redis/redis.module";
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    // `validate` (shared/config/env.schema.ts) fails bootstrap immediately
+    // on a missing/malformed required var — see that file's own comment on
+    // why this exists instead of every secret failing lazily, mid-request,
+    // the first time its owning service is instantiated.
+    ConfigModule.forRoot({ isGlobal: true, validate }),
     AppLoggerModule,
     PrismaModule,
     RedisModule,

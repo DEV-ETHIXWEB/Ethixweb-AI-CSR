@@ -39,6 +39,6 @@ import { RedisToolAuditLogAdapter } from "./infrastructure/redis-tool-audit-log.
     EscalateEmergencyHandler,
     LookupPreviousCallsHandler,
   ],
-  exports: [ExecuteToolUseCase, ToolRegistry],
+  exports: [ExecuteToolUseCase, ToolRegistry, IDEMPOTENCY_STORE],
 })
 export class ToolBrokerModule {}

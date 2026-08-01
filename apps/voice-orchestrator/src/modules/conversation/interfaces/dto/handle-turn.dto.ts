@@ -17,6 +17,14 @@ export class HandleTurnDto {
   @IsUUID()
   tenantId!: string;
 
+  @ApiProperty({
+    description:
+      "Client-generated key, unique per turn attempt — lets a Voice Runtime retry (network blip, at-least-once delivery) without double-invoking the LLM or double-firing tool calls.",
+  })
+  @IsString()
+  @Length(1, 200)
+  idempotencyKey!: string;
+
   @ApiProperty({ description: "The finalized caller utterance from the runtime's STT." })
   @IsString()
   @Length(1, 8000)

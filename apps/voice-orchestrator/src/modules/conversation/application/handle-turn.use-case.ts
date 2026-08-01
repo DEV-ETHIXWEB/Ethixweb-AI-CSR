@@ -1,7 +1,8 @@
 import { Inject, Injectable } from "@nestjs/common";
-import type { StructuredLogger } from "@ethixweb/shared-kernel";
+import type { IdempotencyStore, StructuredLogger } from "@ethixweb/shared-kernel";
 import { APP_LOGGER } from "../../../shared/observability/app-logger.module";
 import { setSpanAttributes } from "../../../shared/observability/tracing";
+import { IDEMPOTENCY_STORE } from "../../../shared/idempotency/idempotency-store.token";
 import {
   AI_PROVIDER_ROUTER,
   type AiCompletionChunk,
@@ -13,7 +14,11 @@ import { ExecuteToolUseCase } from "../../tool-broker/application/execute-tool.u
 import { ToolRegistry } from "../../tool-broker/application/tool-registry";
 import { compressMessages } from "../domain/context-window";
 import type { Conversation, TranscriptTurn } from "../domain/conversation.entity";
-import { ConversationAlreadyEndedError, ConversationNotFoundError } from "../domain/errors";
+import {
+  ConversationAlreadyEndedError,
+  ConversationNotFoundError,
+  TurnAlreadyInFlightError,
+} from "../domain/errors";
 import {
   CONVERSATION_REPOSITORY,
   type ConversationRepository,
@@ -22,6 +27,8 @@ import {
 export interface HandleTurnCommand {
   tenantId: string;
   conversationId: string;
+  /** Client-generated, unique per turn attempt — dedups Voice Runtime retries (docs/04 §2 stage 3's idempotency discipline, applied one layer up). */
+  idempotencyKey: string;
   /** The finalized caller utterance from the Voice Runtime's STT. */
   transcript: string;
   sttConfidence?: number | undefined;
@@ -67,6 +74,7 @@ export class HandleTurnUseCase {
     private readonly executeTool: ExecuteToolUseCase,
     private readonly toolRegistry: ToolRegistry,
     @Inject(EVENT_BUS) private readonly eventBus: EventBusPort,
+    @Inject(IDEMPOTENCY_STORE) private readonly idempotencyStore: IdempotencyStore,
     @Inject(APP_LOGGER) private readonly logger: StructuredLogger,
   ) {}
 
@@ -84,6 +92,36 @@ export class HandleTurnUseCase {
       throw new ConversationAlreadyEndedError(command.conversationId);
     }
 
+    // Turn-level idempotency, one layer above ExecuteToolUseCase's own —
+    // dedups a Voice Runtime retry of the WHOLE turn (network blip,
+    // at-least-once delivery), not just an individual tool call within it.
+    const idempotencyKey = `turn:${command.conversationId}:${command.idempotencyKey}`;
+    const outcome = await this.idempotencyStore.begin<HandleTurnResult>(idempotencyKey, {
+      ttlSeconds: 3600,
+    });
+    if (outcome.status === "completed") {
+      return outcome.result;
+    }
+    if (outcome.status === "in_flight") {
+      throw new TurnAlreadyInFlightError(idempotencyKey);
+    }
+
+    try {
+      const result = await this.runTurn(command, conversation);
+      await this.idempotencyStore.complete(idempotencyKey, result, { ttlSeconds: 3600 });
+      return result;
+    } catch (error) {
+      // Release so a legitimate retry with the SAME key isn't permanently
+      // blocked behind a reservation nothing will ever complete.
+      await this.idempotencyStore.release(idempotencyKey);
+      throw error;
+    }
+  }
+
+  private async runTurn(
+    command: HandleTurnCommand,
+    conversation: Conversation,
+  ): Promise<HandleTurnResult> {
     const startedAt = Date.now();
     const turnIndex = conversation.transcript.length;
     await this.eventBus.publish({
