@@ -15,6 +15,7 @@ import { LEAD_REPOSITORY } from "./domain/ports/lead-repository.port";
 import { PrismaLeadClaimRepository } from "./infrastructure/prisma-lead-claim.repository";
 import { PrismaLeadRepository } from "./infrastructure/prisma-lead.repository";
 import { LeadsController } from "./interfaces/leads.controller";
+import { LeadsToolController } from "./interfaces/leads-tool.controller";
 
 /**
  * `CrmModule` exports `CRM_LEAD_SYNC_PORT`, `CustomersModule` exports
@@ -28,7 +29,7 @@ import { LeadsController } from "./interfaces/leads.controller";
  */
 @Module({
   imports: [CrmModule, CustomersModule],
-  controllers: [LeadsController],
+  controllers: [LeadsController, LeadsToolController],
   providers: [
     { provide: LEAD_REPOSITORY, useClass: PrismaLeadRepository },
     { provide: LEAD_CLAIM_REPOSITORY, useClass: PrismaLeadClaimRepository },

@@ -12,6 +12,7 @@ import { ResolveCustomerUseCase } from "./application/resolve-customer.use-case"
 import { CUSTOMER_REPOSITORY } from "./domain/ports/customer-repository.port";
 import { PrismaCustomerRepository } from "./infrastructure/prisma-customer.repository";
 import { CustomersController } from "./interfaces/customers.controller";
+import { CustomersToolController } from "./interfaces/customers-tool.controller";
 
 @Module({
   // CrmModule exports CRM_CUSTOMER_SYNC_PORT — the only thing this module
@@ -19,7 +20,7 @@ import { CustomersController } from "./interfaces/customers.controller";
   // roadmap (Customer Management depends on CRM Integration, never the
   // reverse).
   imports: [CrmModule],
-  controllers: [CustomersController],
+  controllers: [CustomersController, CustomersToolController],
   providers: [
     { provide: CUSTOMER_REPOSITORY, useClass: PrismaCustomerRepository },
     // PrismaOutboxWriterFactory is already provided by CrmModule under this
