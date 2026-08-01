@@ -1,5 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { withRetry } from "@ethixweb/shared-kernel";
+import { RetryExhaustedError, withRetry } from "@ethixweb/shared-kernel";
 import type { StructuredLogger } from "@ethixweb/shared-kernel";
 import { APP_LOGGER } from "../../../shared/observability/app-logger.module";
 import { setSpanAttributes } from "../../../shared/observability/tracing";
@@ -7,7 +7,7 @@ import { TenantContextService } from "../../../shared/prisma/tenant-context.serv
 import { GetCustomerUseCase } from "../../customers/application/get-customer.use-case";
 import { GetLeadUseCase } from "../../leads/application/get-lead.use-case";
 import type { NotificationChannel } from "../domain/notification.entity";
-import type { NotificationPayload } from "../domain/notification-payload";
+import { buildNotificationPayload, type NotificationPayload } from "../domain/notification-payload";
 import {
   NOTIFICATION_CHANNEL_REPOSITORY,
   type NotificationChannelRepository,
@@ -32,15 +32,23 @@ export interface ChannelSendOutcome {
   error?: string | undefined;
 }
 
+const MAX_SEND_ATTEMPTS = 3;
+
+/** A sender reporting `{success: false}` — thrown so shared-kernel's `withRetry` actually retries it, since `withRetry` only reacts to a REJECTED promise, and every sender in this build resolves rather than rejects even on failure (see each sender's own try/catch). Caught internally by `sendToChannel`; never escapes this file. */
+class SenderReportedFailureError extends Error {}
+
 /**
  * docs/07 §2's notification pipeline, from the `lead.created` outbox
  * event through to per-channel delivery. Per-channel failure never blocks
  * the others (docs/07 §2: "notifications table row per channel, status
  * tracked independently") — one bad Slack webhook URL doesn't stop the
- * SMS from going out. Each channel gets up to 3 attempts via
- * shared-kernel's `withRetry` (real resilience without needing the
- * documented separate BullMQ worker service — see OutboxRelayPoller's own
- * comment on why that's Phase 1-scoped down to an in-process poller here).
+ * SMS from going out. Each channel gets up to 3 real attempts (a sender
+ * failure is promoted to a thrown error specifically so shared-kernel's
+ * `withRetry` engages — see SenderReportedFailureError's own comment).
+ * Once the retry budget is exhausted, the notification moves to the Dead
+ * Letter Queue (`status: "dead_letter"`) rather than silently staying
+ * `failed` forever — visible via `GET /notifications/dead-letter` and
+ * redrivable via `POST /notifications/:id/requeue` (RequeueNotificationUseCase).
  */
 @Injectable()
 export class SendLeadNotificationUseCase {
@@ -70,17 +78,7 @@ export class SendLeadNotificationUseCase {
       ),
     ]);
     const customer = await this.getCustomerUseCase.execute(command.tenantId, lead.customerId);
-
-    const payload: NotificationPayload = {
-      leadId: lead.id,
-      priority: lead.priority,
-      leadType: lead.leadType,
-      customerName: customer.name,
-      customerPhone: customer.phoneE164,
-      address: formatAddress(customer.address),
-      problemSummary: lead.problemSummary,
-      transcriptLink: null,
-    };
+    const payload = buildNotificationPayload(lead, customer);
 
     const outcomes: ChannelSendOutcome[] = [];
     for (const channel of channels) {
@@ -124,14 +122,25 @@ export class SendLeadNotificationUseCase {
       }
 
       try {
-        const result = await withRetry(() => sender.send(channel.destination, payload), {
-          maxAttempts: 3,
-          isRetryable: () => true,
-        });
-        if (!result.success) {
-          await this.notificationRepository.markFailed(db, tenantId, notification.id);
-          return { channelType: channel.channelType, success: false, error: result.error };
-        }
+        await withRetry(
+          async () => {
+            const attempt = await sender.send(channel.destination, payload);
+            if (!attempt.success) {
+              throw new SenderReportedFailureError(attempt.error ?? "sender reported failure");
+            }
+            return attempt;
+          },
+          {
+            maxAttempts: MAX_SEND_ATTEMPTS,
+            isRetryable: () => true,
+            // A short backoff — unlike CRM writes, a transient SMS/webhook
+            // failure doesn't need multi-second gaps between attempts, and
+            // a live call may already be waiting on the outcome.
+            baseDelayMs: 100,
+            maxDelayMs: 500,
+          },
+        );
+
         await this.notificationRepository.markSent(db, tenantId, notification.id);
         if (
           channel.channelType === "sms" &&
@@ -146,20 +155,24 @@ export class SendLeadNotificationUseCase {
         }
         return { channelType: channel.channelType, success: true };
       } catch (error) {
-        await this.notificationRepository.markFailed(db, tenantId, notification.id);
-        const reason = error instanceof Error ? error.message : String(error);
+        const reason = extractReason(error);
+        await this.notificationRepository.markDeadLetter(db, tenantId, notification.id);
+        this.logger.warn("notification exhausted its retry budget — moved to dead letter", {
+          tenantId,
+          leadId: payload.leadId,
+          channelType: channel.channelType,
+          reason,
+        });
         return { channelType: channel.channelType, success: false, error: reason };
       }
     });
   }
 }
 
-function formatAddress(address: Record<string, unknown> | null): string {
-  if (!address) {
-    return "address on file";
+/** Unwraps RetryExhaustedError's `lastError` so the reported reason is the sender's actual error, not the generic "Retry exhausted after N attempt(s)" wrapper message. */
+function extractReason(error: unknown): string {
+  if (error instanceof RetryExhaustedError) {
+    return extractReason(error.lastError);
   }
-  const parts = [address["street"], address["city"], address["state"], address["zip"]].filter(
-    (part): part is string => typeof part === "string" && part.length > 0,
-  );
-  return parts.length > 0 ? parts.join(", ") : "address on file";
+  return error instanceof Error ? error.message : String(error);
 }

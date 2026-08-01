@@ -2,7 +2,8 @@
 export const NOTIFICATION_CHANNEL_TYPES = ["sms", "email", "slack", "teams", "webhook"] as const;
 export type NotificationChannelType = (typeof NOTIFICATION_CHANNEL_TYPES)[number];
 
-export const NOTIFICATION_STATUSES = ["pending", "sent", "failed"] as const;
+/** `dead_letter`: retry budget exhausted (see SendLeadNotificationUseCase) — visible via GET /notifications/dead-letter and redrivable via POST /notifications/:id/requeue, the actual Dead Letter Queue mechanics rather than an in-memory queue this Postgres-backed schema has no table for. */
+export const NOTIFICATION_STATUSES = ["pending", "sent", "failed", "dead_letter"] as const;
 export type NotificationStatus = (typeof NOTIFICATION_STATUSES)[number];
 
 /**

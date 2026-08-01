@@ -4,6 +4,8 @@ import type { Notification } from "../domain/notification.entity";
 import type {
   CreateNotificationInput,
   Db,
+  ListDeadLetterOptions,
+  ListNotificationsResult,
   NotificationRepository,
 } from "../domain/ports/notification-repository.port";
 
@@ -41,6 +43,10 @@ export class PrismaNotificationRepository implements NotificationRepository {
     }
   }
 
+  async findById(db: Db, tenantId: string, id: string): Promise<Notification | null> {
+    return db.notification.findFirst({ where: { id, tenantId } });
+  }
+
   async findByDedupKey(db: Db, tenantId: string, dedupKey: string): Promise<Notification | null> {
     return db.notification.findFirst({ where: { tenantId, dedupKey } });
   }
@@ -59,6 +65,39 @@ export class PrismaNotificationRepository implements NotificationRepository {
       data: { status: "failed", attemptCount: { increment: 1 } },
     });
     return this.mustFind(db, tenantId, id);
+  }
+
+  async markDeadLetter(db: Db, tenantId: string, id: string): Promise<Notification> {
+    await db.notification.updateMany({
+      where: { id, tenantId },
+      data: { status: "dead_letter", attemptCount: { increment: 1 } },
+    });
+    return this.mustFind(db, tenantId, id);
+  }
+
+  async listByLead(db: Db, tenantId: string, leadId: string): Promise<Notification[]> {
+    return db.notification.findMany({
+      where: { tenantId, leadId },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
+  async listDeadLetter(
+    db: Db,
+    tenantId: string,
+    options: ListDeadLetterOptions,
+  ): Promise<ListNotificationsResult> {
+    const where: Prisma.NotificationWhereInput = { tenantId, status: "dead_letter" };
+    const [items, total] = await Promise.all([
+      db.notification.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip: (options.page - 1) * options.pageSize,
+        take: options.pageSize,
+      }),
+      db.notification.count({ where }),
+    ]);
+    return { items, total };
   }
 
   private async mustFind(db: Db, tenantId: string, id: string): Promise<Notification> {

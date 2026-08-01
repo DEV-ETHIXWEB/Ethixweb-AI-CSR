@@ -4,6 +4,7 @@ import { LeadsModule } from "../leads/leads.module";
 import { ChannelSenderRegistrar } from "./application/channel-sender-registrar";
 import { ChannelSenderRegistry } from "./application/channel-sender-registry";
 import { HandleSmsClaimReplyUseCase } from "./application/handle-sms-claim-reply.use-case";
+import { RequeueNotificationUseCase } from "./application/requeue-notification.use-case";
 import { SendLeadNotificationUseCase } from "./application/send-lead-notification.use-case";
 import { NOTIFICATION_CHANNEL_REPOSITORY } from "./domain/ports/notification-channel-repository.port";
 import { NOTIFICATION_REPOSITORY } from "./domain/ports/notification-repository.port";
@@ -20,6 +21,7 @@ import {
   TeamsWebhookSender,
 } from "./infrastructure/senders/webhook-chat.sender";
 import { NotificationChannelsController } from "./interfaces/notification-channels.controller";
+import { NotificationsController } from "./interfaces/notifications.controller";
 import { SmsWebhooksController } from "./interfaces/sms-webhooks.controller";
 
 /**
@@ -30,7 +32,7 @@ import { SmsWebhooksController } from "./interfaces/sms-webhooks.controller";
  */
 @Module({
   imports: [LeadsModule, CustomersModule],
-  controllers: [NotificationChannelsController, SmsWebhooksController],
+  controllers: [NotificationChannelsController, NotificationsController, SmsWebhooksController],
   providers: [
     { provide: NOTIFICATION_CHANNEL_REPOSITORY, useClass: PrismaNotificationChannelRepository },
     { provide: NOTIFICATION_REPOSITORY, useClass: PrismaNotificationRepository },
@@ -44,6 +46,7 @@ import { SmsWebhooksController } from "./interfaces/sms-webhooks.controller";
     RedisClaimMappingStore,
     PrismaOutboxReader,
     SendLeadNotificationUseCase,
+    RequeueNotificationUseCase,
     HandleSmsClaimReplyUseCase,
     OutboxRelayPoller,
   ],

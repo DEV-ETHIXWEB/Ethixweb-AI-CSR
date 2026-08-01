@@ -33,7 +33,20 @@ function fakeCustomer() {
 }
 
 function fakeSender(channelType: string, success = true) {
-  const send = jest.fn().mockResolvedValue({ success });
+  const send = jest.fn().mockResolvedValue({ success, error: success ? undefined : "boom" });
+  return { send, sender: { channelType, send } as unknown as NotificationChannelSender };
+}
+
+/** A sender that fails `failuresBeforeSuccess` times, then succeeds — for exercising the real retry path. */
+function fakeFlakySender(channelType: string, failuresBeforeSuccess: number) {
+  let calls = 0;
+  const send = jest.fn().mockImplementation(() => {
+    calls += 1;
+    if (calls <= failuresBeforeSuccess) {
+      return Promise.resolve({ success: false, error: `transient failure #${calls}` });
+    }
+    return Promise.resolve({ success: true });
+  });
   return { send, sender: { channelType, send } as unknown as NotificationChannelSender };
 }
 
@@ -246,4 +259,81 @@ describe("SendLeadNotificationUseCase", () => {
 
     expect(claimMappingStore.remember).not.toHaveBeenCalled();
   });
+
+  it("actually retries a sender that reports failure, and succeeds once it recovers within the retry budget", async () => {
+    const channelRepository = new FakeNotificationChannelRepository();
+    channelRepository.seed({
+      id: "chan-1",
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      channelType: "sms",
+      destination: { phone: "+15559999999" },
+      isActive: true,
+      priorityOrder: 0,
+    });
+    const registry = new ChannelSenderRegistry();
+    const flaky = fakeFlakySender("sms", 2); // fails twice, succeeds on the 3rd (last allowed) attempt
+    registry.register(flaky.sender);
+    const useCase = new SendLeadNotificationUseCase(
+      new FakeTenantContextService() as unknown as TenantContextService,
+      channelRepository,
+      new FakeNotificationRepository(),
+      registry,
+      fakeLead(),
+      fakeCustomer(),
+      fakeClaimMappingStore().store,
+      createNoopLogger(),
+    );
+
+    const outcomes = await useCase.execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      leadId: "lead-1",
+    });
+
+    expect(outcomes).toEqual([{ channelType: "sms", success: true }]);
+    expect(flaky.send).toHaveBeenCalledTimes(3);
+  }, 10000);
+
+  it("moves a notification to dead_letter once the retry budget is exhausted, surfacing the real failure reason", async () => {
+    const channelRepository = new FakeNotificationChannelRepository();
+    channelRepository.seed({
+      id: "chan-1",
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      channelType: "sms",
+      destination: { phone: "+15559999999" },
+      isActive: true,
+      priorityOrder: 0,
+    });
+    const registry = new ChannelSenderRegistry();
+    const failing = fakeSender("sms", false);
+    registry.register(failing.sender);
+    const notificationRepository = new FakeNotificationRepository();
+    const useCase = new SendLeadNotificationUseCase(
+      new FakeTenantContextService() as unknown as TenantContextService,
+      channelRepository,
+      notificationRepository,
+      registry,
+      fakeLead(),
+      fakeCustomer(),
+      fakeClaimMappingStore().store,
+      createNoopLogger(),
+    );
+
+    const outcomes = await useCase.execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      leadId: "lead-1",
+    });
+
+    expect(outcomes).toEqual([{ channelType: "sms", success: false, error: "boom" }]);
+    expect(failing.send).toHaveBeenCalledTimes(3);
+    const history = await notificationRepository.listByLead(
+      undefined as never,
+      "tenant-1",
+      "lead-1",
+    );
+    expect(history[0]?.status).toBe("dead_letter");
+  }, 10000);
 });
