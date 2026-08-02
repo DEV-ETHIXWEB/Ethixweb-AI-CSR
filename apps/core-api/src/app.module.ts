@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { APP_FILTER } from "@nestjs/core";
 import { ConfigModule } from "@nestjs/config";
 import { AuthModule } from "./modules/auth/auth.module";
+import { CallsModule } from "./modules/calls/calls.module";
 import { CrmModule } from "./modules/crm/crm.module";
 import { CustomersModule } from "./modules/customers/customers.module";
 import { EmergencyRulesModule } from "./modules/emergency-rules/emergency-rules.module";
@@ -34,6 +35,7 @@ import { RedisModule } from "./shared/redis/redis.module";
     TenantsModule,
     CrmModule,
     CustomersModule,
+    CallsModule,
     LeadsModule,
     EmergencyRulesModule,
     NotificationsModule,

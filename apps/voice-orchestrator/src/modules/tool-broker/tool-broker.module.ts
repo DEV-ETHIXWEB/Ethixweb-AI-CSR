@@ -39,6 +39,12 @@ import { RedisToolAuditLogAdapter } from "./infrastructure/redis-tool-audit-log.
     EscalateEmergencyHandler,
     LookupPreviousCallsHandler,
   ],
-  exports: [ExecuteToolUseCase, ToolRegistry, IDEMPOTENCY_STORE],
+  // CORE_API_CLIENT exported for the identical reason IDEMPOTENCY_STORE
+  // already is (see that export's own history) — the production-blocker
+  // fix now needs ConversationModule's StartConversationUseCase/
+  // EndConversationUseCase to reach core-api's new calls module directly,
+  // reusing this exact HttpCoreApiClient/CoreApiClientPort rather than
+  // duplicating a second HTTP client.
+  exports: [ExecuteToolUseCase, ToolRegistry, IDEMPOTENCY_STORE, CORE_API_CLIENT],
 })
 export class ToolBrokerModule {}

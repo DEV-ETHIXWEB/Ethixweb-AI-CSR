@@ -382,7 +382,11 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.json().toolCallsExecuted).toEqual(["createLead"]);
-      expect(sim.coreApiClient.postCalls[0]?.path).toBe("/internal/leads");
+      // postCalls[0] is StartConversationUseCase's own POST /internal/calls
+      // (the production-blocker fix's ordering guarantee, fired during the
+      // shared startConversation() helper above) — the createLead tool
+      // call is the NEXT one on this shared fake client.
+      expect(sim.coreApiClient.postCalls[1]?.path).toBe("/internal/leads");
 
       const fetched = await sim.inject({
         method: "GET",
@@ -424,7 +428,11 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(sim.coreApiClient.postCalls).toHaveLength(0); // never reached the handler
+      // Exactly 1 (StartConversationUseCase's own POST /internal/calls from
+      // the startConversation() helper above) — the rejected tool call
+      // itself never reached the handler, so no SECOND post call happens.
+      expect(sim.coreApiClient.postCalls).toHaveLength(1);
+      expect(sim.coreApiClient.postCalls[0]?.path).toBe("/internal/calls");
       expect(res.json().responseText).toContain("recovered gracefully");
     });
 

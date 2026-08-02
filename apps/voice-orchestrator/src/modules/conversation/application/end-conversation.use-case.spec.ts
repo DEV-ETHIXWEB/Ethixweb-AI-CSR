@@ -1,3 +1,4 @@
+import { FakeCoreApiClient } from "../../tool-broker/application/__fakes__/fake-core-api-client";
 import type { Conversation } from "../domain/conversation.entity";
 import { ConversationNotFoundError } from "../domain/errors";
 import { FakeConversationRepository } from "./__fakes__/fake-conversation-repository";
@@ -24,12 +25,22 @@ function baseConversation(overrides: Partial<Conversation> = {}): Conversation {
   };
 }
 
+function buildUseCase(coreApiClient = new FakeCoreApiClient()) {
+  const repository = new FakeConversationRepository();
+  const eventBus = new FakeEventBus();
+  const useCase = new EndConversationUseCase(
+    repository,
+    eventBus,
+    coreApiClient,
+    createNoopLogger(),
+  );
+  return { useCase, repository, eventBus, coreApiClient };
+}
+
 describe("EndConversationUseCase", () => {
   it("marks the conversation ended, sets endReason, and publishes conversation.ended", async () => {
-    const repository = new FakeConversationRepository();
+    const { useCase, repository, eventBus } = buildUseCase();
     repository.seed(baseConversation());
-    const eventBus = new FakeEventBus();
-    const useCase = new EndConversationUseCase(repository, eventBus, createNoopLogger());
 
     const result = await useCase.execute({
       tenantId: "tenant-1",
@@ -43,12 +54,10 @@ describe("EndConversationUseCase", () => {
   });
 
   it("is idempotent — ending an already-ended conversation returns it unchanged, no duplicate event", async () => {
-    const repository = new FakeConversationRepository();
+    const { useCase, repository, eventBus } = buildUseCase();
     repository.seed(
       baseConversation({ endedAt: "2026-01-01T00:00:00.000Z", endReason: "first_reason" }),
     );
-    const eventBus = new FakeEventBus();
-    const useCase = new EndConversationUseCase(repository, eventBus, createNoopLogger());
 
     const result = await useCase.execute({
       tenantId: "tenant-1",
@@ -61,14 +70,70 @@ describe("EndConversationUseCase", () => {
   });
 
   it("throws ConversationNotFoundError for an unknown conversation", async () => {
-    const useCase = new EndConversationUseCase(
-      new FakeConversationRepository(),
-      new FakeEventBus(),
-      createNoopLogger(),
-    );
+    const { useCase } = buildUseCase();
 
     await expect(
       useCase.execute({ tenantId: "tenant-1", conversationId: "missing", endReason: "x" }),
     ).rejects.toThrow(ConversationNotFoundError);
+  });
+
+  describe("production-blocker fix: ending the corresponding Call row (best-effort)", () => {
+    it("calls POST /internal/calls/by-telephony-sid/:callId/end with status=abandoned when no lead was created", async () => {
+      const { useCase, repository, coreApiClient } = buildUseCase();
+      repository.seed(baseConversation({ leadId: null }));
+
+      await useCase.execute({
+        tenantId: "tenant-1",
+        conversationId: "conv-1",
+        endReason: "runtime_disconnected",
+      });
+
+      expect(coreApiClient.postCalls).toHaveLength(1);
+      expect(coreApiClient.postCalls[0]?.path).toBe("/internal/calls/by-telephony-sid/call-1/end");
+      expect(coreApiClient.postCalls[0]?.body).toMatchObject({ status: "abandoned" });
+    });
+
+    it("calls with status=completed when a lead WAS created on this call", async () => {
+      const { useCase, repository, coreApiClient } = buildUseCase();
+      repository.seed(baseConversation({ leadId: "lead-1" }));
+
+      await useCase.execute({
+        tenantId: "tenant-1",
+        conversationId: "conv-1",
+        endReason: "caller_hangup",
+      });
+
+      expect(coreApiClient.postCalls[0]?.body).toMatchObject({ status: "completed" });
+    });
+
+    it("BEST-EFFORT: a failure to end the Call row does NOT prevent the conversation from ending", async () => {
+      const coreApiClient = new FakeCoreApiClient();
+      coreApiClient.failWith = new Error("core-api unreachable");
+      const { useCase, repository } = buildUseCase(coreApiClient);
+      repository.seed(baseConversation());
+
+      const result = await useCase.execute({
+        tenantId: "tenant-1",
+        conversationId: "conv-1",
+        endReason: "caller_hangup",
+      });
+
+      expect(result.state).toBe("ended");
+    });
+
+    it("an already-ended conversation (idempotent replay) does NOT call core-api a second time", async () => {
+      const { useCase, repository, coreApiClient } = buildUseCase();
+      repository.seed(
+        baseConversation({ endedAt: "2026-01-01T00:00:00.000Z", endReason: "first_reason" }),
+      );
+
+      await useCase.execute({
+        tenantId: "tenant-1",
+        conversationId: "conv-1",
+        endReason: "second_reason",
+      });
+
+      expect(coreApiClient.postCalls).toHaveLength(0);
+    });
   });
 });

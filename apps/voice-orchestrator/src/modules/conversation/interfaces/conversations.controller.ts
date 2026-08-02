@@ -64,6 +64,7 @@ export class ConversationsController {
       businessId: dto.businessId,
       callId: dto.callId,
       callerAni: dto.callerAni,
+      toNumber: dto.toNumber,
       timezone: dto.timezone,
     });
     return ConversationResponseDto.fromDomain(conversation);

@@ -1,5 +1,5 @@
 import type { TenantContextService } from "../../../shared/prisma/tenant-context.service";
-import { CustomerNotFoundForLeadError } from "../domain/errors";
+import { CallNotFoundForLeadError, CustomerNotFoundForLeadError } from "../domain/errors";
 import { createNoopLogger } from "./__fakes__/fake-logger";
 import { FakeCrmLeadSyncPort } from "./__fakes__/fake-crm-lead-sync-port";
 import { FakeCustomerLookupPort } from "./__fakes__/fake-customer-lookup-port";
@@ -87,6 +87,24 @@ describe("CreateLeadUseCase", () => {
 
     await expect(useCase.execute(baseCommand())).rejects.toThrow(CustomerNotFoundForLeadError);
   });
+
+  it(
+    "propagates CallNotFoundForLeadError unchanged (not swallowed/misclassified as the call_id " +
+      "race) when the repository reports the callId has no matching Call row — proves the " +
+      "production-blocker fix's error contract; the FK violation itself can only be proven " +
+      "against real Postgres (see test/integration/lead-call-fk-integrity.integration-spec.ts)",
+    async () => {
+      const leadRepository = new FakeLeadRepository();
+      leadRepository.create = jest
+        .fn()
+        .mockRejectedValue(new CallNotFoundForLeadError("orphan-call-id"));
+      const customerLookupPort = new FakeCustomerLookupPort();
+      seedCustomer(customerLookupPort);
+      const useCase = buildUseCase(leadRepository, customerLookupPort);
+
+      await expect(useCase.execute(baseCommand())).rejects.toThrow(CallNotFoundForLeadError);
+    },
+  );
 
   it("never blocks lead creation when the CRM sync fails — records a local-only lead with crmLeadId null", async () => {
     const customerLookupPort = new FakeCustomerLookupPort();

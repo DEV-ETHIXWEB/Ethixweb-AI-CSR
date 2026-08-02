@@ -1,6 +1,10 @@
 import { Injectable } from "@nestjs/common";
 import { Prisma, type LeadStatus } from "@ethixweb/database";
-import { ConcurrentLeadModificationError, LeadCallIdAlreadyExistsError } from "../domain/errors";
+import {
+  CallNotFoundForLeadError,
+  ConcurrentLeadModificationError,
+  LeadCallIdAlreadyExistsError,
+} from "../domain/errors";
 import type { Lead } from "../domain/lead.entity";
 import type {
   CreateLeadInput,
@@ -12,6 +16,7 @@ import type {
 } from "../domain/ports/lead-repository.port";
 
 const UNIQUE_CONSTRAINT_VIOLATION = "P2002";
+const FOREIGN_KEY_VIOLATION = "P2003";
 
 type LeadRow = {
   id: string;
@@ -66,11 +71,13 @@ export class PrismaLeadRepository implements LeadRepository {
       });
       return toEntity(row);
     } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === UNIQUE_CONSTRAINT_VIOLATION
-      ) {
-        throw new LeadCallIdAlreadyExistsError(input.callId);
+      if (error instanceof Prisma.PrismaClientKnownRequestError) {
+        if (error.code === UNIQUE_CONSTRAINT_VIOLATION) {
+          throw new LeadCallIdAlreadyExistsError(input.callId);
+        }
+        if (error.code === FOREIGN_KEY_VIOLATION) {
+          throw new CallNotFoundForLeadError(input.callId);
+        }
       }
       throw error;
     }

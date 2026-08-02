@@ -19,6 +19,26 @@ export class CustomerNotFoundForLeadError extends NotFoundDomainError {
 }
 
 /**
+ * `Lead.callId` carries a real database foreign key to `calls.id`
+ * (production-blocker fix, see calls module) — this surfaces the FK
+ * violation (Prisma P2003) as a clear, actionable domain error instead of
+ * a raw 500 if a caller ever races createLead ahead of `POST
+ * /internal/calls`, or supplies a callId that was never actually started.
+ * The documented ordering guarantee (Voice Runtime -> Voice Orchestrator
+ * calls `POST /internal/calls` before creating its own Conversation) makes
+ * this the exceptional path, not the common one — but a client bug/race
+ * must still fail clearly, not crash unrecognizably.
+ */
+export class CallNotFoundForLeadError extends NotFoundDomainError {
+  constructor(public readonly callId: string) {
+    super(
+      `No call found for callId ${callId} — start the call (POST /internal/calls) before creating a lead against it.`,
+    );
+    this.name = "CallNotFoundForLeadError";
+  }
+}
+
+/**
  * docs/04-ai-tool-architecture.md §3.4: "Only callable within the same
  * call_id that created the lead" — updateLead's own authorization rule,
  * distinct from RBAC (a dispatcher role check answers "can this caller

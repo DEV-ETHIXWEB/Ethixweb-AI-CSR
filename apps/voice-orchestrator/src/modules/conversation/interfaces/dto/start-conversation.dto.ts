@@ -20,6 +20,15 @@ export class StartConversationDto {
   @Matches(E164_PATTERN, { message: "callerAni must be a valid E.164 phone number" })
   callerAni!: string;
 
+  @ApiPropertyOptional({
+    example: "+15559876543",
+    description:
+      "The business's own number the call landed on, if known — passed through to the production-blocker fix's Call row (core-api's calls module) for completeness only; never read by anything in this service's own conversation logic. Falls back to a placeholder when omitted rather than making this a breaking contract change for existing callers.",
+  })
+  @IsOptional()
+  @Matches(E164_PATTERN, { message: "toNumber must be a valid E.164 phone number" })
+  toNumber?: string;
+
   @ApiPropertyOptional({ example: "America/Chicago" })
   @IsOptional()
   @IsString()
