@@ -30,6 +30,7 @@ export type {
   WebhookDelivery,
   WebhookEvent,
   OutboxEvent,
+  UsageRecord,
   TenantStatus,
   UserRole,
   LeadStatus,

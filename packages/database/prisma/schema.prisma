@@ -600,3 +600,62 @@ model OutboxEvent {
   @@index([status, createdAt])
   @@map("outbox_events")
 }
+
+// ---------------------------------------------------------------------------
+// Usage & metering (Phase 9, docs/26-usage-metering.md) — raw, normalized
+// platform usage. Deliberately NOT a billing/pricing/ledger table: per
+// docs/15-tenant-lifecycle-billing-and-analytics.md §3.1 (ADR-008), Stripe
+// is this platform's billing system of record, and this codebase's own
+// tables are meant to be a cache/mirror of Stripe's state, not a parallel
+// source of truth. `UsageRecord` is the ONE normalized measurement layer
+// docs/15 §3.2 requires ("one metering pipeline serves both the internal
+// cost dashboard and the customer-facing invoice") — it feeds a future
+// Stripe usage-reporting integration, it does not replace it.
+//
+// `callId` is a plain, unconstrained UUID column, NOT a foreign key to
+// `calls.id` — found during Phase 9 implementation that `Lead.callId` DOES
+// carry a real FK to `calls.id` (see that model above), yet no code
+// anywhere in this repository ever inserts a `Call` row (the `calls`
+// module itself was never built; voice-orchestrator is deliberately
+// Postgres-free per its own RedisService comment). That pre-existing gap
+// is a genuine latent bug in the `leads` module (Phase 5) — flagged
+// explicitly in docs/26 rather than silently worked around — but it is
+// NOT this phase's to fix (out of scope per this phase's own instructions:
+// don't redesign a completed phase without a genuine blocking integration
+// bug, and this doesn't block usage/metering, which needs no FK to
+// correlate by callId). Adding the same FK here would make every usage
+// ingestion call fail today, for a constraint nothing currently satisfies.
+model UsageRecord {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  businessId String   @map("business_id") @db.Uuid
+  /// Voice Runtime/orchestrator call identifier — correlation only, not an FK (see model comment above).
+  callId     String?  @map("call_id") @db.Uuid
+  leadId     String?  @map("lead_id") @db.Uuid
+
+  usageType String @map("usage_type")
+  /// Free-form provider/component identifier (e.g. "twilio", "deepgram", "openai:gpt-4o") — never used for pricing, only correlation/observability.
+  source    String
+
+  /// Raw measured quantity in `unit` — e.g. seconds, tokens, characters, messages. Integer, never a float (exact units, no fractional-cent rounding concerns at this layer).
+  quantity Int
+  unit     String @map("unit")
+
+  /// Optional, informational only — the platform's OWN vendor cost estimate for this usage event (docs/08 §2.2's `voice_sessions.total_cost_usd` discipline, extended here). NEVER read by anything that computes what a TENANT is charged — provider cost and customer price are deliberately different concepts (docs/15 §3.1) not modeled together in this table.
+  estimatedProviderCostUsd Decimal? @map("estimated_provider_cost_usd") @db.Decimal(10, 6)
+
+  /// Client-generated, unique per (tenantId, dedupKey) — the idempotency backstop, identical discipline to Notification.dedupKey/Lead.callId's own unique-constraint-based dedup.
+  dedupKey String @map("dedup_key")
+
+  /// Arbitrary provider/correlation metadata (e.g. Twilio call SID, STT provider request id) — observability only, never parsed for billing logic.
+  metadata Json @default("{}")
+
+  occurredAt DateTime @map("occurred_at") @db.Timestamptz(6)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([tenantId, dedupKey])
+  @@index([tenantId, usageType, occurredAt])
+  @@index([tenantId, businessId, occurredAt])
+  @@index([callId])
+  @@map("usage_records")
+}

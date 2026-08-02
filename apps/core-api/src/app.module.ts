@@ -9,6 +9,7 @@ import { HealthModule } from "./modules/health/health.module";
 import { LeadsModule } from "./modules/leads/leads.module";
 import { NotificationsModule } from "./modules/notifications/notifications.module";
 import { TenantsModule } from "./modules/tenants/tenants.module";
+import { UsageModule } from "./modules/usage/usage.module";
 import { validate } from "./shared/config/env.schema";
 import { DomainExceptionFilter } from "./shared/http/domain-exception.filter";
 import { AppLoggerModule } from "./shared/observability/app-logger.module";
@@ -36,6 +37,7 @@ import { RedisModule } from "./shared/redis/redis.module";
     LeadsModule,
     EmergencyRulesModule,
     NotificationsModule,
+    UsageModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: DomainExceptionFilter }],
 })
