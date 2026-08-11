@@ -1,6 +1,7 @@
 import { FakeCoreApiClient } from "../../tool-broker/application/__fakes__/fake-core-api-client";
 import type { Conversation } from "../domain/conversation.entity";
 import { ConversationNotFoundError } from "../domain/errors";
+import { FakeCallAdmissionPort } from "./__fakes__/fake-call-admission";
 import { FakeConversationRepository } from "./__fakes__/fake-conversation-repository";
 import { FakeEventBus } from "./__fakes__/fake-event-bus";
 import { createNoopLogger } from "./__fakes__/fake-logger";
@@ -18,6 +19,7 @@ function baseConversation(overrides: Partial<Conversation> = {}): Conversation {
     messages: [],
     transcript: [],
     leadId: null,
+    capacityReservationId: "reservation-1",
     startedAt: new Date().toISOString(),
     endedAt: null,
     endReason: null,
@@ -28,13 +30,15 @@ function baseConversation(overrides: Partial<Conversation> = {}): Conversation {
 function buildUseCase(coreApiClient = new FakeCoreApiClient()) {
   const repository = new FakeConversationRepository();
   const eventBus = new FakeEventBus();
+  const callAdmission = new FakeCallAdmissionPort();
   const useCase = new EndConversationUseCase(
     repository,
     eventBus,
     coreApiClient,
+    callAdmission,
     createNoopLogger(),
   );
-  return { useCase, repository, eventBus, coreApiClient };
+  return { useCase, repository, eventBus, coreApiClient, callAdmission };
 }
 
 describe("EndConversationUseCase", () => {
@@ -208,6 +212,56 @@ describe("EndConversationUseCase", () => {
       });
 
       expect(coreApiClient.postCalls.filter((c) => c.path === "/internal/usage")).toHaveLength(0);
+    });
+  });
+
+  describe("docs/36: capacity reservation release (best-effort)", () => {
+    it("releases the conversation's capacity reservation on end", async () => {
+      const { useCase, repository, callAdmission } = buildUseCase();
+      const { reservationId } = await callAdmission.reserve("tenant-1", "business-1", {
+        maxTenantConcurrentCalls: 10,
+        maxGlobalConcurrentCalls: 100,
+        emergencyHeadroomRatio: 0,
+        isEmergencyPriority: false,
+      });
+      repository.seed(baseConversation({ capacityReservationId: reservationId }));
+
+      await useCase.execute({
+        tenantId: "tenant-1",
+        conversationId: "conv-1",
+        endReason: "caller_hangup",
+      });
+
+      const counts = await callAdmission.getActiveCounts("tenant-1");
+      expect(counts.tenantActive).toBe(0);
+    });
+
+    it("best-effort: a release failure does not prevent the conversation from ending", async () => {
+      const { useCase, repository, callAdmission } = buildUseCase();
+      jest.spyOn(callAdmission, "release").mockRejectedValueOnce(new Error("redis unreachable"));
+      repository.seed(baseConversation());
+
+      const result = await useCase.execute({
+        tenantId: "tenant-1",
+        conversationId: "conv-1",
+        endReason: "caller_hangup",
+      });
+
+      expect(result.state).toBe("ended");
+    });
+
+    it("does nothing (no error) when capacityReservationId is null — a conversation from before this field existed", async () => {
+      const { useCase, repository, callAdmission } = buildUseCase();
+      const releaseSpy = jest.spyOn(callAdmission, "release");
+      repository.seed(baseConversation({ capacityReservationId: null }));
+
+      await useCase.execute({
+        tenantId: "tenant-1",
+        conversationId: "conv-1",
+        endReason: "caller_hangup",
+      });
+
+      expect(releaseSpy).not.toHaveBeenCalled();
     });
   });
 });

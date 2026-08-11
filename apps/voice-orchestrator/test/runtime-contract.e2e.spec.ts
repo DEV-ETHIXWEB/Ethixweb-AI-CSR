@@ -838,4 +838,290 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       });
     });
   });
+
+  describe("Docs/36: capacity, overload, and branded waiting", () => {
+    // These are BEHAVIORAL/CONCURRENCY tests, not a claim about real
+    // production capacity numbers — this environment has no live
+    // Twilio/LiveKit/STT/TTS/LLM to measure real vendor throughput
+    // against (see docs/29/docs/36's own honest accounting). What IS
+    // proven here: many calls admitted under the configured ceiling truly
+    // run independently (no shared/leaked state), and the ceiling itself
+    // is actually enforced, not merely configured.
+
+    async function startNCallsConcurrently(n: number) {
+      const payloads = Array.from({ length: n }, () => startPayload());
+      const responses = await Promise.all(
+        payloads.map((payload) =>
+          sim.inject({
+            method: "POST",
+            url: "/v1/conversations",
+            headers: authHeader(sim.serviceToken),
+            payload,
+          }),
+        ),
+      );
+      return { payloads, responses };
+    }
+
+    it.each([1, 5, 10])(
+      "%i concurrent calls (different tenants, within the default ceiling) are ALL admitted with independent conversations",
+      async (n) => {
+        const { responses } = await startNCallsConcurrently(n);
+        const statuses = responses.map((r) => r.statusCode);
+        expect(statuses.every((s) => s === 201)).toBe(true);
+
+        const conversationIds = new Set(responses.map((r) => r.json().id as string));
+        // No two calls collapsed into the same conversation — proves no
+        // cross-call state sharing under real concurrency.
+        expect(conversationIds.size).toBe(n);
+      },
+    );
+
+    it("25 concurrent calls across different tenants each get their own isolated conversation, tenant, and callId — no cross-call leakage", async () => {
+      const { payloads, responses } = await startNCallsConcurrently(25);
+      expect(responses.every((r) => r.statusCode === 201)).toBe(true);
+
+      const bodies = responses.map((r) => r.json());
+      for (let i = 0; i < payloads.length; i++) {
+        expect(bodies[i]?.tenantId).toBe(payloads[i]?.tenantId);
+        expect(bodies[i]?.callId).toBe(payloads[i]?.callId);
+      }
+      // Every tenantId is unique in this test (startPayload() generates a
+      // fresh UUID per call), so 25 distinct conversations is the
+      // correct, expected count — not an approximation.
+      const conversationIds = new Set(bodies.map((b) => b.id as string));
+      expect(conversationIds.size).toBe(25);
+    });
+
+    it("50 concurrent calls under the default global ceiling (100) are all admitted, each producing exactly one Call-creation POST to core-api — no duplicate/merged calls", async () => {
+      const { responses } = await startNCallsConcurrently(50);
+      expect(responses.every((r) => r.statusCode === 201)).toBe(true);
+      expect(sim.coreApiClient.postCalls.filter((c) => c.path === "/internal/calls")).toHaveLength(
+        50,
+      );
+    });
+
+    it("enforces MAX_TENANT_CONCURRENT_CALLS for NORMAL calls: with a ceiling of 3 and the default 20% emergency headroom, only 2 normal calls are admitted (floor(3 * 0.8) = 2) before the 3rd is rejected with 429", async () => {
+      // The 3rd slot is deliberately reserved as emergency headroom (see
+      // RedisCallAdmissionAdapter's own comment) — a normal call cannot
+      // consume it, only an isEmergencyPriority:true call can (covered by
+      // the "emergency-priority call can be admitted into the headroom
+      // band" test below). This IS the intended behavior, not a bug: it's
+      // the whole point of reserving headroom.
+      const originalLimit = process.env["MAX_TENANT_CONCURRENT_CALLS"];
+      process.env["MAX_TENANT_CONCURRENT_CALLS"] = "3";
+      try {
+        const tenantId = randomUUID();
+        const businessId = randomUUID();
+        const payloads = Array.from({ length: 4 }, () => startPayload({ tenantId, businessId }));
+        const responses = await Promise.all(
+          payloads.map((payload) =>
+            sim.inject({
+              method: "POST",
+              url: "/v1/conversations",
+              headers: authHeader(sim.serviceToken),
+              payload,
+            }),
+          ),
+        );
+        const statuses = responses.map((r) => r.statusCode).sort();
+        expect(statuses).toEqual([201, 201, 429, 429]);
+      } finally {
+        if (originalLimit === undefined) {
+          delete process.env["MAX_TENANT_CONCURRENT_CALLS"];
+        } else {
+          process.env["MAX_TENANT_CONCURRENT_CALLS"] = originalLimit;
+        }
+      }
+    });
+
+    it("a 429 response includes Retry-After and a waitingExperience body the runtime can act on immediately, without a second round-trip", async () => {
+      const originalLimit = process.env["MAX_TENANT_CONCURRENT_CALLS"];
+      process.env["MAX_TENANT_CONCURRENT_CALLS"] = "1";
+      try {
+        const tenantId = randomUUID();
+        const businessId = randomUUID();
+        await sim.inject({
+          method: "POST",
+          url: "/v1/conversations",
+          headers: authHeader(sim.serviceToken),
+          payload: startPayload({ tenantId, businessId }),
+        });
+        const rejected = await sim.inject({
+          method: "POST",
+          url: "/v1/conversations",
+          headers: authHeader(sim.serviceToken),
+          payload: startPayload({ tenantId, businessId }),
+        });
+
+        expect(rejected.statusCode).toBe(429);
+        expect(rejected.headers["retry-after"]).toBeDefined();
+        const body = rejected.json();
+        expect(body.scope).toBe("tenant");
+        expect(body).toHaveProperty("waitingExperience");
+        expect(body.waitingExperience).toHaveProperty("brochureSegment");
+        expect(body.waitingExperience).toHaveProperty("overflowNumber");
+      } finally {
+        if (originalLimit === undefined) {
+          delete process.env["MAX_TENANT_CONCURRENT_CALLS"];
+        } else {
+          process.env["MAX_TENANT_CONCURRENT_CALLS"] = originalLimit;
+        }
+      }
+    });
+
+    it("a rejected (429) call never reaches core-api at all — capacity is checked before the Call-row creation, matching StartConversationUseCase's own ordering", async () => {
+      const originalLimit = process.env["MAX_TENANT_CONCURRENT_CALLS"];
+      process.env["MAX_TENANT_CONCURRENT_CALLS"] = "1";
+      try {
+        const tenantId = randomUUID();
+        const businessId = randomUUID();
+        await sim.inject({
+          method: "POST",
+          url: "/v1/conversations",
+          headers: authHeader(sim.serviceToken),
+          payload: startPayload({ tenantId, businessId }),
+        });
+        const callsBeforeRejection = sim.coreApiClient.postCalls.length;
+
+        await sim.inject({
+          method: "POST",
+          url: "/v1/conversations",
+          headers: authHeader(sim.serviceToken),
+          payload: startPayload({ tenantId, businessId }),
+        });
+
+        expect(sim.coreApiClient.postCalls.length).toBe(callsBeforeRejection);
+      } finally {
+        if (originalLimit === undefined) {
+          delete process.env["MAX_TENANT_CONCURRENT_CALLS"];
+        } else {
+          process.env["MAX_TENANT_CONCURRENT_CALLS"] = originalLimit;
+        }
+      }
+    });
+
+    it("ending a call releases its capacity reservation — a slot freed by one caller's hangup can be reused by the next caller", async () => {
+      const originalLimit = process.env["MAX_TENANT_CONCURRENT_CALLS"];
+      process.env["MAX_TENANT_CONCURRENT_CALLS"] = "1";
+      try {
+        const tenantId = randomUUID();
+        const businessId = randomUUID();
+        const first = await sim.inject({
+          method: "POST",
+          url: "/v1/conversations",
+          headers: authHeader(sim.serviceToken),
+          payload: startPayload({ tenantId, businessId }),
+        });
+        expect(first.statusCode).toBe(201);
+
+        const rejected = await sim.inject({
+          method: "POST",
+          url: "/v1/conversations",
+          headers: authHeader(sim.serviceToken),
+          payload: startPayload({ tenantId, businessId }),
+        });
+        expect(rejected.statusCode).toBe(429);
+
+        await sim.inject({
+          method: "POST",
+          url: `/v1/conversations/${first.json().id}/end`,
+          headers: authHeader(sim.serviceToken),
+          payload: { tenantId, endReason: "caller_hangup" },
+        });
+
+        const admittedAfterRelease = await sim.inject({
+          method: "POST",
+          url: "/v1/conversations",
+          headers: authHeader(sim.serviceToken),
+          payload: startPayload({ tenantId, businessId }),
+        });
+        expect(admittedAfterRelease.statusCode).toBe(201);
+      } finally {
+        if (originalLimit === undefined) {
+          delete process.env["MAX_TENANT_CONCURRENT_CALLS"];
+        } else {
+          process.env["MAX_TENANT_CONCURRENT_CALLS"] = originalLimit;
+        }
+      }
+    });
+
+    it("an emergency-priority call can be admitted into the headroom band even when normal-call capacity is exhausted", async () => {
+      const originalLimit = process.env["MAX_TENANT_CONCURRENT_CALLS"];
+      process.env["MAX_TENANT_CONCURRENT_CALLS"] = "10";
+      try {
+        const tenantId = randomUUID();
+        const businessId = randomUUID();
+        // Default emergencyHeadroomRatio (StaticCapacityConfigProvider) is
+        // 0.2 -> normal ceiling = floor(10 * 0.8) = 8.
+        const normalPayloads = Array.from({ length: 8 }, () =>
+          startPayload({ tenantId, businessId }),
+        );
+        const normalResponses = await Promise.all(
+          normalPayloads.map((payload) =>
+            sim.inject({
+              method: "POST",
+              url: "/v1/conversations",
+              headers: authHeader(sim.serviceToken),
+              payload,
+            }),
+          ),
+        );
+        expect(normalResponses.every((r) => r.statusCode === 201)).toBe(true);
+
+        const normalRejected = await sim.inject({
+          method: "POST",
+          url: "/v1/conversations",
+          headers: authHeader(sim.serviceToken),
+          payload: startPayload({ tenantId, businessId }),
+        });
+        expect(normalRejected.statusCode).toBe(429);
+
+        const emergencyAdmitted = await sim.inject({
+          method: "POST",
+          url: "/v1/conversations",
+          headers: authHeader(sim.serviceToken),
+          payload: startPayload({ tenantId, businessId, isEmergencyPriority: true }),
+        });
+        expect(emergencyAdmitted.statusCode).toBe(201);
+      } finally {
+        if (originalLimit === undefined) {
+          delete process.env["MAX_TENANT_CONCURRENT_CALLS"];
+        } else {
+          process.env["MAX_TENANT_CONCURRENT_CALLS"] = originalLimit;
+        }
+      }
+    });
+
+    it("global ceiling: enforces MAX_GLOBAL_CONCURRENT_CALLS across DIFFERENT tenants, even when each tenant is individually within its own limit", async () => {
+      const originalGlobal = process.env["MAX_GLOBAL_CONCURRENT_CALLS"];
+      process.env["MAX_GLOBAL_CONCURRENT_CALLS"] = "3";
+      try {
+        // 4 different tenants, one call each — well within any single
+        // tenant's default ceiling, but over the global ceiling of 3.
+        const payloads = Array.from({ length: 4 }, () => startPayload());
+        const responses = await Promise.all(
+          payloads.map((payload) =>
+            sim.inject({
+              method: "POST",
+              url: "/v1/conversations",
+              headers: authHeader(sim.serviceToken),
+              payload,
+            }),
+          ),
+        );
+        const admitted = responses.filter((r) => r.statusCode === 201);
+        const rejected = responses.filter((r) => r.statusCode === 429);
+        expect(admitted).toHaveLength(3);
+        expect(rejected).toHaveLength(1);
+        expect(rejected[0]?.json().scope).toBe("global");
+      } finally {
+        if (originalGlobal === undefined) {
+          delete process.env["MAX_GLOBAL_CONCURRENT_CALLS"];
+        } else {
+          process.env["MAX_GLOBAL_CONCURRENT_CALLS"] = originalGlobal;
+        }
+      }
+    });
+  });
 });

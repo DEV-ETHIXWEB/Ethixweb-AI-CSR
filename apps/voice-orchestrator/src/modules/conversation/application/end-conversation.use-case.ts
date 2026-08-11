@@ -7,6 +7,10 @@ import {
   CORE_API_CLIENT,
   type CoreApiClientPort,
 } from "../../tool-broker/domain/ports/core-api-client.port";
+import {
+  CALL_ADMISSION_PORT,
+  type CallAdmissionPort,
+} from "../../capacity/domain/call-admission.port";
 import type { Conversation } from "../domain/conversation.entity";
 import { ConversationNotFoundError } from "../domain/errors";
 import {
@@ -47,6 +51,13 @@ export interface EndConversationCommand {
  * real Voice Runtime, which doesn't exist in this repository) — see
  * docs/27's own honest accounting of this rather than fabricating partial
  * metering for dimensions with no real data behind them.
+ *
+ * DOCS/36: also releases this conversation's capacity reservation
+ * (StartConversationUseCase's own admission-time reserve) — best-effort,
+ * same reasoning as the other two side effects in this method. A Redis TTL
+ * on the reservation itself is the safety net if this call never happens
+ * (a crashed runtime, a lost end-signal) — see RedisCallAdmissionAdapter's
+ * own comment.
  */
 @Injectable()
 export class EndConversationUseCase {
@@ -54,6 +65,7 @@ export class EndConversationUseCase {
     @Inject(CONVERSATION_REPOSITORY) private readonly repository: ConversationRepository,
     @Inject(EVENT_BUS) private readonly eventBus: EventBusPort,
     @Inject(CORE_API_CLIENT) private readonly coreApiClient: CoreApiClientPort,
+    @Inject(CALL_ADMISSION_PORT) private readonly callAdmission: CallAdmissionPort,
     @Inject(APP_LOGGER) private readonly logger: StructuredLogger,
   ) {}
 
@@ -80,6 +92,7 @@ export class EndConversationUseCase {
 
     await this.endCallBestEffort(saved, now, command.endReason);
     await this.recordCallDurationUsageBestEffort(saved, now);
+    await this.releaseCapacityBestEffort(saved);
 
     await this.eventBus.publish({
       type: "conversation.ended",
@@ -143,6 +156,25 @@ export class EndConversationUseCase {
       });
     } catch (error) {
       this.logger.warn("failed to record call-duration usage — non-fatal", {
+        tenantId: conversation.tenantId,
+        conversationId: conversation.id,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async releaseCapacityBestEffort(conversation: Conversation): Promise<void> {
+    if (!conversation.capacityReservationId) {
+      // Defensive only — every conversation created after docs/36 landed
+      // always has one (StartConversationUseCase sets it unconditionally).
+      // A null here means a conversation that predates this field, not a
+      // bug; nothing to release.
+      return;
+    }
+    try {
+      await this.callAdmission.release(conversation.tenantId, conversation.capacityReservationId);
+    } catch (error) {
+      this.logger.warn("failed to release capacity reservation — non-fatal, TTL will reclaim it", {
         tenantId: conversation.tenantId,
         conversationId: conversation.id,
         reason: error instanceof Error ? error.message : String(error),

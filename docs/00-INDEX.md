@@ -66,6 +66,9 @@ This blueprint was reviewed a second time specifically to challenge its own assu
 33. [33-emergency-live-verification-runbook.md](33-emergency-live-verification-runbook.md) — the live SIP/emergency-transfer verification runbook — the highest-stakes untested path in the system.
 34. [34-staging-environment-checklist.md](34-staging-environment-checklist.md) — staging requirements split by first-test-call vs. production, plus the full environment variable matrix for both services.
 35. [35-production-go-no-go-gate.md](35-production-go-no-go-gate.md) — the final E2E test matrix (16 scenarios), the production go/no-go checklist, and the recommended blocker resolution order.
+36. [36-capacity-and-branded-waiting.md](36-capacity-and-branded-waiting.md) — the call-admission/capacity gate (per-tenant and global concurrency ceilings, emergency headroom, Redis-based atomic reservation), the 429 waiting-experience contract, and the tenant-configurable Voice Brochure — with the honest limits of what "emergency priority" can mean before a conversation exists.
+37. [37-operations-dashboard.md](37-operations-dashboard.md) — the read-only backend data layer for an operations dashboard (overview/emergencies/health composition, real per-tenant capacity/brochure configuration replacing static defaults) — no frontend was built, this is API surface only, with the honest gaps (Postgres-proxy vs. live Redis counts, no emergency-escalation schema flag, no cross-service health visibility) documented explicitly.
+38. [38-knowledge-and-voice-content.md](38-knowledge-and-voice-content.md) — the tenant-owned knowledge base with an independent AI-Knowledge / Waiting-Brochure flag split, a DRAFT/APPROVED/DISABLED lifecycle with an auto-revert-on-content-edit safety property, and the first real writer to the previously-unused `AuditLog` table.
 
 ## What's not yet decided (open items requiring your sign-off before Phase 0 repo scaffold)
 

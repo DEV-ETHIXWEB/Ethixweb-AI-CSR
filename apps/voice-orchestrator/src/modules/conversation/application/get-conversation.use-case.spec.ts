@@ -17,6 +17,7 @@ function baseConversation(overrides: Partial<Conversation> = {}): Conversation {
     leadId: null,
     startedAt: new Date().toISOString(),
     endedAt: null,
+    capacityReservationId: "reservation-1",
     endReason: null,
     ...overrides,
   };

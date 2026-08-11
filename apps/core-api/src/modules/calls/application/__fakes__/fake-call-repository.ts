@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { Call } from "../../domain/call.entity";
 import { CallAlreadyExistsError } from "../../domain/errors";
-import type { CallRepository, CreateCallInput, Db } from "../../domain/ports/call-repository.port";
+import type {
+  CallRepository,
+  CreateCallInput,
+  Db,
+  ListCallsOptions,
+  ListCallsResult,
+} from "../../domain/ports/call-repository.port";
 
 export class FakeCallRepository implements CallRepository {
   private readonly calls = new Map<string, Call>();
@@ -81,6 +87,31 @@ export class FakeCallRepository implements CallRepository {
     };
     this.calls.set(id, updated);
     return updated;
+  }
+
+  async listByBusiness(
+    _db: Db,
+    tenantId: string,
+    businessId: string,
+    options: ListCallsOptions,
+  ): Promise<ListCallsResult> {
+    let matches = [...this.calls.values()].filter(
+      (call) => call.tenantId === tenantId && call.businessId === businessId,
+    );
+    if (options.status) {
+      matches = matches.filter((call) => call.status === options.status);
+    }
+    if (options.createdAfter) {
+      const after = options.createdAfter;
+      matches = matches.filter((call) => new Date(call.startedAt) >= after);
+    }
+    if (options.createdBefore) {
+      const before = options.createdBefore;
+      matches = matches.filter((call) => new Date(call.startedAt) <= before);
+    }
+    matches.sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+    const start = (options.page - 1) * options.pageSize;
+    return { items: matches.slice(start, start + options.pageSize), total: matches.length };
   }
 
   /** Test helper. */

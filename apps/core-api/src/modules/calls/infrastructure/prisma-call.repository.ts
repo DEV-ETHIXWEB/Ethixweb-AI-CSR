@@ -2,7 +2,13 @@ import { Injectable } from "@nestjs/common";
 import { Prisma } from "@ethixweb/database";
 import { CallAlreadyExistsError } from "../domain/errors";
 import type { Call, CallDirection, CallStatus } from "../domain/call.entity";
-import type { CallRepository, CreateCallInput, Db } from "../domain/ports/call-repository.port";
+import type {
+  CallRepository,
+  CreateCallInput,
+  Db,
+  ListCallsOptions,
+  ListCallsResult,
+} from "../domain/ports/call-repository.port";
 
 const UNIQUE_CONSTRAINT_VIOLATION = "P2002";
 
@@ -122,5 +128,38 @@ export class PrismaCallRepository implements CallRepository {
       throw new Error(`PrismaCallRepository.updateStatus: call ${id} vanished after update`);
     }
     return toEntity(updated);
+  }
+
+  async listByBusiness(
+    db: Db,
+    tenantId: string,
+    businessId: string,
+    options: ListCallsOptions,
+  ): Promise<ListCallsResult> {
+    const where: Prisma.CallWhereInput = {
+      tenantId,
+      businessId,
+      ...(options.status ? { status: options.status } : {}),
+      ...(options.createdAfter || options.createdBefore
+        ? {
+            startedAt: {
+              ...(options.createdAfter ? { gte: options.createdAfter } : {}),
+              ...(options.createdBefore ? { lte: options.createdBefore } : {}),
+            },
+          }
+        : {}),
+    };
+
+    const [rows, total] = await Promise.all([
+      db.call.findMany({
+        where,
+        orderBy: { startedAt: "desc" },
+        skip: (options.page - 1) * options.pageSize,
+        take: options.pageSize,
+      }),
+      db.call.count({ where }),
+    ]);
+
+    return { items: rows.map(toEntity), total };
   }
 }

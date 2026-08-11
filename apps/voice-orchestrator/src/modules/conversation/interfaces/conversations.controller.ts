@@ -66,6 +66,7 @@ export class ConversationsController {
       callerAni: dto.callerAni,
       toNumber: dto.toNumber,
       timezone: dto.timezone,
+      isEmergencyPriority: dto.isEmergencyPriority,
     });
     return ConversationResponseDto.fromDomain(conversation);
   }

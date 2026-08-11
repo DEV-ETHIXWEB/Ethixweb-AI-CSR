@@ -3,10 +3,13 @@ import { APP_FILTER } from "@nestjs/core";
 import { ConfigModule } from "@nestjs/config";
 import { AuthModule } from "./modules/auth/auth.module";
 import { CallsModule } from "./modules/calls/calls.module";
+import { CapacityConfigModule } from "./modules/capacity-config/capacity-config.module";
 import { CrmModule } from "./modules/crm/crm.module";
 import { CustomersModule } from "./modules/customers/customers.module";
+import { DashboardModule } from "./modules/dashboard/dashboard.module";
 import { EmergencyRulesModule } from "./modules/emergency-rules/emergency-rules.module";
 import { HealthModule } from "./modules/health/health.module";
+import { KnowledgeModule } from "./modules/knowledge/knowledge.module";
 import { LeadsModule } from "./modules/leads/leads.module";
 import { NotificationsModule } from "./modules/notifications/notifications.module";
 import { TenantsModule } from "./modules/tenants/tenants.module";
@@ -40,6 +43,9 @@ import { RedisModule } from "./shared/redis/redis.module";
     EmergencyRulesModule,
     NotificationsModule,
     UsageModule,
+    KnowledgeModule,
+    CapacityConfigModule,
+    DashboardModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: DomainExceptionFilter }],
 })

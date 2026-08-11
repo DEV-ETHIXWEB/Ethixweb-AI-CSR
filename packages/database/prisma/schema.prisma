@@ -117,6 +117,8 @@ model Business {
   customers            Customer[]
   calls                Call[]
   webhookSubscriptions WebhookSubscription[]
+  knowledgeItems       KnowledgeItem[]
+  capacityConfig       TenantCapacityConfig?
 
   @@index([tenantId])
   @@map("businesses")
@@ -626,12 +628,12 @@ model OutboxEvent {
 // correlate by callId). Adding the same FK here would make every usage
 // ingestion call fail today, for a constraint nothing currently satisfies.
 model UsageRecord {
-  id         String   @id @default(uuid()) @db.Uuid
-  tenantId   String   @map("tenant_id") @db.Uuid
-  businessId String   @map("business_id") @db.Uuid
+  id         String  @id @default(uuid()) @db.Uuid
+  tenantId   String  @map("tenant_id") @db.Uuid
+  businessId String  @map("business_id") @db.Uuid
   /// Voice Runtime/orchestrator call identifier — correlation only, not an FK (see model comment above).
-  callId     String?  @map("call_id") @db.Uuid
-  leadId     String?  @map("lead_id") @db.Uuid
+  callId     String? @map("call_id") @db.Uuid
+  leadId     String? @map("lead_id") @db.Uuid
 
   usageType String @map("usage_type")
   /// Free-form provider/component identifier (e.g. "twilio", "deepgram", "openai:gpt-4o") — never used for pricing, only correlation/observability.
@@ -658,4 +660,82 @@ model UsageRecord {
   @@index([tenantId, businessId, occurredAt])
   @@index([callId])
   @@map("usage_records")
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge & Voice Content (docs/38-knowledge-and-voice-content.md) — the
+// tenant-owned source of truth for what the AI may say, on two independent
+// axes (aiKnowledge / waitingBrochure). `status` is plain String, not a new
+// enum, matching this file's own stated convention (see this file's Enums
+// header comment): DRAFT/APPROVED/DISABLED is a design decision introduced
+// in this same change, not a pre-existing cited ADR/doc state machine like
+// LeadStatus, so it follows the Business.status/Integration.status
+// precedent rather than the TenantStatus/LeadStatus one.
+// ---------------------------------------------------------------------------
+
+model KnowledgeItem {
+  id         String @id @default(uuid()) @db.Uuid
+  tenantId   String @map("tenant_id") @db.Uuid
+  businessId String @map("business_id") @db.Uuid
+  category   String
+  title      String
+  content    String
+
+  /// DRAFT | APPROVED | DISABLED — only APPROVED items are ever readable by AiKnowledgeReadUseCase/BrochureConfigReadUseCase (the internal, voice-orchestrator-facing read paths). See KnowledgeLifecycle domain module for the transition rules this column's value is constrained to by application code (no DB-level CHECK constraint — matches this schema's existing plain-String-status precedent, e.g. Notification.status, Business.status).
+  status String @default("draft")
+
+  /// Independent of `waitingBrochure` — an item can be AI-usable, brochure-usable, both, or (while draft) neither. This is the field docs/38 calls "AI Knowledge".
+  aiKnowledge Boolean @default(false) @map("ai_knowledge")
+
+  /// The field docs/38 calls "Waiting/Brochure Knowledge" — an item flagged here is eligible to become a rotated waiting-experience segment (docs/36) ONLY once status = "approved". Never auto-derived from aiKnowledge.
+  waitingBrochure Boolean @default(false) @map("waiting_brochure")
+
+  /// Rotation/display order within the brochure sequence and a tie-breaker for any future retrieval ranking — lower sorts first. Not a "how important" claim beyond ordering.
+  priority Int @default(0)
+
+  createdByUserId  String?   @map("created_by_user_id") @db.Uuid
+  updatedByUserId  String?   @map("updated_by_user_id") @db.Uuid
+  approvedByUserId String?   @map("approved_by_user_id") @db.Uuid
+  approvedAt       DateTime? @map("approved_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([businessId, status])
+  @@index([businessId, waitingBrochure, status, priority])
+  @@map("knowledge_items")
+}
+
+// ---------------------------------------------------------------------------
+// Per-tenant capacity policy (docs/36-capacity-and-branded-waiting.md,
+// docs/37-operations-dashboard.md) — the real, persisted counterpart to
+// voice-orchestrator's StaticCapacityConfigProvider env-var defaults. One
+// row per business; absence of a row means "use the platform default",
+// exactly like AgentConfig's own precedent for "no row yet = fall back".
+// ---------------------------------------------------------------------------
+
+model TenantCapacityConfig {
+  id         String @id @default(uuid()) @db.Uuid
+  tenantId   String @map("tenant_id") @db.Uuid
+  businessId String @unique @map("business_id") @db.Uuid
+
+  maxTenantConcurrentCalls Int     @default(10) @map("max_tenant_concurrent_calls")
+  maxWaitingCallers        Int     @default(5) @map("max_waiting_callers")
+  waitingTimeoutMs         Int     @default(30000) @map("waiting_timeout_ms")
+  emergencyHeadroomRatio   Float   @default(0.2) @map("emergency_headroom_ratio")
+  overflowNumber           String? @map("overflow_number")
+
+  brochureEnabled    Boolean @default(false) @map("brochure_enabled")
+  brochureRotationMs Int     @default(15000) @map("brochure_rotation_ms")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("tenant_capacity_configs")
 }

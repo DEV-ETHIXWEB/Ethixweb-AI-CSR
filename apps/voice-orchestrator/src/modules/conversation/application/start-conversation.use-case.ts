@@ -10,6 +10,14 @@ import {
   CORE_API_CLIENT,
   type CoreApiClientPort,
 } from "../../tool-broker/domain/ports/core-api-client.port";
+import {
+  CALL_ADMISSION_PORT,
+  type CallAdmissionPort,
+} from "../../capacity/domain/call-admission.port";
+import {
+  CAPACITY_CONFIG_PROVIDER,
+  type CapacityConfigProvider,
+} from "../../capacity/domain/capacity-config";
 import type { Conversation } from "../domain/conversation.entity";
 import {
   CONVERSATION_REPOSITORY,
@@ -26,6 +34,8 @@ export interface StartConversationCommand {
   /** The business's own number the call landed on, if known — see StartConversationDto's own comment. */
   toNumber?: string | undefined;
   timezone?: string | undefined;
+  /** docs/36 — see StartConversationDto's own comment on how thin/best-effort this signal is. */
+  isEmergencyPriority?: boolean | undefined;
 }
 
 /**
@@ -48,6 +58,18 @@ export interface StartConversationCommand {
  * natural idempotency key, so no separate telephony SID field was
  * introduced into this deliberately telephony-concept-free contract, see
  * StartConversationDto's own comment).
+ *
+ * CAPACITY GATE (docs/36): admission is checked FIRST, before even the
+ * Call-row creation above — a call that can't be admitted should never
+ * reach core-api at all. `reserve()` throws `CapacityExceededError`
+ * (429 + Retry-After, DomainExceptionFilter) when neither this tenant's
+ * nor the global ceiling has room; the Voice Runtime is expected to play
+ * its own short waiting/brochure experience and retry shortly (docs/36 §4)
+ * rather than this service ever holding an HTTP request open to simulate
+ * "waiting" — a held connection would just move dead-air into a different
+ * layer, not remove it. The reservation is released exactly once, in
+ * EndConversationUseCase, best-effort — matching the existing pattern for
+ * the Call-row close and usage emission in that method.
  */
 @Injectable()
 export class StartConversationUseCase {
@@ -56,6 +78,8 @@ export class StartConversationUseCase {
     private readonly assembleSystemPrompt: AssembleSystemPromptUseCase,
     @Inject(EVENT_BUS) private readonly eventBus: EventBusPort,
     @Inject(CORE_API_CLIENT) private readonly coreApiClient: CoreApiClientPort,
+    @Inject(CALL_ADMISSION_PORT) private readonly callAdmission: CallAdmissionPort,
+    @Inject(CAPACITY_CONFIG_PROVIDER) private readonly capacityConfig: CapacityConfigProvider,
     @Inject(APP_LOGGER) private readonly logger: StructuredLogger,
   ) {}
 
@@ -65,49 +89,113 @@ export class StartConversationUseCase {
       "ethixweb.business_id": command.businessId,
     });
 
-    const now = new Date().toISOString();
-    await this.coreApiClient.post("/internal/calls", {
-      businessId: command.businessId,
-      direction: "inbound",
-      fromNumber: command.callerAni,
-      toNumber: command.toNumber ?? UNKNOWN_TO_NUMBER,
-      telephonyCallSid: command.callId,
-      startedAt: now,
-    });
-
-    const runtimeContext: RuntimeContext = {
-      currentTimeIso: now,
-      timezone: command.timezone ?? "UTC",
-      // Populated by the getBusinessHours/searchCustomer tools once the
-      // conversation is under way — honestly `null` here rather than a
-      // guessed default, see formatRuntimeContext's own handling.
-      businessHours: null,
-      callerAni: command.callerAni,
-      existingCustomerMatch: null,
-    };
-
-    const { systemPrompt, profile } = await this.assembleSystemPrompt.execute(
+    const capacity = await this.capacityConfig.getActiveConfig(
       command.tenantId,
       command.businessId,
-      runtimeContext,
     );
-
-    const conversation = await this.repository.create({
-      id: randomUUID(),
+    let reservationId: string;
+    try {
+      const reservation = await this.callAdmission.reserve(command.tenantId, command.businessId, {
+        maxTenantConcurrentCalls: capacity.maxTenantConcurrentCalls,
+        maxGlobalConcurrentCalls: capacity.maxGlobalConcurrentCalls,
+        emergencyHeadroomRatio: capacity.emergencyHeadroomRatio,
+        isEmergencyPriority: command.isEmergencyPriority ?? false,
+      });
+      reservationId = reservation.reservationId;
+    } catch (error) {
+      // docs/36 §11's `capacity_rejections` metric — logged here, the one
+      // place both the tenant/global scope (from CapacityExceededError)
+      // and the call's identity are both in hand. No metrics backend
+      // exists in this codebase to emit to directly (confirmed by audit:
+      // no NestJS throttler, no existing metrics client anywhere) — this
+      // structured log line is the honest, currently-available substitute;
+      // see docs/36 §11 for what a real metrics pipeline would need.
+      this.logger.warn("call rejected: capacity exceeded", {
+        tenantId: command.tenantId,
+        businessId: command.businessId,
+        callId: command.callId,
+        scope: error instanceof Object && "scope" in error ? String(error.scope) : "unknown",
+      });
+      throw error;
+    }
+    this.logger.info("call admitted: capacity reserved", {
       tenantId: command.tenantId,
       businessId: command.businessId,
       callId: command.callId,
-      state: "greeting",
-      systemPrompt,
-      llmModel: profile.llmModel,
-      messages: [],
-      transcript: [],
-      leadId: null,
-      startedAt: now,
-      endedAt: null,
-      endReason: null,
+      reservationId,
+      isEmergencyPriority: command.isEmergencyPriority ?? false,
     });
 
+    // Everything from here on can fail (core-api outage, a rejected duplicate
+    // callId, etc.) — if it does, the reservation MUST be released rather
+    // than left to expire on its TTL, or a string of transient failures
+    // would slowly starve this tenant's/global capacity for no admitted
+    // call. Deliberately re-thrown after release, not swallowed: a failed
+    // start is still a failed start from the Voice Runtime's perspective.
+    try {
+      const now = new Date().toISOString();
+      await this.coreApiClient.post("/internal/calls", {
+        businessId: command.businessId,
+        direction: "inbound",
+        fromNumber: command.callerAni,
+        toNumber: command.toNumber ?? UNKNOWN_TO_NUMBER,
+        telephonyCallSid: command.callId,
+        startedAt: now,
+      });
+
+      const runtimeContext: RuntimeContext = {
+        currentTimeIso: now,
+        timezone: command.timezone ?? "UTC",
+        // Populated by the getBusinessHours/searchCustomer tools once the
+        // conversation is under way — honestly `null` here rather than a
+        // guessed default, see formatRuntimeContext's own handling.
+        businessHours: null,
+        callerAni: command.callerAni,
+        existingCustomerMatch: null,
+      };
+
+      const { systemPrompt, profile } = await this.assembleSystemPrompt.execute(
+        command.tenantId,
+        command.businessId,
+        runtimeContext,
+      );
+
+      const conversation = await this.repository.create({
+        id: randomUUID(),
+        tenantId: command.tenantId,
+        businessId: command.businessId,
+        callId: command.callId,
+        state: "greeting",
+        systemPrompt,
+        llmModel: profile.llmModel,
+        messages: [],
+        transcript: [],
+        leadId: null,
+        capacityReservationId: reservationId,
+        startedAt: now,
+        endedAt: null,
+        endReason: null,
+      });
+
+      return this.publishStarted(conversation, now);
+    } catch (error) {
+      await this.callAdmission
+        .release(command.tenantId, reservationId)
+        .catch((releaseError: unknown) => {
+          this.logger.warn(
+            "failed to release capacity reservation after a failed call start — non-fatal, TTL will reclaim it",
+            {
+              tenantId: command.tenantId,
+              reservationId,
+              reason: releaseError instanceof Error ? releaseError.message : String(releaseError),
+            },
+          );
+        });
+      throw error;
+    }
+  }
+
+  private async publishStarted(conversation: Conversation, now: string): Promise<Conversation> {
     await this.eventBus.publish({
       type: "conversation.started",
       tenantId: conversation.tenantId,
