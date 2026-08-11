@@ -88,7 +88,10 @@ describe("EndConversationUseCase", () => {
         endReason: "runtime_disconnected",
       });
 
-      expect(coreApiClient.postCalls).toHaveLength(1);
+      // 2 calls: the Call-end (this test's own concern) and Phase 10's own
+      // best-effort usage-metering emission — see that describe block below
+      // for its own dedicated tests.
+      expect(coreApiClient.postCalls).toHaveLength(2);
       expect(coreApiClient.postCalls[0]?.path).toBe("/internal/calls/by-telephony-sid/call-1/end");
       expect(coreApiClient.postCalls[0]?.body).toMatchObject({ status: "abandoned" });
     });
@@ -134,6 +137,77 @@ describe("EndConversationUseCase", () => {
       });
 
       expect(coreApiClient.postCalls).toHaveLength(0);
+    });
+  });
+
+  describe("Phase 10: call-duration usage metering (best-effort)", () => {
+    it("emits voice_call_duration to POST /internal/usage with the correct quantity", async () => {
+      const { useCase, repository, coreApiClient } = buildUseCase();
+      repository.seed(
+        baseConversation({ startedAt: "2026-01-15T12:00:00.000Z", leadId: "lead-1" }),
+      );
+
+      await useCase.execute({
+        tenantId: "tenant-1",
+        conversationId: "conv-1",
+        endReason: "caller_hangup",
+      });
+
+      const usageCall = coreApiClient.postCalls.find((c) => c.path === "/internal/usage");
+      expect(usageCall).toBeDefined();
+      expect(usageCall?.body).toMatchObject({
+        businessId: "business-1",
+        callId: "call-1",
+        leadId: "lead-1",
+        usageType: "voice_call_duration",
+        source: "voice-orchestrator",
+        unit: "seconds",
+        dedupKey: "conv-1:voice_call_duration:final",
+      });
+    });
+
+    it("omits leadId from the usage event when no lead was created", async () => {
+      const { useCase, repository, coreApiClient } = buildUseCase();
+      repository.seed(baseConversation({ leadId: null }));
+
+      await useCase.execute({
+        tenantId: "tenant-1",
+        conversationId: "conv-1",
+        endReason: "caller_hangup",
+      });
+
+      const usageCall = coreApiClient.postCalls.find((c) => c.path === "/internal/usage");
+      expect(usageCall?.body).not.toHaveProperty("leadId");
+    });
+
+    it("BEST-EFFORT: a failure recording usage does NOT prevent the conversation from ending", async () => {
+      const coreApiClient = new FakeCoreApiClient();
+      coreApiClient.failWith = new Error("core-api unreachable");
+      const { useCase, repository } = buildUseCase(coreApiClient);
+      repository.seed(baseConversation());
+
+      const result = await useCase.execute({
+        tenantId: "tenant-1",
+        conversationId: "conv-1",
+        endReason: "caller_hangup",
+      });
+
+      expect(result.state).toBe("ended");
+    });
+
+    it("an already-ended conversation (idempotent replay) does NOT emit a second usage event", async () => {
+      const { useCase, repository, coreApiClient } = buildUseCase();
+      repository.seed(
+        baseConversation({ endedAt: "2026-01-01T00:00:00.000Z", endReason: "first_reason" }),
+      );
+
+      await useCase.execute({
+        tenantId: "tenant-1",
+        conversationId: "conv-1",
+        endReason: "second_reason",
+      });
+
+      expect(coreApiClient.postCalls.filter((c) => c.path === "/internal/usage")).toHaveLength(0);
     });
   });
 });

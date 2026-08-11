@@ -57,6 +57,15 @@ This blueprint was reviewed a second time specifically to challenge its own assu
 24. [24-runtime-orchestrator-contract.md](24-runtime-orchestrator-contract.md) — as-built Voice Runtime ↔ Orchestrator HTTP contract (Phase 8), turn-idempotency requirements, and the concrete checklist for wiring up a live runtime.
 25. [25-service-credential-provisioning.md](25-service-credential-provisioning.md) — the exact HTTP call to mint voice-orchestrator's core-api service API key.
 26. [26-usage-metering.md](26-usage-metering.md) — as-built usage/metering module (Phase 9): the normalized `UsageRecord` measurement layer that feeds — but deliberately does not replace — the Stripe billing system of record (ADR-008).
+27. [27-phase10-runtime-integration-e2e.md](27-phase10-runtime-integration-e2e.md) — as-built Phase 10 integration/E2E work: usage-metering wiring, the extended runtime simulator, and the pre-implementation audit findings on what was already production-capable.
+28. [28-yash-runtime-integration-package.md](28-yash-runtime-integration-package.md) — the standalone, self-contained contract for connecting a real Voice Runtime (Twilio/LiveKit/Deepgram or equivalent) to voice-orchestrator, with example payloads and local-testing instructions.
+29. [29-phase11-12-blocker-resolution.md](29-phase11-12-blocker-resolution.md) — the authoritative tracker for the 5 external blockers to production (live runtime, live HCP, real Postgres gate, live SIP, staging infra), each with owner, setup steps, exact test, and RED/YELLOW/GREEN status.
+30. [30-yash-runtime-live-integration-checklist.md](30-yash-runtime-live-integration-checklist.md) — practical checklist form of docs/28's contract, with responsibility explicitly split between Yash's runtime, this repository, and external providers.
+31. [31-first-real-phone-call-runbook.md](31-first-real-phone-call-runbook.md) — step-by-step runbook for the first 5 real test calls (normal, existing customer, interruption, emergency, duplicate/retry), each with input/expected/evidence/pass-fail.
+32. [32-hcp-live-verification-checklist.md](32-hcp-live-verification-checklist.md) — 10 scenarios to verify against a real Housecall Pro sandbox once credentials exist.
+33. [33-emergency-live-verification-runbook.md](33-emergency-live-verification-runbook.md) — the live SIP/emergency-transfer verification runbook — the highest-stakes untested path in the system.
+34. [34-staging-environment-checklist.md](34-staging-environment-checklist.md) — staging requirements split by first-test-call vs. production, plus the full environment variable matrix for both services.
+35. [35-production-go-no-go-gate.md](35-production-go-no-go-gate.md) — the final E2E test matrix (16 scenarios), the production go/no-go checklist, and the recommended blocker resolution order.
 
 ## What's not yet decided (open items requiring your sign-off before Phase 0 repo scaffold)
 
