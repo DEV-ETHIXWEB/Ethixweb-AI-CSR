@@ -4,6 +4,7 @@ import { RedisModule } from "../../shared/redis/redis.module";
 import { APP_LOGGER, AppLoggerModule } from "../../shared/observability/app-logger.module";
 import { createNoopLogger } from "./application/__fakes__/fake-logger";
 import { CallsModule } from "./calls.module";
+import { CallsController } from "./interfaces/calls.controller";
 import { CallsToolController } from "./interfaces/calls-tool.controller";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -11,8 +12,9 @@ const ORIGINAL_ENV = { ...process.env };
 /**
  * A DI-graph resolution smoke test — see CustomersModule's own spec for the
  * full reasoning (unit tests construct classes directly with fakes and
- * never exercise Nest's actual container). Proves CallsToolController and
- * PrismaCallRepository resolve correctly with no live DB/Redis connection.
+ * never exercise Nest's actual container). Proves CallsController,
+ * CallsToolController, and PrismaCallRepository resolve correctly with no
+ * live DB/Redis connection.
  */
 describe("CallsModule (DI wiring smoke test)", () => {
   beforeAll(() => {
@@ -35,6 +37,7 @@ describe("CallsModule (DI wiring smoke test)", () => {
       .useValue(createNoopLogger())
       .compile();
 
+    expect(moduleRef.get(CallsController)).toBeInstanceOf(CallsController);
     expect(moduleRef.get(CallsToolController)).toBeInstanceOf(CallsToolController);
 
     await moduleRef.close();

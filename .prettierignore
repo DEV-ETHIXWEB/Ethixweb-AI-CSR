@@ -4,3 +4,4 @@ coverage
 .turbo
 pnpm-lock.yaml
 packages/database/prisma/migrations
+apps/dashboard/.next

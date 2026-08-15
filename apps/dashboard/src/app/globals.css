@@ -1,0 +1,68 @@
+:root {
+  --ground: #f6f5f3;
+  --surface: #ffffff;
+  --border: #dedad3;
+  --ink: #1c1b19;
+  --ink-soft: #6b6560;
+  --accent: #2f6f4e;
+  --accent-soft: #e4efe7;
+  --warn: #b5762a;
+  --warn-soft: #f5e9d8;
+  --danger: #a83b32;
+  --danger-soft: #f5e1de;
+  --unknown: #6b6560;
+  --unknown-soft: #eceae6;
+  --radius: 8px;
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+a {
+  color: inherit;
+}
+
+button {
+  font-family: inherit;
+}
+
+.stat-pill {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+.stat-pill.ok {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.stat-pill.warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.stat-pill.danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.stat-pill.unknown {
+  background: var(--unknown-soft);
+  color: var(--unknown);
+}
