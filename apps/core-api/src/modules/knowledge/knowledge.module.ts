@@ -5,6 +5,7 @@ import { ApproveKnowledgeItemUseCase } from "./application/approve-knowledge-ite
 import { CreateKnowledgeItemUseCase } from "./application/create-knowledge-item.use-case";
 import { DisableKnowledgeItemUseCase } from "./application/disable-knowledge-item.use-case";
 import { GetKnowledgeItemUseCase } from "./application/get-knowledge-item.use-case";
+import { ListAiKnowledgeItemsUseCase } from "./application/list-ai-knowledge-items.use-case";
 import { ListKnowledgeItemsUseCase } from "./application/list-knowledge-items.use-case";
 import { ListWaitingBrochureItemsUseCase } from "./application/list-waiting-brochure-items.use-case";
 import { UpdateKnowledgeItemUseCase } from "./application/update-knowledge-item.use-case";
@@ -30,6 +31,7 @@ import { KnowledgeToolController } from "./interfaces/knowledge-tool.controller"
     GetKnowledgeItemUseCase,
     ListKnowledgeItemsUseCase,
     ListWaitingBrochureItemsUseCase,
+    ListAiKnowledgeItemsUseCase,
   ],
   exports: [
     CreateKnowledgeItemUseCase,
@@ -39,6 +41,7 @@ import { KnowledgeToolController } from "./interfaces/knowledge-tool.controller"
     GetKnowledgeItemUseCase,
     ListKnowledgeItemsUseCase,
     ListWaitingBrochureItemsUseCase,
+    ListAiKnowledgeItemsUseCase,
   ],
 })
 export class KnowledgeModule {}

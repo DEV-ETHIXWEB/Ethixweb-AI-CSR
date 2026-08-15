@@ -49,7 +49,7 @@ This is the concrete mechanism behind "an approved item is a promise that a huma
 
 The runtime-facing read path (`ListWaitingBrochureItemsUseCase` → `KnowledgeRepository.listApprovedForRuntime`) hardcodes `status: "approved"` directly in the Prisma `where` clause — it is not a parameter a caller can override, and there is no alternate code path from `KnowledgeToolController` to the repository that skips this filter. A `draft` or `disabled` item is **structurally unreachable** from voice-orchestrator's brochure fetch, regardless of any application-layer bug elsewhere — verified directly by reading `infrastructure/prisma-knowledge.repository.ts`'s `listApprovedForRuntime` method, not merely asserted.
 
-The equivalent AI-knowledge read path (also filtered to `approved`, `aiKnowledge: true`) exists at the repository/port level (`listApprovedForRuntime` accepts an `aiKnowledge` filter option identical in shape to the `waitingBrochure` one) but **no controller route or use case currently exposes it** — this phase built the waiting-brochure runtime read path because it directly closes docs/36's documented gap, but did not build an equivalent "AI conversation context" retrieval endpoint, since no part of the conversation/prompt-assembly pipeline was asked to consume tenant knowledge in this phase. This is a real, honest scope boundary: the data model and repository support it; the runtime doesn't consume it yet.
+The equivalent AI-knowledge read path (also filtered to `approved`, `aiKnowledge: true`) exists at the repository/port level (`listApprovedForRuntime` accepts an `aiKnowledge` filter option identical in shape to the `waitingBrochure` one) and, as of the Phase 15 integration-readiness pass, is now exposed the same way: `GET /internal/knowledge/:businessId/ai-knowledge` (`ListAiKnowledgeItemsUseCase`, `KnowledgeToolController`) and consumed by voice-orchestrator's `HttpAgentProfileProvider`, which folds the returned items into the system prompt's `BUSINESS OVERRIDE` layer (docs/03 §1) on every call start. Same enforcement boundary as the brochure path — `status: "approved"` is hardcoded in the same Prisma `where` clause, not a caller-overridable parameter.
 
 ## 6. Audit trail
 
@@ -65,30 +65,36 @@ Every mutation (`update`, `approve`, `disable`) writes one `AuditLog` row via a 
 | `PATCH` | `/dashboard/knowledge/:id`                         | JWT, owner/admin           | Edit — triggers the auto-revert in §4 when applicable                                                                                                                                                                                                                  |
 | `POST`  | `/dashboard/knowledge/:id/approve`                 | JWT, owner/admin           | `draft → approved` only                                                                                                                                                                                                                                                |
 | `POST`  | `/dashboard/knowledge/:id/disable`                 | JWT, owner/admin           | `draft` or `approved` → `disabled`                                                                                                                                                                                                                                     |
-| `GET`   | `/internal/knowledge/:businessId/waiting-brochure` | API-key, unrestricted role | Approved + `waitingBrochure`-flagged items, priority-ordered, `{id, text}[]` — voice-orchestrator's actual consumption point                                                                                                                                           |
+| `GET`   | `/internal/knowledge/:businessId/waiting-brochure` | API-key, unrestricted role | Approved + `waitingBrochure`-flagged items, priority-ordered, `{id, text}[]` — voice-orchestrator's `HttpCapacityConfigProvider` consumption point                                                                                                                     |
+| `GET`   | `/internal/knowledge/:businessId/ai-knowledge`     | API-key, unrestricted role | Approved + `aiKnowledge`-flagged items, priority-ordered, `{id, category, title, content, priority}[]` — voice-orchestrator's `HttpAgentProfileProvider` consumption point, folded into the system prompt's BUSINESS OVERRIDE layer                                    |
 
 `KnowledgeController` is `@Roles("owner", "admin")`-gated — approving content that will be spoken to real callers is a meaningful safety action, kept to the same role tier as emergency-rule and usage configuration, not opened to `dispatcher`/`viewer`.
 
 ## 8. How this reaches a real caller (the full path, end to end)
+
+Two independent consumption paths, both gated by the same `draft`/`approved`/`disabled` lifecycle:
 
 ```
 Tenant admin creates/edits knowledge item (draft)
         ↓
 Tenant admin approves it (draft → approved)
         ↓
-GET /internal/knowledge/:businessId/waiting-brochure
-  (voice-orchestrator's HttpCapacityConfigProvider, called on every call start)
-        ↓
-selectBrochureSegment(config.brochure, waitedMs)   [docs/36, unchanged by this phase]
-  — pure function, rotates through only what was returned above, wraps rather
-    than repeats, returns null if the brochure is disabled or empty
+   ┌────────────────────────────────────┴────────────────────────────────────┐
+   ↓                                                                          ↓
+GET /internal/knowledge/:businessId/waiting-brochure                GET /internal/knowledge/:businessId/ai-knowledge
+  (HttpCapacityConfigProvider, every call start)                      (HttpAgentProfileProvider, every call start)
+        ↓                                                                          ↓
+selectBrochureSegment(config.brochure, waitedMs)   [docs/36]         Folded into the system prompt's BUSINESS OVERRIDE
+  — pure function, rotates through only what was                      layer (docs/03 §1) — the model may reference this
+    returned above, wraps rather than repeats,                        content, verbatim, while answering the caller.
+    returns null if the brochure is disabled or empty
         ↓
 429 response's waitingExperience.brochureSegment
   (only when a caller genuinely could not be admitted — never during normal
-   in-progress turns, per docs/36 §7's filler-phrase distinction, unchanged)
+   in-progress turns, per docs/36 §7's filler-phrase distinction)
 ```
 
-Nothing in this chain can surface a `draft` or `disabled` item — enforced at the Prisma query (§5), not merely by application-layer discipline that a future change could accidentally weaken.
+Nothing in either path can surface a `draft` or `disabled` item — enforced at the Prisma query (§5), not merely by application-layer discipline that a future change could accidentally weaken. Both HTTP fetches are caught independently in their respective providers — a core-api outage degrades to an empty brochure / no business-override content, but never blocks call start (both providers' own comments).
 
 ## 9. Tenant isolation
 
@@ -98,9 +104,8 @@ Every use case takes `tenantId` from the authenticated principal (`AuthPrincipal
 
 Full coverage across every use case: creation always starts draft (3 independent enforcement points, §7), the auto-revert safety property (content-changed vs. content-resubmitted-unchanged vs. non-content-field-only edits), every valid/invalid lifecycle transition (`knowledge-lifecycle.spec.ts`), audit log entries written with correct actor/action/resource on update/approve/disable, and fake-repository-enforced tenant isolation (the fakes used in these specs genuinely filter by `tenantId`, not accept it as a no-op parameter, so a cross-tenant-leak test is meaningful rather than trivially passing).
 
-## 11. What was deliberately not built in this phase
+## 11. What was deliberately not built
 
 - A CRUD/versioning UI (docs/37 §11 — no frontend exists in this repo).
-- An AI-knowledge retrieval endpoint consumed by the conversation/prompt pipeline (§5 — the data model and repository support it, nothing currently reads it for that purpose).
 - Document/PDF ingestion — explicitly out of scope per the original request; the `content` field is free text only, entered directly, not extracted from an uploaded file.
 - Any mechanism preventing a tenant from entering false claims (fake awards, invented pricing, etc.) — this system enforces _approved-content-only_, not _factually-true-content-only_. Truthfulness of what a tenant approves remains the tenant's own responsibility, exactly as it would for any other business's marketing copy; this was never something software could verify.
