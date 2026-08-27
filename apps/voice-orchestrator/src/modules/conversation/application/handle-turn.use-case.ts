@@ -46,6 +46,16 @@ export interface HandleTurnResult {
   toolCallsExecuted: string[];
   interrupted: boolean;
   state: Conversation["state"];
+  /**
+   * Populated iff `escalateEmergency` succeeded THIS turn (docs/28 §M: "the
+   * tool result itself signals this to your runtime"). Previously this was
+   * only an internal `escalation.triggered` event with no HTTP-visible
+   * counterpart — a real runtime has no event bus to subscribe to, only
+   * this response, so `action: "forward_call"` was undetectable over the
+   * documented contract. Additive field, absent (not null) on every turn
+   * that didn't escalate, to keep existing consumers' shape checks unaffected.
+   */
+  escalation?: { severity: string; action: string };
 }
 
 /** Bounds a pathological model tool-loop. Not a documented constant — an INFERRED safety limit; a real call needs at most a handful (searchCustomer → escalateEmergency → createLead). */
@@ -154,6 +164,7 @@ export class HandleTurnUseCase {
     let responseText = "";
     const toolCallsExecuted: string[] = [];
     let interrupted = false;
+    let escalation: { severity: string; action: string } | undefined;
 
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       conversation.messages = compressMessages(conversation.messages);
@@ -176,12 +187,22 @@ export class HandleTurnUseCase {
 
       for (const toolCall of turn.toolCalls) {
         toolCallsExecuted.push(toolCall.name);
-        const toolResult = await this.runTool(conversation, toolCall, command.allowedTools);
+        const { output, escalation: toolEscalation } = await this.runTool(
+          conversation,
+          toolCall,
+          command.allowedTools,
+        );
         conversation.messages.push({
           role: "tool",
           toolCallId: toolCall.id,
-          content: JSON.stringify(toolResult),
+          content: JSON.stringify(output),
         });
+        // Last escalation in the turn wins — MAX_TOOL_ITERATIONS bounds a
+        // pathological loop, not a realistic multi-escalation turn, but a
+        // deterministic rule beats an arbitrary first/last pick left unstated.
+        if (toolEscalation) {
+          escalation = toolEscalation;
+        }
       }
     }
 
@@ -214,6 +235,7 @@ export class HandleTurnUseCase {
       toolCallsExecuted,
       interrupted,
       state: conversation.state,
+      ...(escalation ? { escalation } : {}),
     };
   }
 
@@ -289,7 +311,7 @@ export class HandleTurnUseCase {
     conversation: Conversation,
     toolCall: AiToolCallRequest,
     allowedTools: readonly string[],
-  ): Promise<unknown> {
+  ): Promise<{ output: unknown; escalation?: { severity: string; action: string } }> {
     const at = new Date().toISOString();
     await this.eventBus.publish({
       type: "tool.called",
@@ -320,10 +342,14 @@ export class HandleTurnUseCase {
       });
 
       if (result.status === "success") {
-        await this.reactToToolSuccess(conversation, toolCall.name, result.output);
-        return result.output;
+        const escalation = await this.reactToToolSuccess(
+          conversation,
+          toolCall.name,
+          result.output,
+        );
+        return { output: result.output, ...(escalation ? { escalation } : {}) };
       }
-      return { error: "tool_unavailable", detail: result.reason };
+      return { output: { error: "tool_unavailable", detail: result.reason } };
     } catch (error) {
       // A rejected tool (unknown/unauthorized/invalid args) is returned to
       // the MODEL as a structured error rather than thrown — docs/04 §2:
@@ -336,16 +362,24 @@ export class HandleTurnUseCase {
         toolName: toolCall.name,
         reason,
       });
-      return { error: "tool_rejected", detail: reason };
+      return { output: { error: "tool_rejected", detail: reason } };
     }
   }
 
-  /** Side effects the ORCHESTRATOR owns, not the model (docs/04 §3.8: "the model decides, infrastructure code acts"). */
+  /**
+   * Side effects the ORCHESTRATOR owns, not the model (docs/04 §3.8: "the
+   * model decides, infrastructure code acts"). Returns the escalation
+   * signal (rather than only publishing the internal `escalation.triggered`
+   * event) so `runTool`/`runTurn` can additionally surface it on the HTTP
+   * response — docs/28 §M's "the tool result itself signals this to your
+   * runtime" has no other channel a real, out-of-process Voice Runtime can
+   * observe.
+   */
   private async reactToToolSuccess(
     conversation: Conversation,
     toolName: string,
     output: unknown,
-  ): Promise<void> {
+  ): Promise<{ severity: string; action: string } | undefined> {
     if (toolName === "createLead" && isRecord(output) && typeof output["lead_id"] === "string") {
       conversation.leadId = output["lead_id"];
       await this.eventBus.publish({
@@ -355,19 +389,24 @@ export class HandleTurnUseCase {
         leadId: output["lead_id"],
         at: new Date().toISOString(),
       });
-      return;
+      return undefined;
     }
 
     if (toolName === "escalateEmergency" && isRecord(output) && output["isEmergency"] === true) {
+      const severity = String(output["severity"]);
+      const action = String(output["action"]);
       await this.eventBus.publish({
         type: "escalation.triggered",
         tenantId: conversation.tenantId,
         conversationId: conversation.id,
-        severity: String(output["severity"]),
-        action: String(output["action"]),
+        severity,
+        action,
         at: new Date().toISOString(),
       });
+      return { severity, action };
     }
+
+    return undefined;
   }
 
   private appendTranscript(conversation: Conversation, turn: TranscriptTurn): void {

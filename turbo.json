@@ -31,6 +31,10 @@
     "test": {
       "dependsOn": ["test:unit"],
       "outputs": []
+    },
+    "start:dev": {
+      "cache": false,
+      "persistent": true
     }
   }
 }

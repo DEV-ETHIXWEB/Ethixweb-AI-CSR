@@ -64,6 +64,12 @@ export class TurnResultResponseDto {
   @ApiProperty({ type: [String] }) toolCallsExecuted: string[];
   @ApiProperty() interrupted: boolean;
   @ApiProperty() state: ConversationState;
+  @ApiProperty({
+    required: false,
+    description:
+      'Present iff escalateEmergency succeeded this turn (docs/28 §M). action === "forward_call" is the runtime\'s signal to execute the actual SIP/PSTN transfer — this service never places or transfers calls itself.',
+  })
+  escalation?: { severity: string; action: string };
 
   constructor(result: {
     conversationId: string;
@@ -71,11 +77,15 @@ export class TurnResultResponseDto {
     toolCallsExecuted: string[];
     interrupted: boolean;
     state: ConversationState;
+    escalation?: { severity: string; action: string };
   }) {
     this.conversationId = result.conversationId;
     this.responseText = result.responseText;
     this.toolCallsExecuted = result.toolCallsExecuted;
     this.interrupted = result.interrupted;
     this.state = result.state;
+    if (result.escalation) {
+      this.escalation = result.escalation;
+    }
   }
 }

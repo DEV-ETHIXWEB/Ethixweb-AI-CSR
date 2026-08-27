@@ -1,0 +1,37 @@
+import type { TextToSpeechProvider } from "../../domain/text-to-speech.port";
+
+/**
+ * Hand-written fake — yields a fixed number of small fake audio chunks per
+ * call rather than any real synthesis, and honors an AbortSignal exactly
+ * like the real ElevenLabs adapter must (stops yielding promptly), so
+ * barge-in-during-TTS tests can assert on partial playback.
+ */
+export class FakeTextToSpeechProvider implements TextToSpeechProvider {
+  readonly synthesizeCalls: string[] = [];
+  chunksPerCall = 3;
+  /** Delay (ms) before each chunk — 0 by default so unit tests run instantly; a test can raise this to create a window for an abort signal to fire mid-stream. */
+  chunkDelayMs = 0;
+  /** When set, synthesize throws this instead of yielding — simulates ElevenLabs failure. */
+  failNextWith: Error | null = null;
+
+  async *synthesize(text: string, signal?: AbortSignal): AsyncIterable<Buffer> {
+    this.synthesizeCalls.push(text);
+    if (this.failNextWith) {
+      const error = this.failNextWith;
+      this.failNextWith = null;
+      throw error;
+    }
+    for (let i = 0; i < this.chunksPerCall; i++) {
+      if (signal?.aborted) {
+        return;
+      }
+      if (this.chunkDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, this.chunkDelayMs));
+      }
+      if (signal?.aborted) {
+        return;
+      }
+      yield Buffer.from(`chunk-${i}`);
+    }
+  }
+}
