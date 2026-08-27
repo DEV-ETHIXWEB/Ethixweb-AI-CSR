@@ -16,7 +16,25 @@ export class RedisService extends Redis implements OnModuleInit, OnModuleDestroy
     if (!url) {
       throw new Error("REDIS_URL is not set.");
     }
-    super(url, { lazyConnect: true });
+    super(url, {
+      lazyConnect: true,
+      // ioredis's own defaults (maxRetriesPerRequest: 20, no
+      // commandTimeout) mean a single command issued while Redis is
+      // unreachable doesn't reject until 20 reconnect attempts have been
+      // exhausted — reproduced live: with Redis stopped, POST /v1/auth/login
+      // (rate limiter + refresh-token store, both Redis-backed) hung for
+      // 30+ seconds with no response at all, rather than failing fast with
+      // a clean 5xx. Bounded here so ANY command against an unreachable
+      // Redis fails within ~3s instead of tens of seconds — the
+      // request-path code (RedisRateLimiter, RedisRefreshTokenStore, etc.)
+      // already either propagates or is meant to propagate that failure as
+      // a real error response, it just never got the chance to before this
+      // fix. Does not affect the live-call path (X-Api-Key-authenticated
+      // tool-broker endpoints) at all — that path was already unaffected
+      // by a Redis outage, confirmed live before this change.
+      maxRetriesPerRequest: 3,
+      commandTimeout: 3000,
+    });
   }
 
   async onModuleInit(): Promise<void> {
