@@ -184,6 +184,51 @@ describe("CreateLeadUseCase", () => {
     },
   );
 
+  it(
+    "REGRESSION: issues SAVEPOINT before the insert attempt and ROLLBACK TO SAVEPOINT before " +
+      "the recovery read on a call_id race — without this, the recovery read runs inside a " +
+      "Postgres transaction Postgres itself already aborted after the constraint violation " +
+      "(25P02: 'current transaction is aborted'), which a mocked repository can never simulate " +
+      "but genuine concurrent load against real Postgres hit immediately (found and fixed as a " +
+      "real production-blocking bug, not a theoretical one)",
+    async () => {
+      const executedRawStatements: string[] = [];
+      const fakeDb = {
+        $executeRaw: (strings: TemplateStringsArray) => {
+          executedRawStatements.push(strings.join(""));
+          return Promise.resolve(0);
+        },
+      };
+      const tenantContext = {
+        run: async <T>(_tenantId: string, work: (db: unknown) => Promise<T>): Promise<T> =>
+          work(fakeDb),
+      };
+      const leadRepository = new FakeLeadRepository();
+      const customerLookupPort = new FakeCustomerLookupPort();
+      seedCustomer(customerLookupPort);
+      const useCase = new CreateLeadUseCase(
+        tenantContext as unknown as TenantContextService,
+        leadRepository,
+        customerLookupPort,
+        new FakeCrmLeadSyncPort(),
+        new FakeOutboxWriterFactory(),
+        createNoopLogger(),
+      );
+      const command = baseCommand();
+
+      await Promise.all([useCase.execute(command), useCase.execute(command)]);
+
+      expect(executedRawStatements).toContain("SAVEPOINT create_lead_attempt");
+      expect(executedRawStatements).toContain("ROLLBACK TO SAVEPOINT create_lead_attempt");
+      // The SAVEPOINT must precede its own ROLLBACK for the losing call.
+      const savepointIndex = executedRawStatements.indexOf("SAVEPOINT create_lead_attempt");
+      const rollbackIndex = executedRawStatements.indexOf(
+        "ROLLBACK TO SAVEPOINT create_lead_attempt",
+      );
+      expect(savepointIndex).toBeLessThan(rollbackIndex);
+    },
+  );
+
   it("salvages a losing attempt's own successful CRM sync onto the winning row rather than discarding it", async () => {
     const leadRepository = new FakeLeadRepository();
     const customerLookupPort = new FakeCustomerLookupPort();

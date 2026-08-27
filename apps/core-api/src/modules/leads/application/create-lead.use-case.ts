@@ -154,6 +154,16 @@ export class CreateLeadUseCase {
     command: CreateLeadCommand,
     crmLeadId: string | null,
   ): Promise<{ lead: Lead; created: boolean }> {
+    // A SAVEPOINT taken immediately before the insert attempt — Postgres
+    // aborts the ENTIRE enclosing transaction after any error (including a
+    // unique-constraint violation), so without this, every query after the
+    // catch below (starting with findByCallId) fails with `25P02: current
+    // transaction is aborted, commands ignored until end of transaction
+    // block`, even though the code looks like it's "handling" the race.
+    // Found under genuine concurrent-request load against a real Postgres
+    // instance — no mocked-repository unit test can catch this, since the
+    // mock never actually poisons a transaction the way real Postgres does.
+    await db.$executeRaw`SAVEPOINT create_lead_attempt`;
     try {
       const lead = await this.leadRepository.create(db, {
         tenantId: command.tenantId,
@@ -171,6 +181,9 @@ export class CreateLeadUseCase {
       if (!(error instanceof LeadCallIdAlreadyExistsError)) {
         throw error;
       }
+      // Un-poisons the transaction so the recovery read below can actually
+      // run — see the SAVEPOINT comment above.
+      await db.$executeRaw`ROLLBACK TO SAVEPOINT create_lead_attempt`;
       let existing = await this.leadRepository.findByCallId(db, command.tenantId, command.callId);
       if (!existing) {
         throw new Error(
