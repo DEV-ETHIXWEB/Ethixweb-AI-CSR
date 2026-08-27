@@ -10,6 +10,7 @@ import {
   EMERGENCY_RULE_REPOSITORY,
   type EmergencyRuleRepository,
 } from "../domain/ports/emergency-rule-repository.port";
+import { ResolveOnCallUseCase } from "./resolve-oncall.use-case";
 
 export interface EscalateEmergencyCommand {
   tenantId: string;
@@ -24,6 +25,14 @@ export interface EscalateEmergencyResult {
   severity: EmergencySeverity;
   action: EmergencyAction;
   matchedPattern: string | null;
+  /**
+   * Phone numbers to transfer to, in ring order — populated only when
+   * `action === "forward_call"` (empty otherwise). This is what closes the
+   * loop on `ResolveOnCallUseCase`'s own documented purpose ("the Voice
+   * Runtime's SIP-transfer logic") — previously computed nowhere, so a
+   * `forward_call` action had no destination for the runtime to act on.
+   */
+  transferTargets: string[];
 }
 
 /**
@@ -44,6 +53,7 @@ export class EscalateEmergencyUseCase {
     private readonly tenantContext: TenantContextService,
     @Inject(EMERGENCY_RULE_REPOSITORY)
     private readonly emergencyRuleRepository: EmergencyRuleRepository,
+    private readonly resolveOnCall: ResolveOnCallUseCase,
   ) {}
 
   async execute(command: EscalateEmergencyCommand): Promise<EscalateEmergencyResult> {
@@ -56,6 +66,22 @@ export class EscalateEmergencyUseCase {
       .join(" ")
       .toLowerCase();
 
+    const decision = await this.decide(command, haystack);
+    if (decision.action !== "forward_call") {
+      return { ...decision, transferTargets: [] };
+    }
+
+    const transferTargets = await this.resolveTransferTargets(
+      command.tenantId,
+      command.businessId,
+    );
+    return { ...decision, transferTargets };
+  }
+
+  private async decide(
+    command: EscalateEmergencyCommand,
+    haystack: string,
+  ): Promise<Omit<EscalateEmergencyResult, "transferTargets">> {
     try {
       const configuredRules = await this.tenantContext.run(command.tenantId, (db) =>
         this.emergencyRuleRepository.listActiveByBusiness(db, command.tenantId, command.businessId),
@@ -109,6 +135,22 @@ export class EscalateEmergencyUseCase {
         action: "priority_notify",
         matchedPattern: null,
       };
+    }
+  }
+
+  /**
+   * A failure here must not crash the escalation itself — an empty target
+   * list is `ResolveOnCallUseCase`'s own documented "nobody reachable"
+   * signal, which the runtime/notification fallback already handles
+   * (docs/07 §5.3's "all exhausted -> voicemail + highest-priority
+   * notification fan-out").
+   */
+  private async resolveTransferTargets(tenantId: string, businessId: string): Promise<string[]> {
+    try {
+      const { targets } = await this.resolveOnCall.execute(tenantId, businessId);
+      return targets;
+    } catch {
+      return [];
     }
   }
 }

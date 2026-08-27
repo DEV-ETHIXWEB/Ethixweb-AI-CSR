@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { resolve } from "node:path";
 import { APP_FILTER } from "@nestjs/core";
 import { ConfigModule } from "@nestjs/config";
 import { AuthModule } from "./modules/auth/auth.module";
@@ -23,7 +24,11 @@ import { RedisModule } from "./shared/redis/redis.module";
     // on a missing/malformed required var — see that file's own comment on
     // why this exists instead of every secret failing lazily, mid-request,
     // the first time its owning service is instantiated.
-    ConfigModule.forRoot({ isGlobal: true, validate }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: resolve(__dirname, "../../../.env"),
+      validate,
+    }),
     AppLoggerModule,
     PrismaModule,
     RedisModule,

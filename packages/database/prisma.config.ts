@@ -1,4 +1,18 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { defineConfig, env } from "prisma/config";
+
+// Prisma's own `.env` auto-loading only looks in this file's directory
+// (packages/database), but the real `.env` lives at the monorepo root
+// (docker-compose.yml provides the matching Postgres there, and every app
+// reads from that same root file). Same load scripts/seed-local.mjs already
+// does for the identical reason — propagated here since prisma.config.ts
+// hit the same gap (MIGRATION_DATABASE_URL unresolved when invoked via
+// `pnpm --filter @ethixweb/database run migrate:dev` from a clean checkout).
+const rootEnvFile = join(import.meta.dirname, "../../.env");
+if (existsSync(rootEnvFile)) {
+  process.loadEnvFile(rootEnvFile);
+}
 
 /**
  * Prisma 7 moved CLI/Migrate connection config out of schema.prisma and into

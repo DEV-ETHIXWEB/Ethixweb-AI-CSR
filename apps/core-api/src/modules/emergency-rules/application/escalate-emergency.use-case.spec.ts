@@ -1,12 +1,19 @@
 import type { TenantContextService } from "../../../shared/prisma/tenant-context.service";
 import { FakeEmergencyRuleRepository } from "./__fakes__/fake-emergency-rule-repository";
+import { FakeOnCallRepository } from "./__fakes__/fake-oncall-repository";
 import { FakeTenantContextService } from "./__fakes__/fake-tenant-context";
 import { EscalateEmergencyUseCase } from "./escalate-emergency.use-case";
+import { ResolveOnCallUseCase } from "./resolve-oncall.use-case";
 
-function buildUseCase(repository = new FakeEmergencyRuleRepository()) {
+function buildUseCase(
+  repository = new FakeEmergencyRuleRepository(),
+  onCallRepository = new FakeOnCallRepository(),
+) {
+  const tenantContext = new FakeTenantContextService() as unknown as TenantContextService;
   return new EscalateEmergencyUseCase(
-    new FakeTenantContextService() as unknown as TenantContextService,
+    tenantContext,
     repository,
+    new ResolveOnCallUseCase(tenantContext, onCallRepository),
   );
 }
 
@@ -26,6 +33,7 @@ describe("EscalateEmergencyUseCase", () => {
       severity: "critical",
       action: "forward_call",
       matchedPattern: "burst pipe",
+      transferTargets: [],
     });
   });
 
@@ -44,6 +52,7 @@ describe("EscalateEmergencyUseCase", () => {
       severity: "medium",
       action: "standard_lead",
       matchedPattern: null,
+      transferTargets: [],
     });
   });
 
@@ -81,6 +90,7 @@ describe("EscalateEmergencyUseCase", () => {
       severity: "critical",
       action: "forward_call",
       matchedPattern: "ac out",
+      transferTargets: [],
     });
   });
 
@@ -115,6 +125,71 @@ describe("EscalateEmergencyUseCase", () => {
       severity: "medium",
       action: "priority_notify",
       matchedPattern: null,
+      transferTargets: [],
     });
+  });
+
+  it("resolves on-call transfer targets when the action is forward_call", async () => {
+    const onCallRepository = new FakeOnCallRepository();
+    onCallRepository.seedRotation({
+      id: "rotation-1",
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      name: "Primary",
+      strategy: "priority_list",
+    });
+    onCallRepository.seedShift({
+      id: "shift-1",
+      tenantId: "tenant-1",
+      rotationId: "rotation-1",
+      userId: "user-1",
+      startsAt: new Date(Date.now() - 60_000),
+      endsAt: new Date(Date.now() + 60_000),
+      phoneOverride: "+15551234567",
+    });
+    const useCase = buildUseCase(new FakeEmergencyRuleRepository(), onCallRepository);
+
+    const result = await useCase.execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      callId: "call-1",
+      description: "gas leak in the kitchen",
+    });
+
+    expect(result.action).toBe("forward_call");
+    expect(result.transferTargets).toEqual(["+15551234567"]);
+  });
+
+  it("does not resolve on-call targets for non-forward_call actions", async () => {
+    const onCallRepository = new FakeOnCallRepository();
+    const resolveSpy = jest.spyOn(onCallRepository, "listRotationsByBusiness");
+    const useCase = buildUseCase(new FakeEmergencyRuleRepository(), onCallRepository);
+
+    const result = await useCase.execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      callId: "call-1",
+      description: "my kitchen faucet drips a little",
+    });
+
+    expect(result.action).toBe("standard_lead");
+    expect(result.transferTargets).toEqual([]);
+    expect(resolveSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails safe to empty transferTargets (not a thrown error) when on-call resolution itself fails", async () => {
+    const onCallRepository = new FakeOnCallRepository();
+    jest.spyOn(onCallRepository, "listRotationsByBusiness").mockRejectedValue(new Error("db down"));
+    const useCase = buildUseCase(new FakeEmergencyRuleRepository(), onCallRepository);
+
+    const result = await useCase.execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      callId: "call-1",
+      description: "gas leak in the kitchen",
+    });
+
+    expect(result.action).toBe("forward_call");
+    expect(result.transferTargets).toEqual([]);
   });
 });

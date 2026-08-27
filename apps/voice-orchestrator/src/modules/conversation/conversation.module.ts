@@ -3,6 +3,7 @@ import { AiProviderModule } from "../ai-provider/ai-provider.module";
 import { PromptModule } from "../prompt/prompt.module";
 import { ToolBrokerModule } from "../tool-broker/tool-broker.module";
 import { EndConversationUseCase } from "./application/end-conversation.use-case";
+import { GetConversationByCallIdUseCase } from "./application/get-conversation-by-call-id.use-case";
 import { GetConversationUseCase } from "./application/get-conversation.use-case";
 import { HandleTurnUseCase } from "./application/handle-turn.use-case";
 import { StartConversationUseCase } from "./application/start-conversation.use-case";
@@ -20,6 +21,7 @@ import { ConversationsController } from "./interfaces/conversations.controller";
     HandleTurnUseCase,
     EndConversationUseCase,
     GetConversationUseCase,
+    GetConversationByCallIdUseCase,
     TransitionConversationStateUseCase,
   ],
   exports: [StartConversationUseCase, HandleTurnUseCase, EndConversationUseCase],

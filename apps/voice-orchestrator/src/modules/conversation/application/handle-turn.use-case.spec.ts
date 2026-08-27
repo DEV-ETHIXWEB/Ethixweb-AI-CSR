@@ -203,6 +203,51 @@ describe("HandleTurnUseCase", () => {
     expect(saved?.leadId).toBe("lead-1");
   });
 
+  it("surfaces transferTargets on the turn result when escalateEmergency returns forward_call", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "tool_call", toolCall: { id: "call-1", name: "escalateEmergency", arguments: {} } },
+        { type: "done", stopReason: "tool_use" },
+      ],
+      [
+        { type: "text_delta", text: "Connecting you now." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const escalateHandler = {
+      execute: jest.fn().mockResolvedValue({
+        isEmergency: true,
+        severity: "critical",
+        action: "forward_call",
+        transferTargets: ["+15551234567"],
+      }),
+    };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "escalateEmergency", handler: escalateHandler }],
+    });
+
+    const result = await useCase.execute(
+      baseCommand({ transcript: "there's a gas leak", allowedTools: ["escalateEmergency"] }),
+    );
+
+    expect(result.transferTargets).toEqual(["+15551234567"]);
+  });
+
+  it("leaves transferTargets null when no tool call escalates with forward_call", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const { useCase } = buildUseCase({ repository });
+
+    const result = await useCase.execute(baseCommand({ transcript: "just a routine question" }));
+
+    expect(result.transferTargets).toBeNull();
+  });
+
   it("stops the loop and marks interrupted when the abort signal fires mid-stream", async () => {
     const repository = new FakeConversationRepository();
     repository.seed(baseConversation());

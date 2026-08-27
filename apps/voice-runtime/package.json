@@ -1,0 +1,31 @@
+{
+  "name": "@ethixweb/voice-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Voice Runtime (docs/24-runtime-orchestrator-contract.md) — the telephony/STT/TTS transport layer. A LiveKit Agents (Node.js) worker: answers the SIP call, converts audio<->text, and drives voice-orchestrator's 5-endpoint HTTP contract. Owns no conversation state, no LLM, no tool logic — text in, text out, per docs/02 §0's swap boundary.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/agent.ts dev",
+    "start": "node dist/agent.js start",
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:unit": "jest --config jest.config.js"
+  },
+  "dependencies": {
+    "@ethixweb/shared-kernel": "workspace:*",
+    "@livekit/agents": "^1.0.0",
+    "@livekit/agents-plugin-cartesia": "^1.0.0",
+    "@livekit/agents-plugin-deepgram": "^1.0.0",
+    "@livekit/agents-plugin-silero": "^1.0.0",
+    "@livekit/rtc-node": "^0.13.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.13",
+    "@types/node": "^22.9.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

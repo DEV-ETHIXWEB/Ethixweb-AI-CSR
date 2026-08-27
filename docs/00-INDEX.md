@@ -57,6 +57,7 @@ This blueprint was reviewed a second time specifically to challenge its own assu
 24. [24-runtime-orchestrator-contract.md](24-runtime-orchestrator-contract.md) — as-built Voice Runtime ↔ Orchestrator HTTP contract (Phase 8), turn-idempotency requirements, and the concrete checklist for wiring up a live runtime.
 25. [25-service-credential-provisioning.md](25-service-credential-provisioning.md) — the exact HTTP call to mint voice-orchestrator's core-api service API key.
 26. [26-usage-metering.md](26-usage-metering.md) — as-built usage/metering module (Phase 9): the normalized `UsageRecord` measurement layer that feeds — but deliberately does not replace — the Stripe billing system of record (ADR-008).
+27. [27-voice-runtime-provisioning.md](27-voice-runtime-provisioning.md) — as-built `apps/voice-runtime` (LiveKit Agents worker): the external accounts, SIP trunk, and dispatch-rule setup needed to take it from typechecking to answering a real call.
 
 ## What's not yet decided (open items requiring your sign-off before Phase 0 repo scaffold)
 

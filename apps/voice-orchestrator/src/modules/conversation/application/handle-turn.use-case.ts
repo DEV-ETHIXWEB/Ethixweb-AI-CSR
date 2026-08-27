@@ -46,6 +46,14 @@ export interface HandleTurnResult {
   toolCallsExecuted: string[];
   interrupted: boolean;
   state: Conversation["state"];
+  /**
+   * Phone numbers to transfer to, in ring order — present only when this
+   * turn's `escalateEmergency` tool call returned `action: "forward_call"`.
+   * The runtime executes the actual SIP transfer (docs/24 §4's
+   * "emergency-transfer SIP handoff" checklist item); this service only
+   * surfaces the destination, per docs/02 §4/§0's text-in-text-out boundary.
+   */
+  transferTargets: string[] | null;
 }
 
 /** Bounds a pathological model tool-loop. Not a documented constant — an INFERRED safety limit; a real call needs at most a handful (searchCustomer → escalateEmergency → createLead). */
@@ -154,6 +162,7 @@ export class HandleTurnUseCase {
     let responseText = "";
     const toolCallsExecuted: string[] = [];
     let interrupted = false;
+    let transferTargets: string[] | null = null;
 
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       conversation.messages = compressMessages(conversation.messages);
@@ -177,6 +186,14 @@ export class HandleTurnUseCase {
       for (const toolCall of turn.toolCalls) {
         toolCallsExecuted.push(toolCall.name);
         const toolResult = await this.runTool(conversation, toolCall, command.allowedTools);
+        if (
+          toolCall.name === "escalateEmergency" &&
+          isRecord(toolResult) &&
+          toolResult["action"] === "forward_call" &&
+          Array.isArray(toolResult["transferTargets"])
+        ) {
+          transferTargets = toolResult["transferTargets"] as string[];
+        }
         conversation.messages.push({
           role: "tool",
           toolCallId: toolCall.id,
@@ -214,6 +231,7 @@ export class HandleTurnUseCase {
       toolCallsExecuted,
       interrupted,
       state: conversation.state,
+      transferTargets,
     };
   }
 

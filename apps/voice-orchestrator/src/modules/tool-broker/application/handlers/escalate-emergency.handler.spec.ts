@@ -10,6 +10,7 @@ describe("EscalateEmergencyHandler", () => {
       isEmergency: true,
       severity: "critical",
       action: "forward_call",
+      transferTargets: ["+15551234567"],
     });
     const handler = new EscalateEmergencyHandler(client);
 
@@ -18,7 +19,12 @@ describe("EscalateEmergencyHandler", () => {
       context,
     );
 
-    expect(result).toEqual({ isEmergency: true, severity: "critical", action: "forward_call" });
+    expect(result).toEqual({
+      isEmergency: true,
+      severity: "critical",
+      action: "forward_call",
+      transferTargets: ["+15551234567"],
+    });
     expect(client.postCalls[0]).toEqual({
       path: "/internal/emergency-rules/escalate",
       body: {

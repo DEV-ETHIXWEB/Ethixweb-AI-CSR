@@ -17,7 +17,16 @@
 // migrate:deploy), using the MIGRATION_DATABASE_URL (owner) credential —
 // only the owner can ALTER another role.
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import pg from "pg";
+
+// Same root-`.env` load as seed-local.mjs and prisma.config.ts — this
+// script's cwd is packages/database, the `.env` is at the repo root.
+const rootEnvFile = join(import.meta.dirname, "../../../.env");
+if (existsSync(rootEnvFile)) {
+  process.loadEnvFile(rootEnvFile);
+}
 
 const migrationUrl = process.env.MIGRATION_DATABASE_URL;
 if (!migrationUrl) {

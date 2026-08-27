@@ -11,6 +11,7 @@ import {
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { EndConversationUseCase } from "../application/end-conversation.use-case";
+import { GetConversationByCallIdUseCase } from "../application/get-conversation-by-call-id.use-case";
 import { GetConversationUseCase } from "../application/get-conversation.use-case";
 import { HandleTurnUseCase } from "../application/handle-turn.use-case";
 import { StartConversationUseCase } from "../application/start-conversation.use-case";
@@ -48,6 +49,7 @@ export class ConversationsController {
     private readonly handleTurn: HandleTurnUseCase,
     private readonly endConversation: EndConversationUseCase,
     private readonly getConversation: GetConversationUseCase,
+    private readonly getConversationByCallId: GetConversationByCallIdUseCase,
     private readonly transitionState: TransitionConversationStateUseCase,
   ) {}
 
@@ -146,6 +148,22 @@ export class ConversationsController {
       conversationId: id,
       endReason: dto.endReason,
     });
+    return ConversationResponseDto.fromDomain(conversation);
+  }
+
+  @Get("by-call/:callId")
+  @ApiQuery({ name: "tenantId", required: true })
+  @ApiOperation({
+    summary:
+      "Look up a conversation by the Voice Runtime's own callId (docs/24 §5) — for a runtime process that restarted mid-call and lost the conversationId it cached from the original POST / response.",
+  })
+  @ApiResponse({ status: 200, description: "The conversation", type: ConversationResponseDto })
+  @ApiResponse({ status: 404, description: "No conversation for this tenant/callId" })
+  async findByCallId(
+    @Param("callId", ParseUUIDPipe) callId: string,
+    @Query("tenantId", ParseUUIDPipe) tenantId: string,
+  ): Promise<ConversationResponseDto> {
+    const conversation = await this.getConversationByCallId.execute(tenantId, callId);
     return ConversationResponseDto.fromDomain(conversation);
   }
 

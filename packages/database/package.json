@@ -14,11 +14,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "migrate:dev": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
-    "db:setup-local-runtime-role": "node scripts/setup-local-runtime-role.mjs"
+    "db:setup-local-runtime-role": "node scripts/setup-local-runtime-role.mjs",
+    "seed:local": "node scripts/seed-local.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.9.1",
+    "bcryptjs": "^2.4.3",
     "pg": "^8.13.1"
   },
   "devDependencies": {

@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { resolve } from "node:path";
 import { APP_FILTER, APP_GUARD } from "@nestjs/core";
 import { ConfigModule } from "@nestjs/config";
 import { AiProviderModule } from "./modules/ai-provider/ai-provider.module";
@@ -19,7 +20,11 @@ import { DomainExceptionFilter } from "./shared/http/domain-exception.filter";
     // on a missing/malformed required var (REDIS_URL, CORE_API_BASE_URL,
     // CORE_API_SERVICE_API_KEY, ORCHESTRATOR_SERVICE_TOKEN) rather than
     // this service silently rejecting every call once it's already live.
-    ConfigModule.forRoot({ isGlobal: true, validate }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: resolve(__dirname, "../../../.env"),
+      validate,
+    }),
     AppLoggerModule,
     RedisModule,
     HealthModule,

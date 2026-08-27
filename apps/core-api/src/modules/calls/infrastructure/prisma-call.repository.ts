@@ -43,6 +43,19 @@ function toEntity(row: CallRow): Call {
 @Injectable()
 export class PrismaCallRepository implements CallRepository {
   async create(db: Db, input: CreateCallInput): Promise<Call> {
+    // A unique-constraint violation is a real Postgres error, not just a
+    // caught JS exception — it poisons the REST of the enclosing
+    // transaction (25P02 "current transaction is aborted") until a
+    // ROLLBACK. StartCallUseCase's own catch-and-refetch runs
+    // findByTelephonyCallSid against this SAME transaction (db is the
+    // shared TenantContextService.run() tx, needed so app.tenant_id stays
+    // set for RLS) — without a savepoint here, that refetch would itself
+    // fail with 25P02, discovered by a real-Postgres integration test
+    // (unit tests against the fake repository never hit real transaction
+    // semantics, so this was invisible until then). SAVEPOINT/ROLLBACK TO
+    // SAVEPOINT scopes the failure to just this INSERT, leaving the outer
+    // transaction healthy for the caller's subsequent query.
+    await db.$executeRaw`SAVEPOINT create_call`;
     try {
       const row = await db.call.create({
         data: {
@@ -57,8 +70,10 @@ export class PrismaCallRepository implements CallRepository {
           startedAt: new Date(input.startedAt),
         },
       });
+      await db.$executeRaw`RELEASE SAVEPOINT create_call`;
       return toEntity(row);
     } catch (error) {
+      await db.$executeRaw`ROLLBACK TO SAVEPOINT create_call`;
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === UNIQUE_CONSTRAINT_VIOLATION

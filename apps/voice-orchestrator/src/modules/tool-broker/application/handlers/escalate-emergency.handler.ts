@@ -10,6 +10,8 @@ export interface EscalateEmergencyOutput {
   isEmergency: boolean;
   severity: EmergencySeverity;
   action: EmergencyAction;
+  /** Phone numbers to transfer to, in ring order — non-empty only when action is forward_call. See docs/24 §4's "emergency-transfer SIP handoff" checklist item, which this closes. */
+  transferTargets: string[];
 }
 
 /**
