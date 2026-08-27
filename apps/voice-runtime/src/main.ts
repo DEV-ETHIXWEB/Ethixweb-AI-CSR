@@ -2,7 +2,6 @@ import "./tracing";
 import { startTracing, shutdownTracing } from "./tracing";
 startTracing(process.env["OTEL_SERVICE_NAME"] ?? "voice-runtime");
 
-import fastifyFormbody from "@fastify/formbody";
 import fastifyWebsocket from "@fastify/websocket";
 import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
@@ -18,11 +17,13 @@ async function bootstrap(): Promise<void> {
 
   const fastify = app.getHttpAdapter().getInstance();
   // Twilio's Voice webhook posts application/x-www-form-urlencoded, not
-  // JSON — identical requirement to apps/core-api's own SMS webhook (see
-  // that app's main.ts), registered directly on the underlying Fastify
-  // instance since @nestjs/platform-fastify has no first-class "parse
-  // this content-type" module wrapper.
-  await fastify.register(fastifyFormbody);
+  // JSON. Nest's FastifyAdapter already registers a urlencoded
+  // content-type parser itself during app.init()/app.listen()
+  // (registerUrlencodedContentParser, querystring.parse-based) —
+  // sufficient for Twilio's flat key-value form bodies. A manual
+  // `@fastify/formbody` registration was tried here previously but
+  // crashes bootstrap with FST_ERR_CTP_ALREADY_PRESENT (see
+  // apps/core-api/src/main.ts's identical fix and comment for why).
   await fastify.register(fastifyWebsocket);
 
   app.useGlobalPipes(

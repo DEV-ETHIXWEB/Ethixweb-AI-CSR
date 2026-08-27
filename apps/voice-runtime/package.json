@@ -16,7 +16,6 @@
   },
   "dependencies": {
     "@ethixweb/shared-kernel": "workspace:*",
-    "@fastify/formbody": "^7.4.0",
     "@fastify/websocket": "^8.3.1",
     "@nestjs/common": "^10.4.6",
     "@nestjs/config": "^3.3.0",

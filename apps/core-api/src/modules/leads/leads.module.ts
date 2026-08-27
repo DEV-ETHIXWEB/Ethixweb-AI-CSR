@@ -66,6 +66,11 @@ import { LeadsToolController } from "./interfaces/leads-tool.controller";
     // — never a second, parallel claim implementation.
     GetLeadUseCase,
     ClaimLeadUseCase,
+    // ListLeadsUseCase: DashboardModule's GetDashboardOverviewUseCase
+    // injects this directly (leadsCapturedToday) — same composition
+    // pattern as ListCallsUseCase/GetUsageSummaryUseCase from the other
+    // sibling modules it depends on.
+    ListLeadsUseCase,
   ],
 })
 export class LeadsModule {}
