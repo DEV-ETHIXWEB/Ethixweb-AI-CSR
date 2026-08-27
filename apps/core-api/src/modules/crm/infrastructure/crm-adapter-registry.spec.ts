@@ -51,4 +51,27 @@ describe("CrmAdapterRegistryImpl", () => {
     const adapterForTenantB = registry.resolve("housecall_pro", "tenant-b");
     expect(adapterForTenantA).not.toBe(adapterForTenantB);
   });
+
+  it(
+    "REGRESSION: resolved adapters use a tight retry budget (2 attempts), not shared-kernel's " +
+      "platform-wide 6-attempt/~31s-backoff default — found live: a synchronous createLead call " +
+      "against an unreachable CRM took 32.4s to fall back to a local-only lead with the default " +
+      "policy, directly contradicting CreateLeadUseCase's own 'never blocks the conversation' " +
+      "contract. Asserted via attempt count (deterministic), not elapsed time (flaky in CI).",
+    async () => {
+      const registry = buildRegistry();
+      const adapter = registry.resolve("housecall_pro", "tenant-1");
+      let attempts = 0;
+      jest.spyOn(HousecallProAdapter.prototype, "testConnection").mockImplementation(async () => {
+        attempts += 1;
+        throw new Error("simulated unreachable CRM");
+      });
+
+      await expect(
+        adapter.testConnection({ type: "api_key", apiKey: "irrelevant" }),
+      ).rejects.toThrow();
+
+      expect(attempts).toBe(2);
+    },
+  );
 });
