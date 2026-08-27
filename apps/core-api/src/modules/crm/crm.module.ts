@@ -74,6 +74,13 @@ import { IntegrationsController } from "./interfaces/integrations.controller";
     CrmLeadSyncAdapter,
     { provide: CRM_LEAD_SYNC_PORT, useExisting: CrmLeadSyncAdapter },
   ],
-  exports: [CRM_CUSTOMER_SYNC_PORT, CRM_LEAD_SYNC_PORT],
+  exports: [
+    CRM_CUSTOMER_SYNC_PORT,
+    CRM_LEAD_SYNC_PORT,
+    // Exported for the new dashboard module's GetDashboardOverviewUseCase
+    // (docs 27/28) — the only existing businessId-scoped integration read
+    // path, used to report `integrationStatus` without inventing a new one.
+    ListIntegrationsUseCase,
+  ],
 })
 export class CrmModule {}

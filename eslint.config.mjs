@@ -16,7 +16,15 @@ import prettierConfig from "eslint-config-prettier";
  */
 export default tseslint.config(
   {
-    ignores: ["**/dist/**", "**/coverage/**", "**/node_modules/**", "**/*.js", "**/*.mjs"],
+    ignores: [
+      "**/dist/**",
+      "**/coverage/**",
+      "**/node_modules/**",
+      "**/*.js",
+      "**/*.mjs",
+      "apps/dashboard/.next/**",
+      "apps/dashboard/.next-types/**",
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,

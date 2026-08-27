@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { IsOptional, IsString, IsUUID, Matches, MaxLength } from "class-validator";
+import { IsBoolean, IsOptional, IsString, IsUUID, Matches, MaxLength } from "class-validator";
 
 const E164_PATTERN = /^\+[1-9]\d{1,14}$/;
 
@@ -34,4 +34,12 @@ export class StartConversationDto {
   @IsString()
   @MaxLength(64)
   timezone?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "docs/36: an OPTIONAL, best-effort signal that the Voice Runtime believes this call is emergency-priority BEFORE any conversation exists (e.g. a caller ID previously flagged, an IVR keypress route, or a runtime-side heuristic). This service has no way to detect an emergency itself before a turn happens — emergency detection is the escalateEmergency tool's job, mid-conversation. When true, this admission attempt may use capacity reserved as headroom for exactly this purpose (see CapacityConfig.emergencyHeadroomRatio) rather than being capped like a normal call. Omit or false for every ordinary call — this field does not and cannot guarantee a specific call IS an emergency, only that the runtime is asking for the headroom band.",
+  })
+  @IsOptional()
+  @IsBoolean()
+  isEmergencyPriority?: boolean;
 }

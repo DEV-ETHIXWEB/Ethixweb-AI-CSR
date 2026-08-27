@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { AiProviderModule } from "../ai-provider/ai-provider.module";
+import { CapacityModule } from "../capacity/capacity.module";
 import { PromptModule } from "../prompt/prompt.module";
 import { ToolBrokerModule } from "../tool-broker/tool-broker.module";
 import { EndConversationUseCase } from "./application/end-conversation.use-case";
@@ -13,7 +14,7 @@ import { RedisConversationRepository } from "./infrastructure/redis-conversation
 import { ConversationsController } from "./interfaces/conversations.controller";
 
 @Module({
-  imports: [AiProviderModule, PromptModule, ToolBrokerModule],
+  imports: [AiProviderModule, PromptModule, ToolBrokerModule, CapacityModule],
   controllers: [ConversationsController],
   providers: [
     { provide: CONVERSATION_REPOSITORY, useClass: RedisConversationRepository },

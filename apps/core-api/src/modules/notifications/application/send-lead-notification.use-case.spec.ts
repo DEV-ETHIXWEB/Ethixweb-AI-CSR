@@ -107,6 +107,85 @@ describe("SendLeadNotificationUseCase", () => {
     expect(webhook.send).toHaveBeenCalledTimes(1);
   });
 
+  it(
+    "PHASE 10 — ONE qualified lead produces ONE consolidated notification flow, not the original " +
+      "HCP failure mode of independent, inconsistent fan-out texts: every channel receives content " +
+      "derived from the IDENTICAL canonical payload (same customer/problem/priority/address), and a " +
+      "second call for the SAME lead sends nothing further (per-channel dedup already proven above, " +
+      "asserted again here specifically as the anti-duplicate-callback guarantee)",
+    async () => {
+      const channelRepository = new FakeNotificationChannelRepository();
+      channelRepository.seed({
+        id: "chan-1",
+        tenantId: "tenant-1",
+        businessId: "business-1",
+        channelType: "sms",
+        destination: { phone: "+15559999999" },
+        isActive: true,
+        priorityOrder: 0,
+      });
+      channelRepository.seed({
+        id: "chan-2",
+        tenantId: "tenant-1",
+        businessId: "business-1",
+        channelType: "webhook",
+        destination: { webhookUrl: "https://example.com/hook" },
+        isActive: true,
+        priorityOrder: 1,
+      });
+      const notificationRepository = new FakeNotificationRepository();
+      const registry = new ChannelSenderRegistry();
+      const sms = fakeSender("sms");
+      const webhook = fakeSender("webhook");
+      registry.register(sms.sender);
+      registry.register(webhook.sender);
+      const useCase = new SendLeadNotificationUseCase(
+        new FakeTenantContextService() as unknown as TenantContextService,
+        channelRepository,
+        notificationRepository,
+        registry,
+        fakeLead(),
+        fakeCustomer(),
+        fakeClaimMappingStore().store,
+        createNoopLogger(),
+      );
+
+      await useCase.execute({ tenantId: "tenant-1", businessId: "business-1", leadId: "lead-1" });
+
+      // Every sender was called with a payload carrying the SAME lead
+      // identity, customer, problem, and priority — one canonical source
+      // of truth rendered per channel, never independently-assembled,
+      // potentially-drifting content per channel.
+      const smsPayload = sms.send.mock.calls[0]?.[1];
+      const webhookPayload = webhook.send.mock.calls[0]?.[1];
+      expect(smsPayload).toMatchObject({
+        leadId: "lead-1",
+        customerName: "Jane Doe",
+        problemSummary: "Water heater leaking",
+        priority: "urgent",
+      });
+      expect(webhookPayload).toEqual(smsPayload);
+
+      // Re-invoking for the SAME lead (e.g. a duplicated outbox-relay
+      // poll, or a retried lead.created event) sends NOTHING further —
+      // the exact anti-duplicate-callback guarantee this whole flow
+      // exists to prove.
+      sms.send.mockClear();
+      webhook.send.mockClear();
+      const secondOutcomes = await useCase.execute({
+        tenantId: "tenant-1",
+        businessId: "business-1",
+        leadId: "lead-1",
+      });
+      expect(secondOutcomes).toEqual([
+        { channelType: "sms", success: true },
+        { channelType: "webhook", success: true },
+      ]);
+      expect(sms.send).not.toHaveBeenCalled();
+      expect(webhook.send).not.toHaveBeenCalled();
+    },
+  );
+
   it("one channel failing does not block the others", async () => {
     const channelRepository = new FakeNotificationChannelRepository();
     channelRepository.seed({

@@ -26,6 +26,8 @@ export interface Conversation {
   transcript: TranscriptTurn[];
   /** Set once createLead succeeds — makes `updateLead`'s "same call only" rule checkable and prevents a second lead per call. */
   leadId: string | null;
+  /** Set at admission time (StartConversationUseCase) when the capacity gate reserved a slot for this call — released exactly once, best-effort, in EndConversationUseCase. Null only for conversations created before this field existed (defensive, not expected in normal operation — see EndConversationUseCase's own release guard). */
+  capacityReservationId: string | null;
   startedAt: string;
   endedAt: string | null;
   endReason: string | null;

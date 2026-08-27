@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { APP_FILTER, APP_GUARD } from "@nestjs/core";
 import { ConfigModule } from "@nestjs/config";
 import { AiProviderModule } from "./modules/ai-provider/ai-provider.module";
+import { CapacityModule } from "./modules/capacity/capacity.module";
 import { ConversationModule } from "./modules/conversation/conversation.module";
 import { EventsModule } from "./modules/events/events.module";
 import { HealthModule } from "./modules/health/health.module";
@@ -30,8 +31,9 @@ import { DomainExceptionFilter } from "./shared/http/domain-exception.filter";
     HealthModule,
     EventsModule,
     AiProviderModule,
-    PromptModule,
     ToolBrokerModule,
+    PromptModule,
+    CapacityModule,
     ConversationModule,
   ],
   providers: [

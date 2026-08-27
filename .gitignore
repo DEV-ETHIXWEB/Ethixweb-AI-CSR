@@ -4,6 +4,8 @@ build/
 coverage/
 .turbo/
 *.tsbuildinfo
+.next/
+.next-types/
 
 # env
 .env

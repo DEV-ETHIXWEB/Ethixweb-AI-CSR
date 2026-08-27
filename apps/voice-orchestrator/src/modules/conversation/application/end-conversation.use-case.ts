@@ -7,6 +7,10 @@ import {
   CORE_API_CLIENT,
   type CoreApiClientPort,
 } from "../../tool-broker/domain/ports/core-api-client.port";
+import {
+  CALL_ADMISSION_PORT,
+  type CallAdmissionPort,
+} from "../../capacity/domain/call-admission.port";
 import type { Conversation } from "../domain/conversation.entity";
 import { ConversationNotFoundError } from "../domain/errors";
 import {
@@ -37,6 +41,23 @@ export interface EndConversationCommand {
  * the runtime's perspective, and every other side effect in this method
  * (event publish, logging) is already best-effort/non-blocking for the
  * identical reason.
+ *
+ * PHASE 10: also emits `voice_call_duration` usage (docs/26's ingestion
+ * contract, `POST /internal/usage`) — best-effort, same reasoning. This is
+ * deliberately the ONLY usage dimension wired here: `llm_tokens`/
+ * `stt_duration`/`tts_characters` all need data no part of this codebase
+ * currently produces (`AiCompletionChunk` reports no token counts from any
+ * of the three provider adapters; STT/TTS metrics can only come from a
+ * real Voice Runtime, which doesn't exist in this repository) — see
+ * docs/27's own honest accounting of this rather than fabricating partial
+ * metering for dimensions with no real data behind them.
+ *
+ * DOCS/36: also releases this conversation's capacity reservation
+ * (StartConversationUseCase's own admission-time reserve) — best-effort,
+ * same reasoning as the other two side effects in this method. A Redis TTL
+ * on the reservation itself is the safety net if this call never happens
+ * (a crashed runtime, a lost end-signal) — see RedisCallAdmissionAdapter's
+ * own comment.
  */
 @Injectable()
 export class EndConversationUseCase {
@@ -44,6 +65,7 @@ export class EndConversationUseCase {
     @Inject(CONVERSATION_REPOSITORY) private readonly repository: ConversationRepository,
     @Inject(EVENT_BUS) private readonly eventBus: EventBusPort,
     @Inject(CORE_API_CLIENT) private readonly coreApiClient: CoreApiClientPort,
+    @Inject(CALL_ADMISSION_PORT) private readonly callAdmission: CallAdmissionPort,
     @Inject(APP_LOGGER) private readonly logger: StructuredLogger,
   ) {}
 
@@ -69,6 +91,8 @@ export class EndConversationUseCase {
     const saved = await this.repository.save(conversation);
 
     await this.endCallBestEffort(saved, now, command.endReason);
+    await this.recordCallDurationUsageBestEffort(saved, now);
+    await this.releaseCapacityBestEffort(saved);
 
     await this.eventBus.publish({
       type: "conversation.ended",
@@ -99,6 +123,58 @@ export class EndConversationUseCase {
       });
     } catch (error) {
       this.logger.warn("failed to end the corresponding Call row in core-api — non-fatal", {
+        tenantId: conversation.tenantId,
+        conversationId: conversation.id,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async recordCallDurationUsageBestEffort(
+    conversation: Conversation,
+    endedAt: string,
+  ): Promise<void> {
+    const durationSeconds = Math.max(
+      0,
+      Math.round((Date.parse(endedAt) - Date.parse(conversation.startedAt)) / 1000),
+    );
+    try {
+      await this.coreApiClient.post("/internal/usage", {
+        businessId: conversation.businessId,
+        callId: conversation.callId,
+        ...(conversation.leadId ? { leadId: conversation.leadId } : {}),
+        usageType: "voice_call_duration",
+        source: "voice-orchestrator",
+        quantity: durationSeconds,
+        unit: "seconds",
+        // docs/26 §8's own recommended convention — one dedupKey per real
+        // usage event (this conversation's single, final duration), so a
+        // Voice Runtime retry of the end-call signal (already idempotent
+        // above) can never double-count.
+        dedupKey: `${conversation.id}:voice_call_duration:final`,
+        occurredAt: endedAt,
+      });
+    } catch (error) {
+      this.logger.warn("failed to record call-duration usage — non-fatal", {
+        tenantId: conversation.tenantId,
+        conversationId: conversation.id,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async releaseCapacityBestEffort(conversation: Conversation): Promise<void> {
+    if (!conversation.capacityReservationId) {
+      // Defensive only — every conversation created after docs/36 landed
+      // always has one (StartConversationUseCase sets it unconditionally).
+      // A null here means a conversation that predates this field, not a
+      // bug; nothing to release.
+      return;
+    }
+    try {
+      await this.callAdmission.release(conversation.tenantId, conversation.capacityReservationId);
+    } catch (error) {
+      this.logger.warn("failed to release capacity reservation — non-fatal, TTL will reclaim it", {
         tenantId: conversation.tenantId,
         conversationId: conversation.id,
         reason: error instanceof Error ? error.message : String(error),

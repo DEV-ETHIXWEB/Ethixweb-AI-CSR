@@ -2,6 +2,8 @@ import { AssembleSystemPromptUseCase } from "../../prompt/application/assemble-s
 import type { AgentProfile, AgentProfileProvider } from "../../prompt/domain/agent-profile";
 import { FakeCoreApiClient } from "../../tool-broker/application/__fakes__/fake-core-api-client";
 import { ConversationAlreadyExistsError } from "../domain/errors";
+import { FakeCallAdmissionPort } from "./__fakes__/fake-call-admission";
+import { FakeCapacityConfigProvider } from "./__fakes__/fake-capacity-config";
 import { FakeConversationRepository } from "./__fakes__/fake-conversation-repository";
 import { FakeEventBus } from "./__fakes__/fake-event-bus";
 import { createNoopLogger } from "./__fakes__/fake-logger";
@@ -25,15 +27,19 @@ function buildUseCase(profile: AgentProfile = fakeProfile()) {
   const repository = new FakeConversationRepository();
   const eventBus = new FakeEventBus();
   const coreApiClient = new FakeCoreApiClient();
+  const callAdmission = new FakeCallAdmissionPort();
+  const capacityConfig = new FakeCapacityConfigProvider();
   const provider: AgentProfileProvider = { getActiveProfile: async () => profile };
   const useCase = new StartConversationUseCase(
     repository,
     new AssembleSystemPromptUseCase(provider),
     eventBus,
     coreApiClient,
+    callAdmission,
+    capacityConfig,
     createNoopLogger(),
   );
-  return { useCase, repository, eventBus, coreApiClient };
+  return { useCase, repository, eventBus, coreApiClient, callAdmission, capacityConfig };
 }
 
 describe("StartConversationUseCase", () => {
@@ -117,6 +123,93 @@ describe("StartConversationUseCase", () => {
 
       const found = await repository.findByCallId("tenant-1", "call-1");
       expect(found).toBeNull();
+    });
+  });
+
+  describe("docs/36: capacity admission gate", () => {
+    it("reserves capacity BEFORE calling POST /internal/calls, and stores the reservationId on the conversation", async () => {
+      const { useCase, coreApiClient } = buildUseCase();
+
+      const conversation = await useCase.execute({
+        tenantId: "tenant-1",
+        businessId: "business-1",
+        callId: "call-1",
+        callerAni: "+15551234567",
+      });
+
+      expect(conversation.capacityReservationId).toBeTruthy();
+      expect(coreApiClient.postCalls).toHaveLength(1);
+    });
+
+    it("throws CapacityExceededError and never calls POST /internal/calls when the tenant is at its concurrency ceiling", async () => {
+      const { useCase, coreApiClient, callAdmission } = buildUseCase();
+      callAdmission.forceExhausted = "tenant";
+
+      await expect(
+        useCase.execute({
+          tenantId: "tenant-1",
+          businessId: "business-1",
+          callId: "call-1",
+          callerAni: "+15551234567",
+        }),
+      ).rejects.toMatchObject({ name: "CapacityExceededError", scope: "tenant" });
+
+      expect(coreApiClient.postCalls).toHaveLength(0);
+    });
+
+    it("RESERVATION LEAK GUARD: releases the reservation if POST /internal/calls fails after admission succeeded", async () => {
+      const { useCase, coreApiClient, callAdmission } = buildUseCase();
+      coreApiClient.failWith = new Error("core-api unreachable");
+
+      await expect(
+        useCase.execute({
+          tenantId: "tenant-1",
+          businessId: "business-1",
+          callId: "call-1",
+          callerAni: "+15551234567",
+        }),
+      ).rejects.toThrow("core-api unreachable");
+
+      const counts = await callAdmission.getActiveCounts("tenant-1");
+      expect(counts.tenantActive).toBe(0);
+      expect(counts.globalActive).toBe(0);
+    });
+
+    it("passes isEmergencyPriority through to the admission port", async () => {
+      const { useCase, callAdmission } = buildUseCase();
+      const reserveSpy = jest.spyOn(callAdmission, "reserve");
+
+      await useCase.execute({
+        tenantId: "tenant-1",
+        businessId: "business-1",
+        callId: "call-1",
+        callerAni: "+15551234567",
+        isEmergencyPriority: true,
+      });
+
+      expect(reserveSpy).toHaveBeenCalledWith(
+        "tenant-1",
+        "business-1",
+        expect.objectContaining({ isEmergencyPriority: true }),
+      );
+    });
+
+    it("defaults isEmergencyPriority to false when omitted", async () => {
+      const { useCase, callAdmission } = buildUseCase();
+      const reserveSpy = jest.spyOn(callAdmission, "reserve");
+
+      await useCase.execute({
+        tenantId: "tenant-1",
+        businessId: "business-1",
+        callId: "call-1",
+        callerAni: "+15551234567",
+      });
+
+      expect(reserveSpy).toHaveBeenCalledWith(
+        "tenant-1",
+        "business-1",
+        expect.objectContaining({ isEmergencyPriority: false }),
+      );
     });
   });
 });
