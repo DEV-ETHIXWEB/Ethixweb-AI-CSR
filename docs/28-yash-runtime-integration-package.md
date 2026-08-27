@@ -1,4 +1,13 @@
-# 28 — Voice Runtime Integration Package (for Yash)
+# 28 — Voice Runtime Integration Package
+
+**Historical framing note**: this was originally written for an external
+integrator ("Yash") to wire a separate, not-yet-built runtime against
+`voice-orchestrator`. That plan changed with Phase 15B — `apps/voice-runtime`
+in this repo is now that runtime, self-owned by Akash (this project's sole
+owner), and it implements this exact contract. The contract itself below
+remains the accurate, current interface spec (still worth reading in full
+if extending or debugging `apps/voice-runtime`'s own integration with
+`voice-orchestrator`); only the "for an external party" framing is stale.
 
 This is the complete, standalone contract for connecting a real Voice Runtime (Twilio + LiveKit + Deepgram, or any equivalent telephony/STT/TTS stack) to `apps/voice-orchestrator`. You should not need to read any other file in this backend to wire your runtime against it — everything here is either copied verbatim from the real, tested DTOs/guards/use-cases, or explicitly marked as not yet verified against a live system.
 
