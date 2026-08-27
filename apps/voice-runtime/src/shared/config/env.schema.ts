@@ -77,6 +77,29 @@ export const envSchema = z.object({
   OTEL_SERVICE_NAME: z.string().optional(),
   OTEL_SDK_DISABLED: z.string().optional(),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().optional(),
+
+  /**
+   * The operational kill switch — docs/19-operational-runbooks.md's
+   * "disable AI receptionist / forward to human" runbook is this variable.
+   * Previously a genuine, documented gap (docs/29-phase11-12-blocker-resolution.md
+   * Blocker 5: "no repo-level kill switch tooling exists yet; today this
+   * would be a manual telephony-routing change on Yash's side") — closed
+   * here now that voice-runtime is this repo's own service, not an
+   * external one this codebase has no control over. Default `true` (AI
+   * handles the call normally) so this is opt-in-to-disable, never
+   * opt-in-to-enable-by-accident. When `false`, TwilioVoiceController skips
+   * tenant resolution and the entire AI/media-stream path entirely and
+   * returns `<Dial>` TwiML straight to HUMAN_FALLBACK_NUMBER — the fastest,
+   * lowest-risk path back to "the phone still works" during an incident,
+   * requiring only an env var change + restart, not a deploy or a Twilio
+   * Console change.
+   */
+  AI_RECEPTIONIST_ENABLED: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
+  /** Required (checked below, not by the field type alone) when AI_RECEPTIONIST_ENABLED=false — the E.164 number/queue every inbound call is unconditionally forwarded to instead. */
+  HUMAN_FALLBACK_NUMBER: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -91,6 +114,11 @@ export function validate(config: Record<string, unknown>): Env {
   const result = envSchema.safeParse(config);
   if (!result.success) {
     throw new Error(`Invalid environment configuration:\n${result.error.toString()}`);
+  }
+  if (!result.data.AI_RECEPTIONIST_ENABLED && !result.data.HUMAN_FALLBACK_NUMBER) {
+    throw new Error(
+      "Invalid environment configuration:\nHUMAN_FALLBACK_NUMBER is required when AI_RECEPTIONIST_ENABLED=false — the kill switch must always have a real destination to forward to.",
+    );
   }
   return result.data;
 }

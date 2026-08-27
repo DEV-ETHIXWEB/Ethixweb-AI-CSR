@@ -1,4 +1,4 @@
-import { buildApologyTwiml, buildConnectStreamTwiml } from "./twiml.builder";
+import { buildApologyTwiml, buildConnectStreamTwiml, buildDialHumanTwiml } from "./twiml.builder";
 
 describe("twiml.builder", () => {
   describe("buildConnectStreamTwiml", () => {
@@ -31,6 +31,23 @@ describe("twiml.builder", () => {
       expect(twiml).toContain("&amp;");
       expect(twiml).toContain("call&lt;1&gt;");
       expect(twiml).not.toContain("call<1>");
+    });
+  });
+
+  describe("buildDialHumanTwiml", () => {
+    it("produces a <Dial> straight to the given number, with no <Connect>/<Stream> at all", () => {
+      const twiml = buildDialHumanTwiml("+15559998877");
+
+      expect(twiml).toContain("<Dial>+15559998877</Dial>");
+      expect(twiml).not.toContain("<Connect>");
+      expect(twiml).not.toContain("<Stream");
+    });
+
+    it("XML-escapes the destination", () => {
+      const twiml = buildDialHumanTwiml("+1555<evil>");
+
+      expect(twiml).toContain("+1555&lt;evil&gt;");
+      expect(twiml).not.toContain("<evil>");
     });
   });
 

@@ -71,4 +71,24 @@ describe("TwilioVoiceController", () => {
     expect(twiml).toContain("<Say>");
     expect(twiml).toContain("<Hangup/>");
   });
+
+  it(
+    "KILL SWITCH: when AI_RECEPTIONIST_ENABLED=false, dials HUMAN_FALLBACK_NUMBER directly and " +
+      "never touches tenant routing at all — the operational runbook for disabling the AI " +
+      "receptionist mid-incident (docs/19) is exactly this env var, checked first, before " +
+      "anything else that could itself be part of the incident",
+    async () => {
+      process.env["PUBLIC_BASE_URL"] = "https://runtime.ngrok.example.com";
+      process.env["AI_RECEPTIONIST_ENABLED"] = "false";
+      process.env["HUMAN_FALLBACK_NUMBER"] = "+15550001234";
+      const tenantRouting = new FakeTenantRoutingProvider();
+      const controller = new TwilioVoiceController(tenantRouting, createNoopLogger());
+
+      const twiml = await controller.voice(payload());
+
+      expect(twiml).toContain("<Dial>+15550001234</Dial>");
+      expect(twiml).not.toContain("<Connect>");
+      expect(tenantRouting.resolvedWith).toBeNull();
+    },
+  );
 });

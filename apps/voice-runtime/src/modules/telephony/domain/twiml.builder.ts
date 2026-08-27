@@ -40,6 +40,27 @@ export function buildConnectStreamTwiml(options: {
   );
 }
 
+/**
+ * The kill-switch TwiML (env.schema.ts's `AI_RECEPTIONIST_ENABLED=false`
+ * path) — unconditionally forwards the call to a human number/queue,
+ * never touching tenant resolution, the AI, or the media stream at all.
+ * Twilio's built-in `<Dial>` (not `<Connect><Stream>`) is deliberate: this
+ * is the fallback path an operator reaches for specifically BECAUSE
+ * something upstream (this platform's own backend, a bad deploy, an
+ * incident) might be unhealthy — it must not depend on any of that being
+ * healthy to work, the identical reasoning buildApologyTwiml's own comment
+ * gives for using `<Say>` instead of ElevenLabs there.
+ */
+export function buildDialHumanTwiml(destinationE164: string): string {
+  const escaped = escapeXml(destinationE164);
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<Response>` +
+    `<Dial>${escaped}</Dial>` +
+    `</Response>`
+  );
+}
+
 /** A short static apology TwiML, used only when call-start (POST /conversations) itself fails — docs/28 §J step 2's "fallback routing, an apology message via a static TTS clip" is explicitly this runtime's own production decision to make, not voice-orchestrator's. Twilio's built-in <Say> (not ElevenLabs) is deliberate here: if the platform's own backend is unreachable, this is the one message that must not depend on that same backend chain being healthy. */
 export function buildApologyTwiml(): string {
   return (

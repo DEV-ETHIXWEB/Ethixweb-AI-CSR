@@ -9,7 +9,11 @@ import {
   type TenantRoutingProvider,
 } from "../../tenant-routing/domain/tenant-routing.port";
 import { UnroutableCallError } from "../domain/errors";
-import { buildApologyTwiml, buildConnectStreamTwiml } from "../domain/twiml.builder";
+import {
+  buildApologyTwiml,
+  buildConnectStreamTwiml,
+  buildDialHumanTwiml,
+} from "../domain/twiml.builder";
 import { TwilioVoiceWebhookDto } from "./dto/twilio-voice-webhook.dto";
 import { TwilioSignatureGuard } from "./guards/twilio-signature.guard";
 
@@ -43,6 +47,19 @@ export class TwilioVoiceController {
   async voice(@Body() body: TwilioVoiceWebhookDto): Promise<string> {
     const callId = randomUUID();
     const log = this.logger.child({ callId, callSid: body.CallSid });
+
+    // The operational kill switch (env.schema.ts's own comment has the
+    // full incident-response reasoning) — checked FIRST, before tenant
+    // resolution or anything else, so it degrades as little as possible:
+    // a caller reaches a human even if tenant routing/config itself is
+    // what's broken.
+    if (process.env["AI_RECEPTIONIST_ENABLED"] === "false") {
+      const destination = process.env["HUMAN_FALLBACK_NUMBER"] ?? "";
+      log.warn("AI_RECEPTIONIST_ENABLED=false — forwarding call directly to human fallback", {
+        destination,
+      });
+      return buildDialHumanTwiml(destination);
+    }
 
     const route = body.To ? await this.tenantRouting.resolve(body.To) : null;
     if (!route) {

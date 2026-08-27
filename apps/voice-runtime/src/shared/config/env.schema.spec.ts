@@ -59,4 +59,25 @@ describe("voice-runtime env.schema validate()", () => {
   it("passes without TENANT_ROUTING_MAP or TENANT_ROUTING_DEFAULT_* configured — both are optional at the schema level (StaticTenantRoutingProvider owns the actual required-at-call-time check)", () => {
     expect(() => validate(validEnv())).not.toThrow();
   });
+
+  it("defaults AI_RECEPTIONIST_ENABLED to true (the kill switch is opt-in-to-disable, never opt-in-to-enable-by-accident)", () => {
+    const result = validate(validEnv());
+
+    expect(result.AI_RECEPTIONIST_ENABLED).toBe(true);
+  });
+
+  it("KILL SWITCH: throws at boot when AI_RECEPTIONIST_ENABLED=false but HUMAN_FALLBACK_NUMBER is not set — the kill switch must never activate without a real destination to forward to", () => {
+    const env = validEnv({ AI_RECEPTIONIST_ENABLED: "false" });
+
+    expect(() => validate(env)).toThrow(/HUMAN_FALLBACK_NUMBER is required/);
+  });
+
+  it("KILL SWITCH: passes when AI_RECEPTIONIST_ENABLED=false and HUMAN_FALLBACK_NUMBER is set", () => {
+    const result = validate(
+      validEnv({ AI_RECEPTIONIST_ENABLED: "false", HUMAN_FALLBACK_NUMBER: "+15550001234" }),
+    );
+
+    expect(result.AI_RECEPTIONIST_ENABLED).toBe(false);
+    expect(result.HUMAN_FALLBACK_NUMBER).toBe("+15550001234");
+  });
 });
