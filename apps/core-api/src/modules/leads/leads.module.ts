@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { CallsModule } from "../calls/calls.module";
 import { CrmModule } from "../crm/crm.module";
 import { CustomersModule } from "../customers/customers.module";
 import { OUTBOX_WRITER_FACTORY } from "../../shared/outbox/outbox-writer-factory";
@@ -25,10 +26,17 @@ import { LeadsToolController } from "./interfaces/leads-tool.controller";
  * never the reverse — neither of those modules imports LeadsModule; they
  * only reference this module's domain PORT TYPES, a compile-time-only,
  * DI-free dependency in the opposite direction, per each port file's own
- * comment).
+ * comment). `CallsModule` is the one exception to the port-based pattern —
+ * imported directly for its already-exported, already tenant-scoped
+ * `GetCallUseCase` (CallsModule's own comment anticipated exactly this:
+ * "exported... for the future Voice AI module to inject"), which
+ * CreateLeadUseCase uses to verify a callId actually belongs to the
+ * calling tenant/business before creating a Lead against it — closing a
+ * real cross-tenant vulnerability found under adversarial testing (see
+ * that use-case's own comment for the full incident).
  */
 @Module({
-  imports: [CrmModule, CustomersModule],
+  imports: [CrmModule, CustomersModule, CallsModule],
   controllers: [LeadsController, LeadsToolController],
   providers: [
     { provide: LEAD_REPOSITORY, useClass: PrismaLeadRepository },

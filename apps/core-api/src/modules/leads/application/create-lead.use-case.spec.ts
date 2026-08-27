@@ -3,16 +3,19 @@ import { CallNotFoundForLeadError, CustomerNotFoundForLeadError } from "../domai
 import { createNoopLogger } from "./__fakes__/fake-logger";
 import { FakeCrmLeadSyncPort } from "./__fakes__/fake-crm-lead-sync-port";
 import { FakeCustomerLookupPort } from "./__fakes__/fake-customer-lookup-port";
+import { FakeGetCallUseCase } from "./__fakes__/fake-get-call-use-case";
 import { FakeLeadRepository } from "./__fakes__/fake-lead-repository";
 import { FakeOutboxWriterFactory } from "./__fakes__/fake-outbox-writer-factory";
 import { FakeTenantContextService } from "./__fakes__/fake-tenant-context";
 import { CreateLeadUseCase, type CreateLeadCommand } from "./create-lead.use-case";
+import type { GetCallUseCase } from "../../calls/application/get-call.use-case";
 
 function buildUseCase(
   leadRepository = new FakeLeadRepository(),
   customerLookupPort = new FakeCustomerLookupPort(),
   crmLeadSyncPort = new FakeCrmLeadSyncPort(),
   outboxWriterFactory = new FakeOutboxWriterFactory(),
+  getCallUseCase = new FakeGetCallUseCase(),
 ) {
   return new CreateLeadUseCase(
     new FakeTenantContextService() as unknown as TenantContextService,
@@ -20,6 +23,7 @@ function buildUseCase(
     customerLookupPort,
     crmLeadSyncPort,
     outboxWriterFactory,
+    getCallUseCase as unknown as GetCallUseCase,
     createNoopLogger(),
   );
 }
@@ -101,6 +105,81 @@ describe("CreateLeadUseCase", () => {
       const customerLookupPort = new FakeCustomerLookupPort();
       seedCustomer(customerLookupPort);
       const useCase = buildUseCase(leadRepository, customerLookupPort);
+
+      await expect(useCase.execute(baseCommand())).rejects.toThrow(CallNotFoundForLeadError);
+    },
+  );
+
+  it(
+    "SECURITY REGRESSION: rejects a callId that belongs to a DIFFERENT tenant, even though the " +
+      "customer/business in the command are the caller's own valid ones — found live under " +
+      "adversarial testing: tenant A could otherwise create a Lead keyed by tenant B's real " +
+      "callId (cross-tenant data corruption), and because leads.call_id is a correct GLOBAL " +
+      "unique constraint (Call.id is already globally unique), that row then permanently blocked " +
+      "tenant B from ever creating their OWN legitimate lead for that call — tenant B's insert hit " +
+      "the same constraint, but the RLS-scoped recovery read found nothing (the row belongs to " +
+      "tenant A), surfacing as an unhandled 500 rather than a clean rejection",
+    async () => {
+      const customerLookupPort = new FakeCustomerLookupPort();
+      seedCustomer(customerLookupPort);
+      const getCallUseCase = new FakeGetCallUseCase();
+      getCallUseCase.seed({
+        id: "call-1",
+        tenantId: "some-other-tenant",
+        businessId: "business-1",
+        customerId: "customer-1",
+        direction: "inbound",
+        fromNumber: "+15551234567",
+        toNumber: "+15559876543",
+        telephonyCallSid: "CAfake-other-tenant",
+        status: "in_progress",
+        endReason: null,
+        durationSeconds: null,
+        startedAt: new Date().toISOString(),
+        endedAt: null,
+      });
+      const useCase = buildUseCase(
+        new FakeLeadRepository(),
+        customerLookupPort,
+        new FakeCrmLeadSyncPort(),
+        new FakeOutboxWriterFactory(),
+        getCallUseCase,
+      );
+
+      await expect(useCase.execute(baseCommand())).rejects.toThrow(CallNotFoundForLeadError);
+    },
+  );
+
+  it(
+    "SECURITY REGRESSION: rejects a callId that belongs to the caller's own tenant but a " +
+      "DIFFERENT business — same vulnerability class as the cross-tenant case above, one level " +
+      "narrower (a multi-business tenant referencing another of its own businesses' calls)",
+    async () => {
+      const customerLookupPort = new FakeCustomerLookupPort();
+      seedCustomer(customerLookupPort);
+      const getCallUseCase = new FakeGetCallUseCase();
+      getCallUseCase.seed({
+        id: "call-1",
+        tenantId: "tenant-1",
+        businessId: "some-other-business",
+        customerId: "customer-1",
+        direction: "inbound",
+        fromNumber: "+15551234567",
+        toNumber: "+15559876543",
+        telephonyCallSid: "CAfake-other-business",
+        status: "in_progress",
+        endReason: null,
+        durationSeconds: null,
+        startedAt: new Date().toISOString(),
+        endedAt: null,
+      });
+      const useCase = buildUseCase(
+        new FakeLeadRepository(),
+        customerLookupPort,
+        new FakeCrmLeadSyncPort(),
+        new FakeOutboxWriterFactory(),
+        getCallUseCase,
+      );
 
       await expect(useCase.execute(baseCommand())).rejects.toThrow(CallNotFoundForLeadError);
     },
@@ -212,6 +291,7 @@ describe("CreateLeadUseCase", () => {
         customerLookupPort,
         new FakeCrmLeadSyncPort(),
         new FakeOutboxWriterFactory(),
+        new FakeGetCallUseCase() as unknown as GetCallUseCase,
         createNoopLogger(),
       );
       const command = baseCommand();
