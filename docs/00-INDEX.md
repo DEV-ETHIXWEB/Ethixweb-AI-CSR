@@ -72,6 +72,7 @@ This blueprint was reviewed a second time specifically to challenge its own assu
 39. [39-local-twilio-testing-runbook.md](39-local-twilio-testing-runbook.md) — **SUPERSEDED, historical only** — see doc 41 below, the current runbook against the real `apps/voice-runtime`.
 40. [40-phase15-crm-integration-audit.md](40-phase15-crm-integration-audit.md) — audit confirming the AI-qualification → HCP handoff path is real end-to-end (not a stub), the exact [Confirmed]/[Unverified] status of every HCP adapter method, and the integration-readiness pass that closed the AI-knowledge system-prompt gap (`GET /internal/knowledge/:businessId/ai-knowledge`) and documented the exact contract/blockers for the first real call.
 41. [41-first-local-real-call.md](41-first-local-real-call.md) — the current, accurate first-real-call runbook, written against the real, self-owned `apps/voice-runtime` (Phase 15B) — supersedes doc 39. Every claim in it is either cited to an automated test that actually ran, or explicitly marked as requiring live execution.
+42. [42-tenant-onboarding-runbook.md](42-tenant-onboarding-runbook.md) — concrete, real, copy-pasteable API calls for onboarding one new client end-to-end (tenant → owner → business → CRM → emergency rules → notifications → AI Knowledge/Waiting Brochure → API key → phone routing). The entire flow was executed live, in one pass, against a fresh tenant while writing this doc.
 
 ## What's not yet decided (open items requiring your sign-off before Phase 0 repo scaffold)
 
