@@ -43,7 +43,7 @@ Nothing below is marked GREEN based on code inspection alone where the requireme
 - [ ] Staging deployment works — 🔴 (Blocker 5)
 - [ ] Monitoring works — 🔴 (Blocker 5 — not built)
 - [ ] Alerting works — 🔴 (Blocker 5 — not built)
-- [ ] Rollback works — 🟡 (code/DB rollback via standard tooling is fine; no telephony kill-switch exists — partial)
+- [ ] Rollback works — 🟡 (code/DB rollback via standard tooling is fine; a real telephony kill-switch now exists — `voice-runtime`'s `AI_RECEPTIONIST_ENABLED`, [docs/19](19-operational-runbooks.md) §7 — verified locally for both states, not yet against a real Twilio account, hence still 🟡 not 🟢)
 - [ ] Full test suite passes — 🟢 (606/606, re-confirmed this session)
 - [ ] No scheduling/booking capability — 🟢 (verified structurally — 8-tool catalog, zero scheduling tools, adversarial test passing)
 - [ ] No critical security findings — 🟢 (auth/tenant-isolation/secret-handling audited this session, no critical findings; rate-limiting and the Twilio `trustProxy` assumption remain open medium-priority items, not critical)
