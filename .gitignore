@@ -7,6 +7,9 @@ coverage/
 .next/
 .next-types/
 
+# turbo prune --docker output — generated locally to build/verify Dockerfiles
+out/
+
 # env
 .env
 .env.local
