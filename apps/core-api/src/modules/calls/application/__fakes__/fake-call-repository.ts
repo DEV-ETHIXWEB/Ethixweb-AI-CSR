@@ -62,12 +62,16 @@ export class FakeCallRepository implements CallRepository {
     _db: Db,
     tenantId: string,
     id: string,
-    status: Call["status"],
+    fromStatus: Call["status"],
+    toStatus: Call["status"],
     fields: { endReason?: string | undefined; endedAt?: string | undefined },
-  ): Promise<Call> {
+  ): Promise<Call | null> {
     const existing = this.calls.get(id);
     if (!existing || existing.tenantId !== tenantId) {
       throw new Error(`FakeCallRepository: no call ${id} for tenant ${tenantId}`);
+    }
+    if (existing.status !== fromStatus) {
+      return null;
     }
     const durationSeconds =
       fields.endedAt !== undefined
@@ -80,7 +84,7 @@ export class FakeCallRepository implements CallRepository {
         : existing.durationSeconds;
     const updated: Call = {
       ...existing,
-      status,
+      status: toStatus,
       endReason: fields.endReason ?? existing.endReason,
       endedAt: fields.endedAt ?? existing.endedAt,
       durationSeconds,

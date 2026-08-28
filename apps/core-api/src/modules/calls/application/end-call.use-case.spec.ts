@@ -120,6 +120,57 @@ describe("EndCallUseCase", () => {
     ).rejects.toThrow(IllegalCallStatusTransitionError);
   });
 
+  it("resolves a lost race as idempotent when a concurrent request already landed the SAME target status", async () => {
+    // Simulates the true concurrency scenario a real Postgres CAS handles:
+    // this request reads status="in_progress" and decides to transition to
+    // "completed", but by the time its own compare-and-swap write runs, a
+    // concurrent request has already committed that exact same transition.
+    const { useCase, callRepository } = buildUseCase();
+    const call = seedInProgressCall(callRepository);
+    callRepository.updateStatus = async () => {
+      // The "concurrent winner" commits first, then this request's own CAS
+      // sees the row already moved and loses the race — exactly what a real
+      // Postgres `updateMany({ where: { status: fromStatus } })` returning
+      // `count: 0` looks like from the use case's point of view.
+      callRepository.seed({ ...call, status: "completed", endReason: "concurrent_winner" });
+      return null;
+    };
+
+    const result = await useCase.execute({
+      tenantId: "tenant-1",
+      telephonyCallSid: "CA-abc123",
+      status: "completed",
+      endReason: "caller_hangup",
+      endedAt: "2026-01-15T12:03:00.000Z",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.endReason).toBe("concurrent_winner");
+  });
+
+  it("throws IllegalCallStatusTransitionError when a lost race resolves to a DIFFERENT terminal status", async () => {
+    // Same race shape, but the concurrent winner landed "abandoned" while
+    // this request wanted "completed" — a genuine conflict that must
+    // surface as a 409, not silently overwrite or silently succeed.
+    const { useCase, callRepository } = buildUseCase();
+    seedInProgressCall(callRepository);
+    const originalUpdateStatus = callRepository.updateStatus.bind(callRepository);
+    callRepository.updateStatus = async (db, tenantId, id, _fromStatus, _toStatus, fields) => {
+      await originalUpdateStatus(db, tenantId, id, "in_progress", "abandoned", fields);
+      return null;
+    };
+
+    await expect(
+      useCase.execute({
+        tenantId: "tenant-1",
+        telephonyCallSid: "CA-abc123",
+        status: "completed",
+        endReason: "caller_hangup",
+        endedAt: "2026-01-15T12:03:00.000Z",
+      }),
+    ).rejects.toThrow(IllegalCallStatusTransitionError);
+  });
+
   it("tenant isolation: cannot end another tenant's call", async () => {
     const { useCase, callRepository } = buildUseCase();
     seedInProgressCall(callRepository, { tenantId: "tenant-1" });
