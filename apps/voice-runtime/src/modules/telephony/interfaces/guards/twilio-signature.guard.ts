@@ -55,7 +55,7 @@ export class TwilioSignatureGuard implements CanActivate {
   }
 }
 
-/** Identical to core-api's own extractFormParams — @fastify/formbody parses application/x-www-form-urlencoded into a flat string-keyed object; Twilio never sends nested/repeated keys on this webhook. */
+/** Identical to core-api's own extractFormParams — Nest's FastifyAdapter's own built-in urlencoded parser (see main.ts's own comment) parses application/x-www-form-urlencoded into a flat string-keyed object; Twilio never sends nested/repeated keys on this webhook. */
 function extractFormParams(body: unknown): Record<string, string> {
   if (typeof body !== "object" || body === null) {
     return {};
