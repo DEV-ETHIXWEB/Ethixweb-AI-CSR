@@ -309,10 +309,15 @@ export class CallSessionOrchestrator {
    * the full body, including a SECOND real HTTP call to
    * `orchestrator.endConversation()` for the same conversation. That
    * duplicate call is a real trigger for the exact race
-   * EndConversationUseCase/RedisConversationRepository (voice-orchestrator)
-   * and EndCallUseCase (core-api) each had to be made safe against — this
-   * guard fixes it at the source instead of only relying on those
-   * downstream backstops.
+   * EndConversationUseCase/RedisConversationRepository (voice-orchestrator,
+   * now CAS-protected via `Conversation.version` — see that repository's
+   * own comment) and EndCallUseCase (core-api, CAS-protected via
+   * `fromStatus`/`toStatus`) were each independently made safe against —
+   * this guard fixes it at the source instead of relying ONLY on those
+   * downstream backstops, which still matter as defense-in-depth against
+   * every OTHER path that can produce two concurrent end-of-call signals
+   * for the same conversation (a Voice Runtime process crash-and-retry, a
+   * duplicate Twilio status callback, ...), not just this specific one.
    */
   async onCallEnd(params: CallSessionParams, endReason: string): Promise<void> {
     if (this.ended) {

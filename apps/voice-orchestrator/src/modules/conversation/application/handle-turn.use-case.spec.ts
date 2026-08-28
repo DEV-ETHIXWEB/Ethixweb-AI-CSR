@@ -45,6 +45,7 @@ function baseConversation(overrides: Partial<Conversation> = {}): Conversation {
     endedAt: null,
     capacityReservationId: "reservation-1",
     endReason: null,
+    version: 1,
     ...overrides,
   };
 }
@@ -285,6 +286,76 @@ describe("HandleTurnUseCase", () => {
 
     const sentMessages = aiProvider.requests[0]?.messages ?? [];
     expect(sentMessages.length).toBeLessThan(longHistory.length + 1);
+  });
+
+  describe("lost CAS race against a concurrent conversation write", () => {
+    // Regression tests for a real bug: a turn's runTurn() can take seconds
+    // (LLM streaming, tool calls) between reading the conversation and its
+    // final save() — long enough for the caller to hang up mid-turn and
+    // EndConversationUseCase to save first. Without a CAS, this turn's
+    // final save() would silently last-write-wins clobber `endedAt` back to
+    // null, resurrecting an ended conversation.
+
+    it("discards this turn's state update without throwing when the conversation ended mid-turn", async () => {
+      const repository = new FakeConversationRepository();
+      const seeded = baseConversation();
+      repository.seed(seeded);
+      const { useCase } = buildUseCase({ repository });
+      const originalSave = repository.save.bind(repository);
+      repository.save = async (conversation) => {
+        // Simulate EndConversationUseCase winning the race right as this
+        // turn's own final save() runs.
+        await originalSave({
+          ...seeded,
+          state: "ended",
+          endedAt: "2026-01-01T00:00:00.000Z",
+          endReason: "caller_hangup",
+        });
+        return originalSave(conversation);
+      };
+
+      // The response text was very likely already streamed to the caller
+      // before the hangup was processed — the turn must still return it,
+      // not throw, even though its state update is about to be discarded.
+      const result = await useCase.execute(baseCommand());
+      expect(result.responseText).toBe("hi");
+
+      const stored = await repository.findById("tenant-1", "conv-1");
+      expect(stored?.endedAt).toBe("2026-01-01T00:00:00.000Z");
+      expect(stored?.endReason).toBe("caller_hangup");
+      // This turn's own transcript update must NOT have been written on
+      // top of — the ended conversation must not be resurrected.
+      expect(stored?.state).toBe("ended");
+    });
+
+    it("retries once and succeeds when a benign concurrent write (not an end) landed first, preserving that write's state", async () => {
+      const repository = new FakeConversationRepository();
+      const seeded = baseConversation();
+      repository.seed(seeded);
+      const { useCase } = buildUseCase({ repository });
+      const originalSave = repository.save.bind(repository);
+      let firstAttempt = true;
+      repository.save = async (conversation) => {
+        if (firstAttempt) {
+          firstAttempt = false;
+          // A concurrent POST /:id/interrupt (TransitionConversationStateUseCase)
+          // bumps the version and changes `state` without ending the conversation.
+          await originalSave({ ...seeded, state: "identifying" });
+        }
+        return originalSave(conversation);
+      };
+
+      const result = await useCase.execute(baseCommand());
+
+      expect(result.responseText).toBe("hi");
+      const stored = await repository.findById("tenant-1", "conv-1");
+      expect(stored?.transcript.map((t) => t.speaker)).toEqual(["caller", "agent"]);
+      expect(stored?.endedAt).toBeNull();
+      // This use case doesn't own `state` — the concurrent writer's value
+      // must survive the retry, not get silently overwritten by this
+      // turn's own stale ("greeting") copy of it.
+      expect(stored?.state).toBe("identifying");
+    });
   });
 
   describe("turn-level idempotency", () => {

@@ -175,6 +175,7 @@ export class StartConversationUseCase {
         startedAt: now,
         endedAt: null,
         endReason: null,
+        version: 1,
       });
 
       return this.publishStarted(conversation, now);

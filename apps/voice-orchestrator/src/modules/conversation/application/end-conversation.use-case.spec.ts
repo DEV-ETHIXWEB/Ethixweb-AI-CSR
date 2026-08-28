@@ -1,6 +1,6 @@
 import { FakeCoreApiClient } from "../../tool-broker/application/__fakes__/fake-core-api-client";
 import type { Conversation } from "../domain/conversation.entity";
-import { ConversationNotFoundError } from "../domain/errors";
+import { ConversationNotFoundError, ConversationSaveConflictError } from "../domain/errors";
 import { FakeCallAdmissionPort } from "./__fakes__/fake-call-admission";
 import { FakeConversationRepository } from "./__fakes__/fake-conversation-repository";
 import { FakeEventBus } from "./__fakes__/fake-event-bus";
@@ -23,6 +23,7 @@ function baseConversation(overrides: Partial<Conversation> = {}): Conversation {
     startedAt: new Date().toISOString(),
     endedAt: null,
     endReason: null,
+    version: 1,
     ...overrides,
   };
 }
@@ -79,6 +80,94 @@ describe("EndConversationUseCase", () => {
     await expect(
       useCase.execute({ tenantId: "tenant-1", conversationId: "missing", endReason: "x" }),
     ).rejects.toThrow(ConversationNotFoundError);
+  });
+
+  describe("lost CAS race against a concurrent conversation write", () => {
+    // Regression tests for a real bug: EndConversationUseCase's
+    // findById-mutate-save was not by itself atomic. A live turn's slow
+    // tool call (HandleTurnUseCase) can still be mid-flight when the caller
+    // hangs up — both read the same version, and without a CAS the loser's
+    // write would silently vanish (or worse, resurrect an ended
+    // conversation). These simulate the "concurrent winner" the same way
+    // end-call.use-case.spec.ts does: monkey-patch the fake repository's
+    // save() to inject a competing write at the exact moment this use
+    // case's own save() runs.
+
+    it("resolves as idempotent when the concurrent winner ALSO ended the conversation", async () => {
+      const { useCase, repository, eventBus } = buildUseCase();
+      const seeded = baseConversation();
+      repository.seed(seeded);
+      const originalSave = repository.save.bind(repository);
+      repository.save = async (conversation) => {
+        // The "concurrent winner" (e.g. a duplicate hangup signal handled
+        // by a second concurrent request) lands first.
+        await originalSave({
+          ...seeded,
+          state: "ended",
+          endedAt: "2026-01-01T00:00:00.000Z",
+          endReason: "concurrent_winner",
+        });
+        return originalSave(conversation);
+      };
+
+      const result = await useCase.execute({
+        tenantId: "tenant-1",
+        conversationId: "conv-1",
+        endReason: "this_request_reason",
+      });
+
+      expect(result.state).toBe("ended");
+      expect(result.endReason).toBe("concurrent_winner");
+      // Only the winner's end should have published — this request lost
+      // the race and must not double-publish/double-fire best-effort
+      // side effects for an end that already happened.
+      expect(eventBus.eventsOfType("conversation.ended")).toHaveLength(0);
+    });
+
+    it("reapplies the end mutation on top of a non-terminal concurrent write (e.g. a slow turn's save landing first)", async () => {
+      const { useCase, repository, eventBus } = buildUseCase();
+      const seeded = baseConversation();
+      repository.seed(seeded);
+      const originalSave = repository.save.bind(repository);
+      let firstAttempt = true;
+      repository.save = async (conversation) => {
+        if (firstAttempt) {
+          firstAttempt = false;
+          // A concurrent turn's own (unrelated) save lands first, bumping
+          // the version without ending the conversation.
+          await originalSave({ ...seeded, transcript: [{ turnIndex: 0, speaker: "caller", text: "hi", confidence: null, offsetMs: 0, at: "2026-01-01T00:00:00.000Z" }] });
+          return originalSave(conversation);
+        }
+        return originalSave(conversation);
+      };
+
+      const result = await useCase.execute({
+        tenantId: "tenant-1",
+        conversationId: "conv-1",
+        endReason: "caller_hangup",
+      });
+
+      expect(result.state).toBe("ended");
+      expect(result.endReason).toBe("caller_hangup");
+      // The concurrent turn's own write survives — reapplying the end
+      // mutation on top of the fresh version must not clobber it.
+      expect(result.transcript).toHaveLength(1);
+      expect(eventBus.eventsOfType("conversation.ended")).toHaveLength(1);
+    });
+
+    it("throws ConversationSaveConflictError when the retry itself loses a second race", async () => {
+      const { useCase, repository } = buildUseCase();
+      repository.seed(baseConversation());
+      repository.save = async () => null;
+
+      await expect(
+        useCase.execute({
+          tenantId: "tenant-1",
+          conversationId: "conv-1",
+          endReason: "caller_hangup",
+        }),
+      ).rejects.toThrow(ConversationSaveConflictError);
+    });
   });
 
   describe("production-blocker fix: ending the corresponding Call row (best-effort)", () => {

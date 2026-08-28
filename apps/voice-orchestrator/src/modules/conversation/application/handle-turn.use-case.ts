@@ -217,7 +217,7 @@ export class HandleTurnUseCase {
       });
     }
 
-    await this.repository.save(conversation);
+    await this.saveTurnResult(conversation);
 
     const durationMs = Date.now() - startedAt;
     await this.eventBus.publish({
@@ -237,6 +237,61 @@ export class HandleTurnUseCase {
       state: conversation.state,
       ...(escalation ? { escalation } : {}),
     };
+  }
+
+  /**
+   * `conversation` here already carries this whole turn's mutations
+   * (transcript/messages pushes, `leadId`, etc. — all applied in place
+   * during `runTurn`), read at a `version` that may now be stale: a turn
+   * can run for seconds (LLM streaming, tool calls), long enough for the
+   * caller to hang up mid-turn and EndConversationUseCase's `save()` to
+   * land first — a real race, not a hypothetical one (see that use case's
+   * own `resolveLostRace` comment). If the CAS is lost specifically
+   * because the conversation ended in the meantime, this turn's state
+   * update is deliberately DISCARDED rather than retried — replaying it
+   * on top of the newer version would silently resurrect an ended
+   * conversation (clobber `endedAt` back to null), corrupting exactly the
+   * state EndConversationUseCase just correctly wrote. The turn's response
+   * text was very likely already streamed to the caller before the hangup
+   * was processed, so this method still lets that response return to the
+   * Voice Runtime — only the Redis-side transcript/message persistence for
+   * this turn is lost, not the live conversation the caller already heard.
+   * Any other lost-CAS cause (e.g. a concurrent `POST /:id/interrupt`
+   * transitioning `state`, or two turns genuinely overlapping) gets a
+   * single retry on the freshly-read version, same "one re-read is enough,
+   * don't loop for a third writer" discipline used throughout this module —
+   * but the retry keeps `fresh.state`, not `conversation`'s own (stale)
+   * copy of it: this use case never legitimately owns `state` (only
+   * TransitionConversationStateUseCase and EndConversationUseCase do), so
+   * blindly replaying `conversation` wholesale would silently clobber
+   * whatever the concurrent writer changed it to — the exact same class of
+   * silent-corruption bug this whole CAS mechanism exists to prevent, just
+   * relocated to a different field.
+   */
+  private async saveTurnResult(conversation: Conversation): Promise<void> {
+    const saved = await this.repository.save(conversation);
+    if (saved) {
+      return;
+    }
+    const fresh = await this.repository.findById(conversation.tenantId, conversation.id);
+    if (!fresh) {
+      return;
+    }
+    if (fresh.endedAt) {
+      this.logger.warn(
+        "conversation ended mid-turn — this turn's state update was discarded rather than resurrecting the ended conversation",
+        { tenantId: conversation.tenantId, conversationId: conversation.id },
+      );
+      return;
+    }
+    const retry: Conversation = { ...conversation, version: fresh.version, state: fresh.state };
+    const retrySaved = await this.repository.save(retry);
+    if (!retrySaved) {
+      this.logger.warn(
+        "conversation lost a concurrent-write race twice in a row while saving a turn — this turn's state update was discarded",
+        { tenantId: conversation.tenantId, conversationId: conversation.id },
+      );
+    }
   }
 
   private async streamOneCompletion(
