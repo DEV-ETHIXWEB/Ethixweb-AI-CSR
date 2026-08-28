@@ -292,8 +292,32 @@ export class CallSessionOrchestrator {
     }
   }
 
-  /** docs/28 §L — call-end sequence. Best-effort: a core-api/orchestrator outage at hangup time must never block this runtime's own cleanup (§L step 3). */
+  /**
+   * docs/28 §L — call-end sequence. Best-effort: a core-api/orchestrator
+   * outage at hangup time must never block this runtime's own cleanup
+   * (§L step 3).
+   *
+   * Idempotency guard, deliberately the very first statement — a real,
+   * previously-shipped bug found live: MediaStreamGateway can (and, per its
+   * own comment, EXPECTS to) call this twice for the same call — Twilio's
+   * documented `stop` event and the socket's `close` event both trigger it,
+   * and a raw network drop can fire `close` without a `stop` ever arriving
+   * first. The gateway's own comment claims "onCallEnd's `this.ended` guard
+   * ... makes that safe," but no such guard actually existed here — `ended`
+   * was only ever read by the turn-handling path (`onAudioFrame`/its own
+   * turn loop), never checked by this method itself, so both callers ran
+   * the full body, including a SECOND real HTTP call to
+   * `orchestrator.endConversation()` for the same conversation. That
+   * duplicate call is a real trigger for the exact race
+   * EndConversationUseCase/RedisConversationRepository (voice-orchestrator)
+   * and EndCallUseCase (core-api) each had to be made safe against — this
+   * guard fixes it at the source instead of only relying on those
+   * downstream backstops.
+   */
   async onCallEnd(params: CallSessionParams, endReason: string): Promise<void> {
+    if (this.ended) {
+      return;
+    }
     this.ended = true;
     this.activeTurnAbort?.abort();
     this.ttsAbort?.abort();

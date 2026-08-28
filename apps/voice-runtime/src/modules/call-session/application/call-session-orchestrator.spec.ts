@@ -250,6 +250,28 @@ describe("CallSessionOrchestrator", () => {
 
       await expect(orchestrator.onCallEnd(baseParams(), "caller_hangup")).resolves.toBeUndefined();
     });
+
+    it("is idempotent: MediaStreamGateway calling onCallEnd twice for the same call (Twilio's stop event AND the socket's close event, exactly as it documents) sends only ONE end-conversation call", async () => {
+      // Regression test for a real, previously-shipped bug: onCallEnd had
+      // no guard at all against being invoked twice — only the turn-handling
+      // path checked `this.ended`. MediaStreamGateway's own comment claims
+      // this method's own `ended` guard makes a double call (stop + close,
+      // or a network drop firing close without stop) safe; before the fix,
+      // that claim was false, and this would have sent TWO real
+      // end-conversation HTTP calls for the same conversation.
+      const { orchestrator, orchestratorClient, stt } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+
+      await orchestrator.onCallEnd(baseParams(), "caller_hangup");
+      await orchestrator.onCallEnd(baseParams(), "runtime_disconnected");
+
+      expect(orchestratorClient.endCalls).toHaveLength(1);
+      expect(orchestratorClient.endCalls[0]?.req.endReason).toBe("caller_hangup");
+      expect(session.closed).toBe(true);
+    });
   });
 
   describe("emergency escalation", () => {
