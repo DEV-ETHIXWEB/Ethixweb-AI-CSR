@@ -153,7 +153,7 @@ function setSessionCookie(response: NextResponse, session: SessionData): void {
 }
 
 export const config = {
-  // Excludes static assets under public/ (e.g. ethixweb-emblem.png, used on
+  // Excludes static assets under public/ (e.g. ethixweb-wordmark.png, used on
   // the login page itself) in addition to the framework internals already
   // excluded: an unauthenticated request for a plain image file must never
   // be redirected to an HTML login page, or the login page's own logo (and

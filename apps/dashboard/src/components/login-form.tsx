@@ -39,10 +39,15 @@ export function LoginForm() {
   return (
     <main style={styles.page}>
       <form className="clay-surface" style={styles.card} onSubmit={handleSubmit}>
-        <div style={styles.brandMark}>
-          <Image src="/ethixweb-emblem.png" alt="" width={26} height={27} priority />
-        </div>
-        <h1 style={styles.title}>Ethixweb Operations</h1>
+        <Image
+          src="/ethixweb-wordmark.png"
+          alt="Ethixweb"
+          width={188}
+          height={28}
+          priority
+          style={styles.brandWordmark}
+        />
+        <h1 style={styles.title}>Operations</h1>
         <p style={styles.subtitle}>Sign in with your tenant, email, and password.</p>
 
         {error ? <div style={styles.error}>{error}</div> : null}
@@ -118,17 +123,7 @@ const styles = {
     flexDirection: "column",
     gap: 4,
   },
-  brandMark: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    width: 46,
-    height: 46,
-    borderRadius: "13px",
-    background: "var(--surface)",
-    marginBottom: 16,
-    boxShadow: "var(--shadow-md)",
-  },
+  brandWordmark: { display: "block", width: "auto", marginBottom: 18 },
   title: { fontSize: "1.2rem", fontWeight: 700, margin: "0 0 4px", letterSpacing: "-0.01em" },
   subtitle: { fontSize: "0.82rem", color: "var(--ink-soft)", margin: "0 0 16px" },
   label: { fontSize: "0.72rem", fontWeight: 600, marginTop: 12, marginBottom: 6 },

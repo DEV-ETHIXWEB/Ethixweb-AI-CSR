@@ -59,10 +59,15 @@ export function NavShell({
     <div style={styles.shell}>
       <aside style={styles.sidebar}>
         <div style={styles.brandRow}>
-          <span style={styles.brandMark}>
-            <Image src="/ethixweb-emblem.png" alt="" width={20} height={21} priority />
-          </span>
-          <span style={styles.brand}>Ethixweb Operations</span>
+          <Image
+            src="/ethixweb-wordmark.png"
+            alt="Ethixweb"
+            width={148}
+            height={22}
+            priority
+            style={styles.brandWordmark}
+          />
+          <span style={styles.brandSubtitle}>Operations</span>
         </div>
 
         {businesses.length > 1 ? (
@@ -131,23 +136,18 @@ const styles = {
   },
   brandRow: {
     display: "flex",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 18,
+    alignItems: "baseline",
+    gap: 8,
+    marginBottom: 20,
     padding: "0 4px",
   },
-  brandMark: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    width: 32,
-    height: 32,
-    borderRadius: "9px",
-    background: "var(--surface)",
-    flex: "none",
-    boxShadow: "var(--shadow-sm)",
+  brandWordmark: { display: "block", width: "auto" },
+  brandSubtitle: {
+    fontSize: "0.7rem",
+    fontWeight: 600,
+    color: "var(--ink-faint)",
+    letterSpacing: "0.01em",
   },
-  brand: { fontSize: "0.9rem", fontWeight: 700, letterSpacing: "-0.01em" },
   businessSelect: {
     width: "100%",
     marginBottom: 18,
