@@ -107,4 +107,25 @@ describe("TwilioSignatureGuard", () => {
 
     expect(() => guard.canActivate(context)).toThrow(InvalidTwilioSignatureError);
   });
+
+  /**
+   * Regression coverage for a real bug found live during a security audit:
+   * env.schema.ts's own comment on TWILIO_SIGNATURE_VALIDATION_DISABLED
+   * claims "never allow it in production (enforced in the guard itself,
+   * not just documented here)" — but the guard previously had no NODE_ENV
+   * check at all, only the literal flag value. A copy-pasted .env from a
+   * staging/ngrok setup landing in a NODE_ENV=production deployment would
+   * have silently disabled the sole authentication on this public
+   * telephony webhook.
+   */
+  it("NEVER bypasses in production, even if the escape hatch is set to true (env.schema.ts's own documented guarantee, now actually enforced)", () => {
+    process.env["TWILIO_SIGNATURE_VALIDATION_DISABLED"] = "true";
+    process.env["NODE_ENV"] = "production";
+    delete process.env["TWILIO_AUTH_TOKEN"];
+    const guard = new TwilioSignatureGuard();
+    const request = buildRequest({ headers: {} });
+    const context = buildContext(request);
+
+    expect(() => guard.canActivate(context)).toThrow(InvalidTwilioSignatureError);
+  });
 });

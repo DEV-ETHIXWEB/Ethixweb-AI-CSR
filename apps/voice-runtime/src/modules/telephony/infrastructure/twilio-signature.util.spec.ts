@@ -3,8 +3,8 @@ import { verifyTwilioSignature } from "./twilio-signature.util";
 
 describe("verifyTwilioSignature", () => {
   const authToken = "test-auth-token";
-  const url = "https://example.com/webhooks/sms/claim-reply";
-  const params = { From: "+15551234567", To: "+15559999999", Body: "CLAIM" };
+  const url = "https://example.com/webhooks/twilio/voice";
+  const params = { From: "+15551234567", To: "+15559999999", CallSid: "CAxxxx" };
 
   function computeExpected(): string {
     const sortedKeys = Object.keys(params).sort();

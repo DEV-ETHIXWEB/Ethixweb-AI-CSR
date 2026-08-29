@@ -16,11 +16,25 @@ import { verifyTwilioSignature } from "../../infrastructure/twilio-signature.uti
  * one deliberate escape hatch, for local ngrok testing per docs/41 — never
  * true by default, and the check below still requires it be the literal
  * string match, not merely "truthy env var present."
+ *
+ * Found live during a final security audit: env.schema.ts's own comment on
+ * this flag claims "never allow it in production (enforced in the guard
+ * itself, not just documented here)" — but until this fix, nothing here
+ * actually checked `NODE_ENV`, only the literal flag value. A copy-pasted
+ * `.env` from a staging/ngrok setup landing in production would have
+ * silently disabled the sole authentication mechanism on this public,
+ * unauthenticated (`@Public()`) telephony webhook, with no runtime
+ * safeguard despite what the comment claimed. `NODE_ENV === "production"`
+ * now overrides the flag unconditionally, matching the documented intent
+ * for real this time.
  */
 @Injectable()
 export class TwilioSignatureGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
-    if (process.env["TWILIO_SIGNATURE_VALIDATION_DISABLED"] === "true") {
+    if (
+      process.env["TWILIO_SIGNATURE_VALIDATION_DISABLED"] === "true" &&
+      process.env["NODE_ENV"] !== "production"
+    ) {
       return true;
     }
 
