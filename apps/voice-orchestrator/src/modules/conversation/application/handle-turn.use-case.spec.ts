@@ -326,6 +326,54 @@ describe("HandleTurnUseCase", () => {
     expect(result.responseText).toBe("Sorry, let me");
   });
 
+  /**
+   * Regression coverage for a real, live-reproducible bug found while
+   * auditing the complete inbound-call path end to end: with every LLM
+   * provider unavailable (this exact repo's own local dev environment has
+   * zero OPENAI_API_KEY/ANTHROPIC_API_KEY/GEMINI_API_KEY configured right
+   * now), FallbackAiProvider yields a single `{type: "error"}` chunk and
+   * nothing else. Before this fix, that produced a "successful" 200
+   * HandleTurnResult with responseText: "" and interrupted: false — the
+   * Voice Runtime's `if (turnResult.responseText) { speak(...) }` treats
+   * that as "nothing to say," leaving a real caller in silent dead air
+   * indefinitely, with no apology and no retry ever triggered.
+   */
+  it("THROWS (rather than silently returning an empty success) when the AI provider layer reports an error and produces no usable text or tool calls", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        {
+          type: "error",
+          message: "All AI providers failed or are unavailable: ",
+          retryable: false,
+        },
+      ],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    await expect(useCase.execute(baseCommand())).rejects.toThrow(/AI provider completion failed/);
+  });
+
+  it("does NOT throw when a provider error arrives only AFTER real text already streamed — that partial text is preserved, not discarded", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "Let me check that for" },
+        { type: "error", message: "connection reset mid-stream", retryable: false },
+      ],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    const result = await useCase.execute(baseCommand());
+
+    expect(result.responseText).toBe("Let me check that for");
+    expect(result.interrupted).toBe(false);
+  });
+
   it("compresses the message history before each provider call once it exceeds the context window", async () => {
     const repository = new FakeConversationRepository();
     const longHistory = Array.from({ length: 45 }, (_unused, index) => ({

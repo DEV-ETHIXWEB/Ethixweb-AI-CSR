@@ -312,6 +312,7 @@ export class HandleTurnUseCase {
     let text = "";
     const toolCalls: AiToolCallRequest[] = [];
     let interrupted = false;
+    let providerErrorMessage: string | null = null;
 
     const stream = this.aiProvider.streamCompletion(
       {
@@ -328,6 +329,9 @@ export class HandleTurnUseCase {
         if (signal?.aborted) {
           interrupted = true;
           break;
+        }
+        if (chunk.type === "error") {
+          providerErrorMessage = chunk.message;
         }
         const handled = this.applyChunk(chunk, toolCalls);
         text += handled.text;
@@ -349,6 +353,29 @@ export class HandleTurnUseCase {
           reason: error instanceof Error ? error.message : String(error),
         });
       }
+    }
+
+    // Found live, not hypothetical: with every LLM provider unavailable
+    // (unconfigured, or all down), FallbackAiProvider.streamCompletion
+    // yields a single `{type: "error"}` chunk and nothing else —
+    // applyChunk logs it and stops, but previously this method still
+    // returned `{text: "", toolCalls: [], interrupted: false}`, an
+    // ordinary-looking SUCCESSFUL result with nothing wrong flagged. That
+    // flowed straight through runTurn into a 200 HandleTurnResult with
+    // responseText: "" and interrupted: false, which the Voice Runtime's
+    // `if (turnResult.responseText) { speak(...) }` treats as "nothing to
+    // say" rather than a failure — the caller was left in silent dead air
+    // indefinitely, with no apology, no retry, nothing. Thrown here
+    // instead (only when the provider layer reported an error AND nothing
+    // usable came out of it — real partial text/tool-calls before a
+    // mid-stream error are preserved and returned as-is, matching
+    // FallbackAiProvider's own "a failure after the first chunk is
+    // surfaced as-is" contract) so it propagates as an ordinary 500 the
+    // Voice Runtime's EXISTING, already-tested turn-retry-then-apologize
+    // logic already handles correctly — not a new failure mode, routing a
+    // previously-silent one through infrastructure that already exists.
+    if (providerErrorMessage !== null && !interrupted && !text && toolCalls.length === 0) {
+      throw new Error(`AI provider completion failed: ${providerErrorMessage}`);
     }
 
     return { text, toolCalls, interrupted };
