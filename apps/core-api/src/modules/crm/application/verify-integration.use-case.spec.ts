@@ -90,4 +90,51 @@ describe("VerifyIntegrationUseCase", () => {
 
     await expect(useCase.execute("tenant-1", "missing")).rejects.toThrow(IntegrationNotFoundError);
   });
+
+  it(
+    "CONNECTION-POOL SAFETY: testConnection happens between two SEPARATE tenantContext.run " +
+      "transactions, never nested inside one held open for its duration — see this use case's " +
+      "own comment on why a single wrapping transaction would leave a real Postgres connection " +
+      "held open for as long as a degraded CRM's retry/backoff takes",
+    async () => {
+      const encryptor = new FakeCredentialEncryptor();
+      const integrationRepository = new FakeIntegrationRepository(encryptor);
+      seedIntegration(integrationRepository);
+      const adapter = new FakeCrmAdapter();
+      const tenantContext = new FakeTenantContextService() as unknown as TenantContextService;
+      const useCase = new VerifyIntegrationUseCase(
+        tenantContext,
+        integrationRepository,
+        new FakeCrmAdapterRegistry({ fake: adapter }),
+        createNoopLogger(),
+      );
+      const events: string[] = [];
+      jest.spyOn(tenantContext, "run").mockImplementation(async (_tenantId, work) => {
+        events.push("run:start");
+        const result = await (work as (db: never) => Promise<unknown>)({
+          $executeRaw: async () => 0,
+        } as never);
+        events.push("run:end");
+        return result;
+      });
+      const originalTest = adapter.testConnection.bind(adapter);
+      jest.spyOn(adapter, "testConnection").mockImplementation(async (...args) => {
+        events.push("verify:start");
+        const result = await originalTest(...args);
+        events.push("verify:end");
+        return result;
+      });
+
+      await useCase.execute("tenant-1", "integration-1");
+
+      expect(events).toEqual([
+        "run:start",
+        "run:end", // integration lookup + credential decryption — its own, already-closed transaction
+        "verify:start",
+        "verify:end", // the CRM call — no transaction open around it at all
+        "run:start",
+        "run:end", // the status update — a fresh, separate transaction
+      ]);
+    },
+  );
 });

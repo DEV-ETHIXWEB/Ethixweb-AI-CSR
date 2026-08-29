@@ -122,4 +122,61 @@ describe("SearchCustomerUseCase", () => {
     ).rejects.toThrow("network blip");
     expect(crmSyncLogRepository.records[0]?.status).toBe("failed");
   });
+
+  it(
+    "CONNECTION-POOL SAFETY: the CRM search call happens between two SEPARATE " +
+      "tenantContext.run transactions, never nested inside one held open for its duration — " +
+      "see this use case's own comment on why a single wrapping transaction would leave a real " +
+      "Postgres connection held open for as long as a degraded CRM's retry/backoff takes",
+    async () => {
+      const integrationRepository = new FakeIntegrationRepository(new FakeCredentialEncryptor());
+      await integrationRepository.seed(makeIntegration(), { type: "api_key", apiKey: "k" });
+      const adapter = new FakeCrmAdapter();
+      adapter.seedCustomer({
+        crmCustomerId: "hcp-1",
+        name: "Jane Doe",
+        phoneE164: "+15551234567",
+        raw: {},
+      });
+      const tenantContext = new FakeTenantContextService() as unknown as TenantContextService;
+      const useCase = new SearchCustomerUseCase(
+        tenantContext,
+        integrationRepository,
+        new FakeCrmAdapterRegistry({ fake: adapter }),
+        new FakeCrmSyncLogRepository(),
+        createNoopLogger(),
+      );
+      const events: string[] = [];
+      jest.spyOn(tenantContext, "run").mockImplementation(async (_tenantId, work) => {
+        events.push("run:start");
+        const result = await (work as (db: never) => Promise<unknown>)({
+          $executeRaw: async () => 0,
+        } as never);
+        events.push("run:end");
+        return result;
+      });
+      const originalSearch = adapter.searchCustomerByPhone.bind(adapter);
+      jest.spyOn(adapter, "searchCustomerByPhone").mockImplementation(async (...args) => {
+        events.push("search:start");
+        const result = await originalSearch(...args);
+        events.push("search:end");
+        return result;
+      });
+
+      await useCase.execute({
+        tenantId: "tenant-1",
+        integrationId: "integration-1",
+        phoneE164: "+15551234567",
+      });
+
+      expect(events).toEqual([
+        "run:start",
+        "run:end", // integration lookup + credential decryption — its own, already-closed transaction
+        "search:start",
+        "search:end", // the CRM call — no transaction open around it at all
+        "run:start",
+        "run:end", // the CrmSyncLog write — a fresh, separate transaction
+      ]);
+    },
+  );
 });

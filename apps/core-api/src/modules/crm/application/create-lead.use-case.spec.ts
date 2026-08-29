@@ -56,6 +56,61 @@ describe("CreateLeadUseCase", () => {
   });
 
   it(
+    "CONNECTION-POOL SAFETY: the CRM create call happens between two SEPARATE " +
+      "tenantContext.run transactions, never nested inside one held open for its duration — " +
+      "see this use case's own comment on why a single wrapping transaction would leave a real " +
+      "Postgres connection held open for as long as a degraded CRM's retry/backoff takes",
+    async () => {
+      const integrationRepository = new FakeIntegrationRepository(new FakeCredentialEncryptor());
+      await integrationRepository.seed(makeIntegration(), { type: "api_key", apiKey: "k" });
+      const adapter = new FakeCrmAdapter();
+      const tenantContext = new FakeTenantContextService() as unknown as TenantContextService;
+      const useCase = new CreateLeadUseCase(
+        tenantContext,
+        integrationRepository,
+        new FakeCrmAdapterRegistry({ fake: adapter }),
+        new FakeCrmSyncLogRepository(),
+        new InMemoryIdempotencyStore(),
+        createNoopLogger(),
+      );
+      const events: string[] = [];
+      jest.spyOn(tenantContext, "run").mockImplementation(async (_tenantId, work) => {
+        events.push("run:start");
+        const result = await (work as (db: never) => Promise<unknown>)({
+          $executeRaw: async () => 0,
+        } as never);
+        events.push("run:end");
+        return result;
+      });
+      const originalCreate = adapter.createLead.bind(adapter);
+      jest.spyOn(adapter, "createLead").mockImplementation(async (...args) => {
+        events.push("create:start");
+        const result = await originalCreate(...args);
+        events.push("create:end");
+        return result;
+      });
+
+      await useCase.execute({
+        tenantId: "tenant-1",
+        integrationId: "integration-1",
+        crmCustomerId: "hcp-customer-1",
+        problemSummary: "Leaking kitchen faucet",
+        priority: "normal",
+        leadType: "service_call",
+      });
+
+      expect(events).toEqual([
+        "run:start",
+        "run:end", // integration lookup + credential decryption — its own, already-closed transaction
+        "create:start",
+        "create:end", // the CRM call — no transaction open around it at all
+        "run:start",
+        "run:end", // the CrmSyncLog write — a fresh, separate transaction
+      ]);
+    },
+  );
+
+  it(
     "SAFETY CONTRACT: never touches any job/scheduling/dispatch operation — " +
       "the adapter's createLead is the only method invoked",
     async () => {

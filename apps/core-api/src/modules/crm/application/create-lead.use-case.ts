@@ -40,6 +40,15 @@ export interface CreateLeadCommand {
  * anywhere on the CRMAdapter interface at all (the same "capability doesn't
  * exist" principle docs/04 §1 applies to the AI's tool surface, applied
  * here one layer down).
+ *
+ * `doExecute` is DELIBERATELY three separate steps, not one
+ * `tenantContext.run` wrapping everything — same connection-pool-safety
+ * fix as SearchCustomerUseCase (crm module, see that class's own comment
+ * for the full reasoning): `adapter.createLead` goes through
+ * ResilientCrmAdapter's circuit-breaker + retry (up to 6 attempts,
+ * exponential backoff to a 64s cap), so holding a Postgres transaction
+ * open around it risked holding it for 60-90+ seconds under a degraded
+ * CRM.
  */
 @Injectable()
 export class CreateLeadUseCase {
@@ -87,38 +96,43 @@ export class CreateLeadUseCase {
   }
 
   private async doExecute(command: CreateLeadCommand): Promise<LeadResult> {
-    return this.tenantContext.run(command.tenantId, async (db) => {
-      const integration = await this.integrationRepository.findById(
-        db,
-        command.tenantId,
-        command.integrationId,
-      );
-      if (!integration) {
-        throw new IntegrationNotFoundError(command.integrationId);
-      }
+    const { integration, credential } = await this.tenantContext.run(
+      command.tenantId,
+      async (db) => {
+        const integration = await this.integrationRepository.findById(
+          db,
+          command.tenantId,
+          command.integrationId,
+        );
+        if (!integration) {
+          throw new IntegrationNotFoundError(command.integrationId);
+        }
+        const credential = await this.integrationRepository.getDecryptedCredential(
+          db,
+          command.tenantId,
+          command.integrationId,
+        );
+        return { integration, credential };
+      },
+    );
+    const adapter = this.adapterRegistry.resolve(integration.crmType, command.tenantId);
+    const syncLogKey = randomUUID();
+    const requestPayload = {
+      crmCustomerId: command.crmCustomerId,
+      problemSummary: command.problemSummary,
+      priority: command.priority,
+      leadType: command.leadType,
+    };
 
-      const credential = await this.integrationRepository.getDecryptedCredential(
-        db,
-        command.tenantId,
-        command.integrationId,
-      );
-      const adapter = this.adapterRegistry.resolve(integration.crmType, command.tenantId);
-      const syncLogKey = randomUUID();
-      const requestPayload = {
+    try {
+      const result = await adapter.createLead(credential, {
         crmCustomerId: command.crmCustomerId,
         problemSummary: command.problemSummary,
         priority: command.priority,
         leadType: command.leadType,
-      };
-
-      try {
-        const result = await adapter.createLead(credential, {
-          crmCustomerId: command.crmCustomerId,
-          problemSummary: command.problemSummary,
-          priority: command.priority,
-          leadType: command.leadType,
-        });
-        await this.crmSyncLogRepository.record(db, {
+      });
+      await this.tenantContext.run(command.tenantId, (db) =>
+        this.crmSyncLogRepository.record(db, {
           tenantId: command.tenantId,
           integrationId: command.integrationId,
           operation: "createLead",
@@ -128,15 +142,17 @@ export class CreateLeadUseCase {
           idempotencyKey: syncLogKey,
           requestPayload,
           responsePayload: result,
-        });
-        this.logger.info("CRM lead created", {
-          tenantId: command.tenantId,
-          integrationId: command.integrationId,
-          crmLeadId: result.crmLeadId,
-        });
-        return result;
-      } catch (error) {
-        await this.crmSyncLogRepository.record(db, {
+        }),
+      );
+      this.logger.info("CRM lead created", {
+        tenantId: command.tenantId,
+        integrationId: command.integrationId,
+        crmLeadId: result.crmLeadId,
+      });
+      return result;
+    } catch (error) {
+      await this.tenantContext.run(command.tenantId, (db) =>
+        this.crmSyncLogRepository.record(db, {
           tenantId: command.tenantId,
           integrationId: command.integrationId,
           operation: "createLead",
@@ -146,9 +162,9 @@ export class CreateLeadUseCase {
           idempotencyKey: syncLogKey,
           requestPayload,
           responsePayload: { error: error instanceof Error ? error.message : String(error) },
-        });
-        throw error;
-      }
-    });
+        }),
+      );
+      throw error;
+    }
   }
 }

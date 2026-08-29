@@ -34,6 +34,18 @@ export interface SearchCustomerCommand {
  * it said, log the attempt" — every operation is recorded in CrmSyncLog
  * (docs/13 crm-integration module §5), success or failure, independent of
  * the tool broker's own `tool_calls` audit trail.
+ *
+ * DELIBERATELY three separate steps, not one `tenantContext.run` wrapping
+ * everything — same connection-pool-safety fix as
+ * customers/application/resolve-customer.use-case.ts (see that class's own
+ * comment for the full reasoning): `tenantContext.run` holds open a real
+ * Postgres transaction for as long as its callback runs, and
+ * `adapter.searchCustomerByPhone` goes through ResilientCrmAdapter's
+ * circuit-breaker + retry (up to 6 attempts, exponential backoff to a 64s
+ * cap) — a degraded CRM could hold that transaction open for 60-90+
+ * seconds. Split into: a short read (integration + decrypted credential),
+ * the CRM call with no transaction open around it, then a short write
+ * (the CrmSyncLog row, success or failure).
  */
 @Injectable()
 export class SearchCustomerUseCase {
@@ -51,29 +63,34 @@ export class SearchCustomerUseCase {
       "ethixweb.integration_id": command.integrationId,
     });
 
-    return this.tenantContext.run(command.tenantId, async (db) => {
-      const integration = await this.integrationRepository.findById(
-        db,
-        command.tenantId,
-        command.integrationId,
-      );
-      if (!integration) {
-        throw new IntegrationNotFoundError(command.integrationId);
-      }
+    const { integration, credential } = await this.tenantContext.run(
+      command.tenantId,
+      async (db) => {
+        const integration = await this.integrationRepository.findById(
+          db,
+          command.tenantId,
+          command.integrationId,
+        );
+        if (!integration) {
+          throw new IntegrationNotFoundError(command.integrationId);
+        }
+        const credential = await this.integrationRepository.getDecryptedCredential(
+          db,
+          command.tenantId,
+          command.integrationId,
+        );
+        return { integration, credential };
+      },
+    );
+    const adapter = this.adapterRegistry.resolve(integration.crmType, command.tenantId);
+    const idempotencyKey = randomUUID();
 
-      const credential = await this.integrationRepository.getDecryptedCredential(
-        db,
-        command.tenantId,
-        command.integrationId,
-      );
-      const adapter = this.adapterRegistry.resolve(integration.crmType, command.tenantId);
-      const idempotencyKey = randomUUID();
-
-      try {
-        const result = await adapter.searchCustomerByPhone(credential, {
-          phoneE164: command.phoneE164,
-        });
-        await this.crmSyncLogRepository.record(db, {
+    try {
+      const result = await adapter.searchCustomerByPhone(credential, {
+        phoneE164: command.phoneE164,
+      });
+      await this.tenantContext.run(command.tenantId, (db) =>
+        this.crmSyncLogRepository.record(db, {
           tenantId: command.tenantId,
           integrationId: command.integrationId,
           operation: "searchCustomerByPhone",
@@ -83,10 +100,12 @@ export class SearchCustomerUseCase {
           idempotencyKey,
           requestPayload: { phoneE164: command.phoneE164 },
           responsePayload: result,
-        });
-        return result;
-      } catch (error) {
-        await this.crmSyncLogRepository.record(db, {
+        }),
+      );
+      return result;
+    } catch (error) {
+      await this.tenantContext.run(command.tenantId, (db) =>
+        this.crmSyncLogRepository.record(db, {
           tenantId: command.tenantId,
           integrationId: command.integrationId,
           operation: "searchCustomerByPhone",
@@ -96,14 +115,14 @@ export class SearchCustomerUseCase {
           idempotencyKey,
           requestPayload: { phoneE164: command.phoneE164 },
           responsePayload: { error: error instanceof Error ? error.message : String(error) },
-        });
-        this.logger.warn("CRM searchCustomerByPhone failed", {
-          tenantId: command.tenantId,
-          integrationId: command.integrationId,
-          reason: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-      }
-    });
+        }),
+      );
+      this.logger.warn("CRM searchCustomerByPhone failed", {
+        tenantId: command.tenantId,
+        integrationId: command.integrationId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   }
 }
