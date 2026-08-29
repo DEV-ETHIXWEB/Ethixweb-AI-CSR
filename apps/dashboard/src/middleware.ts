@@ -126,6 +126,14 @@ async function refreshSession(session: SessionData): Promise<RefreshResult> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refreshToken: session.refreshToken }),
       cache: "no-store",
+      // Node's fetch has no default timeout, same unbounded-fetch bug
+      // class found and fixed across the live-call path this session,
+      // here in the middleware that gates every single dashboard request.
+      // A timeout firing throws, caught below into the existing
+      // "unreachable" outcome, already the correct behavior for this
+      // exact case (leave the existing session alone rather than forcing
+      // a sign-out over a transient issue).
+      signal: AbortSignal.timeout(8000),
     });
   } catch {
     return { outcome: "unreachable" };

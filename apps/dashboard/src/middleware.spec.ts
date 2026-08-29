@@ -123,6 +123,30 @@ describe("dashboard middleware", () => {
     expect(setCookie).toContain(`${SESSION_COOKIE}=;`);
   });
 
+  /**
+   * Regression coverage for a real bug found live: this refresh call had
+   * no timeout at all, same unbounded-fetch bug class found and fixed
+   * across the live-call path this session. A hung (not erroring)
+   * core-api response here would have stalled every single dashboard
+   * request this middleware gates, not just the refresh attempt.
+   */
+  it("bounds the refresh call with a timeout, so a hung core-api response is never left completely unbounded", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ accessToken: "new-access", refreshToken: "new-refresh" }), {
+        status: 200,
+      }),
+    );
+    global.fetch = fetchSpy;
+
+    await middleware(
+      requestWithCookie("/admin/overview", sessionCookieValue({ accessToken: jwtWithExp(10) })),
+    );
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(init.signal?.aborted).toBe(false);
+  });
+
   it("does NOT force a sign-out when core-api is merely unreachable, a transient network error is not the same as a rejected session", async () => {
     const fetchSpy = vi.fn().mockRejectedValue(new Error("fetch failed"));
     global.fetch = fetchSpy;

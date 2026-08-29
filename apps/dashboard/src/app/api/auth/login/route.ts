@@ -21,7 +21,7 @@ interface CoreApiTokenResponse {
 
 /**
  * Proxies to core-api's real POST /v1/auth/login. Login is (tenantId,
- * email, password) — NOT email/password alone — matching core-api's own
+ * email, password), NOT email/password alone, matching core-api's own
  * deliberate design (no cross-tenant email lookup path exists; see
  * apps/core-api/src/modules/auth/application/commands/login.use-case.ts's
  * own comment). This app's login form collects tenantId explicitly rather
@@ -37,14 +37,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
       cache: "no-store",
+      // Node's fetch has no default timeout, same unbounded-fetch bug
+      // class found and fixed across the live-call path this session: a
+      // hung (not erroring) core-api would otherwise leave a real user
+      // staring at a stuck "Signing in..." button indefinitely.
+      signal: AbortSignal.timeout(8000),
     });
   } catch {
-    // core-api unreachable (network error, not an HTTP error response) —
-    // caught explicitly so an outage surfaces as a normal, user-facing
-    // sign-in failure rather than an uncaught exception that Next.js
-    // turns into a raw 500 with no actionable message. Found by directly
-    // testing this route against a stopped core-api during this phase's
-    // own verification, not assumed.
+    // core-api unreachable (network error, not an HTTP error response, a
+    // timeout above firing lands here too), caught explicitly so an
+    // outage surfaces as a normal, user-facing sign-in failure rather than
+    // an uncaught exception that Next.js turns into a raw 500 with no
+    // actionable message. Found by directly testing this route against a
+    // stopped core-api during this phase's own verification, not assumed.
     return NextResponse.json(
       { message: "Unable to reach the server. Please try again shortly." },
       { status: 503 },

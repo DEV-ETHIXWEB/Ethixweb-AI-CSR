@@ -1,6 +1,15 @@
 import { coreApiUrl } from "./core-api-url";
 import { getSession, setSession, clearSession, type SessionData } from "./session";
 
+// Node's fetch has no default timeout. Same unbounded-fetch bug class
+// found and fixed across the live-call path this session
+// (HttpCoreApiClient, FallbackAiProvider, HttpOrchestratorClient,
+// TwilioCallTransferProvider, the notification senders, the CRM adapter):
+// a hung core-api response here would leave an operator staring at a
+// loading dashboard page indefinitely, every Server Component's data
+// fetch goes through this one function.
+const REQUEST_TIMEOUT_MS = 8000;
+
 export class UnauthenticatedError extends Error {
   constructor() {
     super("No active session, the caller must sign in again.");
@@ -47,6 +56,7 @@ export async function coreApiFetch<T>(
         ...(init?.body ? { "Content-Type": "application/json" } : {}),
       },
       cache: "no-store" as const,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       ...(init?.body ? { body: JSON.stringify(init.body) } : {}),
     });
 
@@ -95,6 +105,7 @@ async function tryRefresh(session: SessionData): Promise<SessionData | null> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ refreshToken: session.refreshToken }),
     cache: "no-store",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) {
     return null;
