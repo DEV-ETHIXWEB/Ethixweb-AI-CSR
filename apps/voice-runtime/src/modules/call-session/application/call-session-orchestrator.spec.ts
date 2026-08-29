@@ -213,6 +213,46 @@ describe("CallSessionOrchestrator", () => {
       expect(tts.synthesizeCalls[0]).toMatch(/unable to take your call/i);
       expect(sink.closed).toBe(true);
     });
+
+    /**
+     * Regression coverage for a real bug found live: previously, an STT
+     * session error AFTER a successful open only logged a warning, no
+     * recovery action. `ws`'s WebSocket never reconnects on its own and
+     * DeepgramSttSession has no reconnect logic either, so once this
+     * fires, STT is permanently dead for the rest of the call, the caller
+     * could talk for the remainder of the call and never be transcribed,
+     * with nothing ever telling them or ending the call. This should
+     * degrade exactly the same way openSession() itself failing already
+     * does.
+     */
+    it("degrades gracefully (apology + close) when the STT session errors AFTER opening successfully, not just on open failure", async () => {
+      const { orchestrator, stt, tts } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+      session.emitError(new Error("connection reset"));
+      await flushMicrotasks();
+
+      expect(tts.synthesizeCalls.at(-1)).toMatch(/unable to take your call/i);
+      expect(sink.closed).toBe(true);
+    });
+
+    it("does not attempt a second apology when the STT session errors after the call has already ended", async () => {
+      const { orchestrator, stt, tts, orchestratorClient } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+      await orchestrator.onCallEnd(baseParams(), "caller_hangup");
+      const synthesizeCallsBeforeError = tts.synthesizeCalls.length;
+
+      session.emitError(new Error("connection reset after hangup"));
+      await flushMicrotasks();
+
+      expect(tts.synthesizeCalls).toHaveLength(synthesizeCallsBeforeError);
+      expect(orchestratorClient.endCalls).toHaveLength(1);
+    });
   });
 
   describe("orchestrator failure at call start", () => {

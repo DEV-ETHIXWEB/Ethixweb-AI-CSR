@@ -131,7 +131,29 @@ export class CallSessionOrchestrator {
     });
     this.sttSession.onSpeechStarted(() => this.handleBargeIn(params, sink));
     this.sttSession.onError((error) => {
-      log.warn("STT session error", { reason: error.message });
+      // Found live, not hypothetical: this used to only log. `ws`'s
+      // WebSocket never reconnects on its own and DeepgramSttSession has
+      // no reconnect logic of its own either, so once this fires, STT is
+      // permanently dead for the rest of the call: every later
+      // sendAudio() call still succeeds silently (the socket just isn't
+      // OPEN, so frames are buffered forever, see sendAudio's own
+      // buffering comment), meaning the caller could talk for the
+      // remainder of the call and never be transcribed, with nothing
+      // user-facing ever telling them or ending the call. Ending the call
+      // the same way openSession() itself failing already does (apology,
+      // then close) is the correct, honest outcome, not a worse
+      // regression risk than the silent-forever alternative it replaces.
+      log.error("STT session error, ending call, session cannot recover", {
+        reason: error.message,
+      });
+      if (this.ended) {
+        return;
+      }
+      this.speakApologyAndClose(sink).catch((closeError: unknown) => {
+        log.error("failed to speak apology after STT session error", {
+          reason: closeError instanceof Error ? closeError.message : String(closeError),
+        });
+      });
     });
   }
 
