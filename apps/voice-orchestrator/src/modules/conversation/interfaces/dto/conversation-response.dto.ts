@@ -69,7 +69,7 @@ export class TurnResultResponseDto {
     description:
       'Present iff escalateEmergency succeeded this turn (docs/28 §M). action === "forward_call" is the runtime\'s signal to execute the actual SIP/PSTN transfer — this service never places or transfers calls itself.',
   })
-  escalation?: { severity: string; action: string };
+  escalation?: { severity: string; action: string; transferDestination: string | null };
 
   constructor(result: {
     conversationId: string;
@@ -77,7 +77,7 @@ export class TurnResultResponseDto {
     toolCallsExecuted: string[];
     interrupted: boolean;
     state: ConversationState;
-    escalation?: { severity: string; action: string };
+    escalation?: { severity: string; action: string; transferDestination: string | null };
   }) {
     this.conversationId = result.conversationId;
     this.responseText = result.responseText;

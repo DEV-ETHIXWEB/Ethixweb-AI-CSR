@@ -10,6 +10,8 @@ export interface EscalateEmergencyOutput {
   isEmergency: boolean;
   severity: EmergencySeverity;
   action: EmergencyAction;
+  /** The real, currently-on-call phone number to transfer to when `action === "forward_call"` — see core-api's EscalateEmergencyUseCase for how it's resolved. `null` for every other action, or when no on-call target could be resolved. */
+  transferDestination: string | null;
 }
 
 /**

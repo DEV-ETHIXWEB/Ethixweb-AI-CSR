@@ -58,7 +58,14 @@ export interface TurnResult {
   interrupted: boolean;
   state: ConversationState;
   /** docs/28 §C.2 (added Phase 15B) — present iff escalateEmergency fired this turn. `action: "forward_call"` is this runtime's cue to execute the actual transfer. */
-  escalation?: { severity: string; action: string } | undefined;
+  escalation?:
+    | {
+        severity: string;
+        action: string;
+        /** The real, currently-on-call phone number to transfer to — resolved server-side (core-api's ResolveOnCallUseCase, docs/07 §5.3). `null` when action isn't forward_call or no on-call target could be resolved, in which case CallSessionOrchestrator falls back to its own static EMERGENCY_TRANSFER_NUMBER/HUMAN_FALLBACK_NUMBER chain. */
+        transferDestination: string | null;
+      }
+    | undefined;
 }
 
 export interface InterruptRequest {

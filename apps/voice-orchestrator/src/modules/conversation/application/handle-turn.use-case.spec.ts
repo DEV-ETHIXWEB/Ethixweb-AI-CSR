@@ -223,9 +223,12 @@ describe("HandleTurnUseCase", () => {
       ],
     ];
     const escalateHandler = {
-      execute: jest
-        .fn()
-        .mockResolvedValue({ isEmergency: true, severity: "critical", action: "forward_call" }),
+      execute: jest.fn().mockResolvedValue({
+        isEmergency: true,
+        severity: "critical",
+        action: "forward_call",
+        transferDestination: "+15559876543",
+      }),
     };
     const { useCase } = buildUseCase({
       aiProvider,
@@ -237,7 +240,58 @@ describe("HandleTurnUseCase", () => {
       baseCommand({ transcript: "burst pipe flooding now", allowedTools: ["escalateEmergency"] }),
     );
 
-    expect(result.escalation).toEqual({ severity: "critical", action: "forward_call" });
+    // transferDestination (the real, currently-on-call phone number core-api
+    // resolved via ResolveOnCallUseCase) must flow all the way through to
+    // the HTTP-visible result — this is what lets the Voice Runtime
+    // actually transfer to the right destination instead of falling back
+    // to its own static env var.
+    expect(result.escalation).toEqual({
+      severity: "critical",
+      action: "forward_call",
+      transferDestination: "+15559876543",
+    });
+  });
+
+  it("surfaces escalation with transferDestination: null when core-api couldn't resolve an on-call target", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        {
+          type: "tool_call",
+          toolCall: { id: "call-1", name: "escalateEmergency", arguments: {} },
+        },
+        { type: "done", stopReason: "tool_use" },
+      ],
+      [
+        { type: "text_delta", text: "Connecting you now." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const escalateHandler = {
+      execute: jest.fn().mockResolvedValue({
+        isEmergency: true,
+        severity: "critical",
+        action: "forward_call",
+        transferDestination: null,
+      }),
+    };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "escalateEmergency", handler: escalateHandler }],
+    });
+
+    const result = await useCase.execute(
+      baseCommand({ transcript: "burst pipe flooding now", allowedTools: ["escalateEmergency"] }),
+    );
+
+    expect(result.escalation).toEqual({
+      severity: "critical",
+      action: "forward_call",
+      transferDestination: null,
+    });
   });
 
   it("omits escalation from the result when no tool call escalates", async () => {

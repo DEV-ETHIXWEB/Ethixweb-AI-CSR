@@ -54,8 +54,17 @@ export interface HandleTurnResult {
    * this response, so `action: "forward_call"` was undetectable over the
    * documented contract. Additive field, absent (not null) on every turn
    * that didn't escalate, to keep existing consumers' shape checks unaffected.
+   *
+   * `transferDestination`: the real, currently-on-call phone number to
+   * transfer to when `action === "forward_call"` (core-api's
+   * EscalateEmergencyUseCase resolves it via ResolveOnCallUseCase, see its
+   * own comment). Absent/null when the action isn't forward_call, or when
+   * no on-call target could be resolved — the Voice Runtime's own
+   * static EMERGENCY_TRANSFER_NUMBER/HUMAN_FALLBACK_NUMBER fallback covers
+   * that case, so this field degrading to null is a normal, expected
+   * outcome, not an error condition.
    */
-  escalation?: { severity: string; action: string };
+  escalation?: { severity: string; action: string; transferDestination: string | null };
 }
 
 /** Bounds a pathological model tool-loop. Not a documented constant — an INFERRED safety limit; a real call needs at most a handful (searchCustomer → escalateEmergency → createLead). */
@@ -164,7 +173,8 @@ export class HandleTurnUseCase {
     let responseText = "";
     const toolCallsExecuted: string[] = [];
     let interrupted = false;
-    let escalation: { severity: string; action: string } | undefined;
+    let escalation:
+      { severity: string; action: string; transferDestination: string | null } | undefined;
 
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       conversation.messages = compressMessages(conversation.messages);
@@ -366,7 +376,10 @@ export class HandleTurnUseCase {
     conversation: Conversation,
     toolCall: AiToolCallRequest,
     allowedTools: readonly string[],
-  ): Promise<{ output: unknown; escalation?: { severity: string; action: string } }> {
+  ): Promise<{
+    output: unknown;
+    escalation?: { severity: string; action: string; transferDestination: string | null };
+  }> {
     const at = new Date().toISOString();
     await this.eventBus.publish({
       type: "tool.called",
@@ -434,7 +447,7 @@ export class HandleTurnUseCase {
     conversation: Conversation,
     toolName: string,
     output: unknown,
-  ): Promise<{ severity: string; action: string } | undefined> {
+  ): Promise<{ severity: string; action: string; transferDestination: string | null } | undefined> {
     if (toolName === "createLead" && isRecord(output) && typeof output["lead_id"] === "string") {
       conversation.leadId = output["lead_id"];
       await this.eventBus.publish({
@@ -450,6 +463,8 @@ export class HandleTurnUseCase {
     if (toolName === "escalateEmergency" && isRecord(output) && output["isEmergency"] === true) {
       const severity = String(output["severity"]);
       const action = String(output["action"]);
+      const transferDestination =
+        typeof output["transferDestination"] === "string" ? output["transferDestination"] : null;
       await this.eventBus.publish({
         type: "escalation.triggered",
         tenantId: conversation.tenantId,
@@ -458,7 +473,7 @@ export class HandleTurnUseCase {
         action,
         at: new Date().toISOString(),
       });
-      return { severity, action };
+      return { severity, action, transferDestination };
     }
 
     return undefined;

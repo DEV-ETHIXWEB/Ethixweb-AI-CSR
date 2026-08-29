@@ -159,7 +159,7 @@ describe("Voice Runtime local call simulator — scripted scenarios", () => {
           toolCallsExecuted: ["escalateEmergency"],
           interrupted: false,
           state: "emergency_transfer",
-          escalation: { severity: "critical", action: "forward_call" },
+          escalation: { severity: "critical", action: "forward_call", transferDestination: null },
         },
       ];
 

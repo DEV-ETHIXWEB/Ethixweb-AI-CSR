@@ -1,4 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
+import type { StructuredLogger } from "@ethixweb/shared-kernel";
+import { APP_LOGGER } from "../../../shared/observability/app-logger.module";
 import { setSpanAttributes } from "../../../shared/observability/tracing";
 import { TenantContextService } from "../../../shared/prisma/tenant-context.service";
 import {
@@ -10,6 +12,7 @@ import {
   EMERGENCY_RULE_REPOSITORY,
   type EmergencyRuleRepository,
 } from "../domain/ports/emergency-rule-repository.port";
+import { ResolveOnCallUseCase } from "./resolve-oncall.use-case";
 
 export interface EscalateEmergencyCommand {
   tenantId: string;
@@ -24,6 +27,22 @@ export interface EscalateEmergencyResult {
   severity: EmergencySeverity;
   action: EmergencyAction;
   matchedPattern: string | null;
+  /**
+   * The real, currently-on-call phone number to transfer to, when
+   * `action === "forward_call"` — resolved via ResolveOnCallUseCase
+   * (docs/07 §5.3), which existed, was fully built and tested, but was
+   * never actually called from anywhere in the codebase before this
+   * (found during a final production-readiness audit tracing the
+   * complete "does a real human get contacted" path end to end).
+   * `null` for every other action, or when forward_call is decided but no
+   * on-call target could be resolved (no rotation configured, no active
+   * shift, no reachable phoneOverride, or the lookup itself failed) — the
+   * caller (voice-runtime's CallSessionOrchestrator) falls back to its
+   * own static EMERGENCY_TRANSFER_NUMBER/HUMAN_FALLBACK_NUMBER chain in
+   * that case, so a resolution failure here degrades, never blocks, the
+   * transfer.
+   */
+  transferDestination: string | null;
 }
 
 /**
@@ -44,6 +63,8 @@ export class EscalateEmergencyUseCase {
     private readonly tenantContext: TenantContextService,
     @Inject(EMERGENCY_RULE_REPOSITORY)
     private readonly emergencyRuleRepository: EmergencyRuleRepository,
+    private readonly resolveOnCallUseCase: ResolveOnCallUseCase,
+    @Inject(APP_LOGGER) private readonly logger: StructuredLogger,
   ) {}
 
   async execute(command: EscalateEmergencyCommand): Promise<EscalateEmergencyResult> {
@@ -52,6 +73,18 @@ export class EscalateEmergencyUseCase {
       "ethixweb.business_id": command.businessId,
     });
 
+    const classification = await this.classify(command);
+    if (classification.action !== "forward_call") {
+      return { ...classification, transferDestination: null };
+    }
+
+    const transferDestination = await this.resolveTransferDestination(command);
+    return { ...classification, transferDestination };
+  }
+
+  private async classify(
+    command: EscalateEmergencyCommand,
+  ): Promise<Omit<EscalateEmergencyResult, "transferDestination">> {
     const haystack = [command.description, ...(command.detectedKeywords ?? [])]
       .join(" ")
       .toLowerCase();
@@ -109,6 +142,37 @@ export class EscalateEmergencyUseCase {
         action: "priority_notify",
         matchedPattern: null,
       };
+    }
+  }
+
+  /** Best-effort — never throws, never blocks the forward_call decision itself. A failed/empty resolution returns null; the caller (voice-runtime) already has its own static fallback destination for exactly this case. */
+  private async resolveTransferDestination(
+    command: EscalateEmergencyCommand,
+  ): Promise<string | null> {
+    try {
+      const { targets } = await this.resolveOnCallUseCase.execute(
+        command.tenantId,
+        command.businessId,
+      );
+      if (targets.length === 0) {
+        this.logger.warn(
+          "escalateEmergency decided forward_call but no on-call target could be resolved — falling back to the runtime's static transfer number",
+          { tenantId: command.tenantId, businessId: command.businessId, callId: command.callId },
+        );
+        return null;
+      }
+      return targets[0] as string;
+    } catch (error) {
+      this.logger.warn(
+        "on-call resolution failed while handling a forward_call escalation — falling back to the runtime's static transfer number",
+        {
+          tenantId: command.tenantId,
+          businessId: command.businessId,
+          callId: command.callId,
+          reason: error instanceof Error ? error.message : String(error),
+        },
+      );
+      return null;
     }
   }
 }

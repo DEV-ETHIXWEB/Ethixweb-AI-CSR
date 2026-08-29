@@ -326,7 +326,7 @@ describe("CallSessionOrchestrator", () => {
           toolCallsExecuted: ["escalateEmergency"],
           interrupted: false,
           state: "emergency_transfer",
-          escalation: { severity: "critical", action: "forward_call" },
+          escalation: { severity: "critical", action: "forward_call", transferDestination: null },
         },
       ];
 
@@ -342,6 +342,46 @@ describe("CallSessionOrchestrator", () => {
       });
     });
 
+    /**
+     * Regression coverage for a real gap found live while tracing the
+     * complete emergency-escalation path: ResolveOnCallUseCase (core-api)
+     * was fully built and tested but never actually wired into a live call
+     * transfer — every emergency rang the SAME static number regardless of
+     * who was actually on call. This proves the resolved destination now
+     * takes priority over the static env-var chain when core-api supplies
+     * one.
+     */
+    it("prefers the server-resolved on-call destination over the static EMERGENCY_TRANSFER_NUMBER when both are available", async () => {
+      process.env["EMERGENCY_TRANSFER_NUMBER"] = "+15559990000";
+      const { orchestrator, orchestratorClient, stt, callTransfer } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "Connecting you now, please stay on the line.",
+          toolCallsExecuted: ["escalateEmergency"],
+          interrupted: false,
+          state: "emergency_transfer",
+          escalation: {
+            severity: "critical",
+            action: "forward_call",
+            transferDestination: "+15551230000",
+          },
+        },
+      ];
+
+      await orchestrator.onCallStart(baseParams({ callSid: "CA-oncall" }), sink);
+      const session = stt.sessions[0]!;
+      session.emitFinalTranscript("burst pipe flooding my basement", 0.9);
+      await flushMicrotasks();
+
+      expect(callTransfer.transferCalls).toHaveLength(1);
+      expect(callTransfer.transferCalls[0]).toEqual({
+        callSid: "CA-oncall",
+        destination: "+15551230000",
+      });
+    });
+
     it("does not attempt a transfer, and logs rather than crashes, when EMERGENCY_TRANSFER_NUMBER is not configured", async () => {
       delete process.env["EMERGENCY_TRANSFER_NUMBER"];
       const { orchestrator, orchestratorClient, stt, callTransfer } = buildOrchestratorUnderTest();
@@ -353,7 +393,7 @@ describe("CallSessionOrchestrator", () => {
           toolCallsExecuted: ["escalateEmergency"],
           interrupted: false,
           state: "emergency_transfer",
-          escalation: { severity: "critical", action: "forward_call" },
+          escalation: { severity: "critical", action: "forward_call", transferDestination: null },
         },
       ];
 
@@ -377,7 +417,7 @@ describe("CallSessionOrchestrator", () => {
           toolCallsExecuted: ["escalateEmergency"],
           interrupted: false,
           state: "emergency_transfer",
-          escalation: { severity: "critical", action: "forward_call" },
+          escalation: { severity: "critical", action: "forward_call", transferDestination: null },
         },
       ];
 
@@ -403,7 +443,7 @@ describe("CallSessionOrchestrator", () => {
           toolCallsExecuted: ["escalateEmergency"],
           interrupted: false,
           state: "qualifying",
-          escalation: { severity: "medium", action: "priority_notify" },
+          escalation: { severity: "medium", action: "priority_notify", transferDestination: null },
         },
       ];
 

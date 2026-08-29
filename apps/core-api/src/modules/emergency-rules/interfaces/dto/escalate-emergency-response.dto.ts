@@ -6,12 +6,14 @@ export class EscalateEmergencyResponseDto {
   @ApiProperty() severity: string;
   @ApiProperty() action: string;
   @ApiProperty({ nullable: true }) matchedPattern: string | null;
+  @ApiProperty({ nullable: true }) transferDestination: string | null;
 
   private constructor(result: EscalateEmergencyResult) {
     this.isEmergency = result.isEmergency;
     this.severity = result.severity;
     this.action = result.action;
     this.matchedPattern = result.matchedPattern;
+    this.transferDestination = result.transferDestination;
   }
 
   static fromDomain(result: EscalateEmergencyResult): EscalateEmergencyResponseDto {

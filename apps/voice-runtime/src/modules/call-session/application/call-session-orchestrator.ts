@@ -297,6 +297,7 @@ export class CallSessionOrchestrator {
       log.info("emergency escalation signaled — executing call transfer (docs/28 §M)", {
         conversationId,
         severity: turnResult.escalation.severity,
+        resolvedOnCallDestination: turnResult.escalation.transferDestination,
       });
       // Speak first, THEN transfer — the caller should hear SOMETHING
       // before the line hands off, rather than silence during the
@@ -306,7 +307,7 @@ export class CallSessionOrchestrator {
       if (turnResult.responseText) {
         await this.speak(turnResult.responseText, sink);
       }
-      await this.executeEmergencyTransfer(params, log);
+      await this.executeEmergencyTransfer(params, log, turnResult.escalation.transferDestination);
       return;
     }
 
@@ -417,13 +418,29 @@ export class CallSessionOrchestrator {
    * nothing happened" — which is what shipped here before this fix, found
    * live: EMERGENCY_TRANSFER_NUMBER was unset in this repo's own local
    * .env with no schema validation to catch it.
+   *
+   * `resolvedOnCallDestination`: the real, currently-on-call phone number
+   * core-api resolved server-side (docs/07 §5.3's on-call rotation —
+   * ResolveOnCallUseCase, fully built and tested but never actually wired
+   * into a live call transfer before this fix, found while tracing the
+   * complete "does a real human get contacted" path end to end). Preferred
+   * over the static env-var chain when present: it reflects who is
+   * ACTUALLY on call right now, not a single fixed number every emergency
+   * rings regardless of time of day or rotation. `null` (no rotation
+   * configured, no active shift, resolution itself failed) falls through
+   * to the exact same static chain this method already had — this fix
+   * only adds a better destination when one is available, it never
+   * removes the existing guaranteed fallback.
    */
   private async executeEmergencyTransfer(
     params: CallSessionParams,
     log: StructuredLogger,
+    resolvedOnCallDestination: string | null,
   ): Promise<void> {
     const destination =
-      process.env["EMERGENCY_TRANSFER_NUMBER"] || process.env["HUMAN_FALLBACK_NUMBER"];
+      resolvedOnCallDestination ||
+      process.env["EMERGENCY_TRANSFER_NUMBER"] ||
+      process.env["HUMAN_FALLBACK_NUMBER"];
     if (!destination) {
       log.error(
         "escalateEmergency signaled forward_call but neither EMERGENCY_TRANSFER_NUMBER nor HUMAN_FALLBACK_NUMBER is configured — cannot execute transfer",
