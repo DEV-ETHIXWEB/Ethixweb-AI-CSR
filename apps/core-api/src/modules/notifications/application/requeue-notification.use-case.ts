@@ -25,6 +25,19 @@ import type { ChannelSendOutcome } from "./send-lead-notification.use-case";
  * requeued would violate docs/07 §2's "exactly one notification fan-out
  * per lead" guarantee, and a `pending` one is (or should be) already
  * in-flight.
+ *
+ * DELIBERATELY split across separate `tenantContext.run` calls, not one
+ * wrapping everything — same connection-pool-safety fix as
+ * customers/application/resolve-customer.use-case.ts (see that class's own
+ * comment for the full reasoning). Two distinct reasons here: (1) every
+ * registered sender has its own hard timeout (8-10s, see each sender's own
+ * `AbortSignal.timeout`), so `sender.send()` must not run inside a held-open
+ * transaction; (2) `getLeadUseCase`/`getCustomerUseCase` each open their OWN
+ * `tenantContext.run` internally — calling them from inside this class's own
+ * transaction meant a nested `$transaction` on top of an already-open one
+ * for every redrive, doubling connection-pool pressure for no reason, since
+ * nothing here actually needs the notification read, the lead/customer
+ * reads, and the final status write to share one transaction.
  */
 @Injectable()
 export class RequeueNotificationUseCase {
@@ -44,42 +57,46 @@ export class RequeueNotificationUseCase {
       "ethixweb.notification_id": notificationId,
     });
 
-    return this.tenantContext.run(tenantId, async (db) => {
-      const notification = await this.notificationRepository.findById(db, tenantId, notificationId);
-      if (!notification) {
-        throw new NotificationNotFoundError(notificationId);
-      }
-      if (notification.status !== "dead_letter") {
-        throw new NotificationNotRequeueableError(notificationId, notification.status);
-      }
+    const notification = await this.tenantContext.run(tenantId, (db) =>
+      this.notificationRepository.findById(db, tenantId, notificationId),
+    );
+    if (!notification) {
+      throw new NotificationNotFoundError(notificationId);
+    }
+    if (notification.status !== "dead_letter") {
+      throw new NotificationNotRequeueableError(notificationId, notification.status);
+    }
 
-      const sender = this.senderRegistry.get(notification.channelType);
-      if (!sender) {
-        return {
-          channelType: notification.channelType,
-          success: false,
-          error: "no sender registered",
-        };
-      }
+    const sender = this.senderRegistry.get(notification.channelType);
+    if (!sender) {
+      return {
+        channelType: notification.channelType,
+        success: false,
+        error: "no sender registered",
+      };
+    }
 
-      const lead = await this.getLeadUseCase.execute(tenantId, notification.leadId);
-      const customer = await this.getCustomerUseCase.execute(tenantId, lead.customerId);
-      const payload = buildNotificationPayload(lead, customer);
-      const destination = JSON.parse(notification.destination) as NotificationDestination;
+    const lead = await this.getLeadUseCase.execute(tenantId, notification.leadId);
+    const customer = await this.getCustomerUseCase.execute(tenantId, lead.customerId);
+    const payload = buildNotificationPayload(lead, customer);
+    const destination = JSON.parse(notification.destination) as NotificationDestination;
 
-      const result = await sender.send(destination, payload);
-      if (result.success) {
-        await this.notificationRepository.markSent(db, tenantId, notification.id);
-        this.logger.info("dead-lettered notification redriven successfully", {
-          tenantId,
-          notificationId,
-          channelType: notification.channelType,
-        });
-        return { channelType: notification.channelType, success: true };
-      }
+    const result = await sender.send(destination, payload);
+    if (result.success) {
+      await this.tenantContext.run(tenantId, (db) =>
+        this.notificationRepository.markSent(db, tenantId, notification.id),
+      );
+      this.logger.info("dead-lettered notification redriven successfully", {
+        tenantId,
+        notificationId,
+        channelType: notification.channelType,
+      });
+      return { channelType: notification.channelType, success: true };
+    }
 
-      await this.notificationRepository.markDeadLetter(db, tenantId, notification.id);
-      return { channelType: notification.channelType, success: false, error: result.error };
-    });
+    await this.tenantContext.run(tenantId, (db) =>
+      this.notificationRepository.markDeadLetter(db, tenantId, notification.id),
+    );
+    return { channelType: notification.channelType, success: false, error: result.error };
   }
 }

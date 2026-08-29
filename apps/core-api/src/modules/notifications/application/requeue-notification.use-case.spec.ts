@@ -137,4 +137,53 @@ describe("RequeueNotificationUseCase", () => {
       NotificationNotRequeueableError,
     );
   });
+
+  it(
+    "CONNECTION-POOL SAFETY: the sender.send() call happens between two SEPARATE " +
+      "tenantContext.run transactions, never nested inside one held open for its duration — " +
+      "see this use case's own comment on why a single wrapping transaction would leave a real " +
+      "Postgres connection held open across the sender's own timeout AND a needless nested " +
+      "transaction from getLeadUseCase/getCustomerUseCase",
+    async () => {
+      const registry = new ChannelSenderRegistry();
+      const sender = fakeSender("sms", true);
+      registry.register(sender.sender);
+      const notificationRepository = new FakeNotificationRepository();
+      notificationRepository.seed(deadLetteredNotification());
+      const tenantContext = new FakeTenantContextService() as unknown as TenantContextService;
+      const useCase = new RequeueNotificationUseCase(
+        tenantContext,
+        notificationRepository,
+        registry,
+        fakeLead(),
+        fakeCustomer(),
+        createNoopLogger(),
+      );
+      const events: string[] = [];
+      jest.spyOn(tenantContext, "run").mockImplementation(async (_tenantId, work) => {
+        events.push("run:start");
+        const result = await (work as (db: never) => Promise<unknown>)({
+          $executeRaw: async () => 0,
+        } as never);
+        events.push("run:end");
+        return result;
+      });
+      sender.send.mockImplementation(async () => {
+        events.push("send:start");
+        events.push("send:end");
+        return { success: true };
+      });
+
+      await useCase.execute("tenant-1", "notif-1");
+
+      expect(events).toEqual([
+        "run:start",
+        "run:end", // reading the dead-lettered notification — its own, already-closed transaction
+        "send:start",
+        "send:end", // the sender call — no transaction open around it at all
+        "run:start",
+        "run:end", // marking the notification sent — a fresh, separate transaction
+      ]);
+    },
+  );
 });

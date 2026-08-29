@@ -49,6 +49,19 @@ class SenderReportedFailureError extends Error {}
  * Letter Queue (`status: "dead_letter"`) rather than silently staying
  * `failed` forever — visible via `GET /notifications/dead-letter` and
  * redrivable via `POST /notifications/:id/requeue` (RequeueNotificationUseCase).
+ *
+ * `sendToChannel` is DELIBERATELY split across separate `tenantContext.run`
+ * calls, not one wrapping everything — same connection-pool-safety fix as
+ * customers/application/resolve-customer.use-case.ts (see that class's own
+ * comment for the full reasoning). Every sender has its own hard timeout
+ * (8-10s), and this method retries it up to MAX_SEND_ATTEMPTS times with a
+ * short backoff — worst case ~30s of held-open transaction time under the
+ * old structure, real but smaller than the CRM-adapter case; still not
+ * something to hold a Postgres connection open across. The dedup-reserving
+ * `notification` row create must land BEFORE the send attempt (that's what
+ * makes the dedup guarantee real), and the final status write must land
+ * AFTER — so this is three steps: reserve, send (no transaction open), then
+ * record the outcome.
  */
 @Injectable()
 export class SendLeadNotificationUseCase {
@@ -101,71 +114,75 @@ export class SendLeadNotificationUseCase {
       return { channelType: channel.channelType, success: false, error: "no sender registered" };
     }
 
-    return this.tenantContext.run(tenantId, async (db) => {
-      let notification;
-      try {
-        notification = await this.notificationRepository.create(db, {
+    let notification;
+    try {
+      notification = await this.tenantContext.run(tenantId, (db) =>
+        this.notificationRepository.create(db, {
           tenantId,
           leadId: payload.leadId,
           channelType: channel.channelType,
           destination: JSON.stringify(channel.destination),
           status: "pending",
           dedupKey,
-        });
-      } catch (error) {
-        if (error instanceof NotificationDedupKeyExistsError) {
-          // Already sent (or in flight) for this lead+channel — never a
-          // second send, matching docs/07 §2's per-lead dedup guarantee.
-          return { channelType: channel.channelType, success: true };
-        }
-        throw error;
-      }
-
-      try {
-        await withRetry(
-          async () => {
-            const attempt = await sender.send(channel.destination, payload);
-            if (!attempt.success) {
-              throw new SenderReportedFailureError(attempt.error ?? "sender reported failure");
-            }
-            return attempt;
-          },
-          {
-            maxAttempts: MAX_SEND_ATTEMPTS,
-            isRetryable: () => true,
-            // A short backoff — unlike CRM writes, a transient SMS/webhook
-            // failure doesn't need multi-second gaps between attempts, and
-            // a live call may already be waiting on the outcome.
-            baseDelayMs: 100,
-            maxDelayMs: 500,
-          },
-        );
-
-        await this.notificationRepository.markSent(db, tenantId, notification.id);
-        if (
-          channel.channelType === "sms" &&
-          channel.destination.phone &&
-          channel.destination.userId
-        ) {
-          await this.claimMappingStore.remember(channel.destination.phone, {
-            tenantId,
-            leadId: payload.leadId,
-            userId: channel.destination.userId,
-          });
-        }
+        }),
+      );
+    } catch (error) {
+      if (error instanceof NotificationDedupKeyExistsError) {
+        // Already sent (or in flight) for this lead+channel — never a
+        // second send, matching docs/07 §2's per-lead dedup guarantee.
         return { channelType: channel.channelType, success: true };
-      } catch (error) {
-        const reason = extractReason(error);
-        await this.notificationRepository.markDeadLetter(db, tenantId, notification.id);
-        this.logger.warn("notification exhausted its retry budget — moved to dead letter", {
+      }
+      throw error;
+    }
+
+    try {
+      await withRetry(
+        async () => {
+          const attempt = await sender.send(channel.destination, payload);
+          if (!attempt.success) {
+            throw new SenderReportedFailureError(attempt.error ?? "sender reported failure");
+          }
+          return attempt;
+        },
+        {
+          maxAttempts: MAX_SEND_ATTEMPTS,
+          isRetryable: () => true,
+          // A short backoff — unlike CRM writes, a transient SMS/webhook
+          // failure doesn't need multi-second gaps between attempts, and
+          // a live call may already be waiting on the outcome.
+          baseDelayMs: 100,
+          maxDelayMs: 500,
+        },
+      );
+
+      await this.tenantContext.run(tenantId, (db) =>
+        this.notificationRepository.markSent(db, tenantId, notification.id),
+      );
+      if (
+        channel.channelType === "sms" &&
+        channel.destination.phone &&
+        channel.destination.userId
+      ) {
+        await this.claimMappingStore.remember(channel.destination.phone, {
           tenantId,
           leadId: payload.leadId,
-          channelType: channel.channelType,
-          reason,
+          userId: channel.destination.userId,
         });
-        return { channelType: channel.channelType, success: false, error: reason };
       }
-    });
+      return { channelType: channel.channelType, success: true };
+    } catch (error) {
+      const reason = extractReason(error);
+      await this.tenantContext.run(tenantId, (db) =>
+        this.notificationRepository.markDeadLetter(db, tenantId, notification.id),
+      );
+      this.logger.warn("notification exhausted its retry budget — moved to dead letter", {
+        tenantId,
+        leadId: payload.leadId,
+        channelType: channel.channelType,
+        reason,
+      });
+      return { channelType: channel.channelType, success: false, error: reason };
+    }
   }
 }
 
