@@ -344,14 +344,32 @@ export class CallSessionOrchestrator {
     }
   }
 
+  /**
+   * Falls back to HUMAN_FALLBACK_NUMBER (the kill switch's own destination,
+   * env.schema.ts) when EMERGENCY_TRANSFER_NUMBER specifically isn't set —
+   * env.schema.ts's own `validate()` now fails BOOT if neither is
+   * configured while AI_RECEPTIONIST_ENABLED is true, so the log-and-no-op
+   * branch below is defense-in-depth against that invariant somehow not
+   * holding (this method reads raw `process.env`, not the validated `Env`
+   * object, so it can't see that check's own guarantee directly), never
+   * the expected path in a correctly configured deployment. A dedicated
+   * emergency number is still the right operational choice (it can route
+   * to on-call dispatch rather than whatever general line
+   * HUMAN_FALLBACK_NUMBER points at), but "some real human destination" is
+   * strictly better than "silently keep talking to the caller as if
+   * nothing happened" — which is what shipped here before this fix, found
+   * live: EMERGENCY_TRANSFER_NUMBER was unset in this repo's own local
+   * .env with no schema validation to catch it.
+   */
   private async executeEmergencyTransfer(
     params: CallSessionParams,
     log: StructuredLogger,
   ): Promise<void> {
-    const destination = process.env["EMERGENCY_TRANSFER_NUMBER"];
+    const destination =
+      process.env["EMERGENCY_TRANSFER_NUMBER"] || process.env["HUMAN_FALLBACK_NUMBER"];
     if (!destination) {
       log.error(
-        "escalateEmergency signaled forward_call but EMERGENCY_TRANSFER_NUMBER is not configured — cannot execute transfer",
+        "escalateEmergency signaled forward_call but neither EMERGENCY_TRANSFER_NUMBER nor HUMAN_FALLBACK_NUMBER is configured — cannot execute transfer",
         { conversationId: this.conversationId },
       );
       return;

@@ -100,6 +100,21 @@ export const envSchema = z.object({
     .transform((v) => v === "true"),
   /** Required (checked below, not by the field type alone) when AI_RECEPTIONIST_ENABLED=false — the E.164 number/queue every inbound call is unconditionally forwarded to instead. */
   HUMAN_FALLBACK_NUMBER: z.string().optional(),
+  /**
+   * CallSessionOrchestrator.executeEmergencyTransfer's destination when
+   * `escalateEmergency` signals `action: "forward_call"` — a real caller
+   * mid-emergency (docs' own example: a gas leak) whom the model has
+   * already decided needs a human RIGHT NOW. Required (checked below, not
+   * by the field type alone) whenever AI_RECEPTIONIST_ENABLED is true,
+   * falling back to HUMAN_FALLBACK_NUMBER if unset (same executeEmergencyTransfer
+   * comment) — found live, not hypothetical: this var was completely absent
+   * from this schema (read raw via `process.env`, bypassing validation
+   * entirely) and UNSET in this repo's own local .env, meaning the service
+   * would boot successfully and silently fail every real emergency
+   * transfer — log an error and continue the ordinary AI conversation loop
+   * — at exactly the moment a caller's actual emergency needed a human.
+   */
+  EMERGENCY_TRANSFER_NUMBER: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -118,6 +133,15 @@ export function validate(config: Record<string, unknown>): Env {
   if (!result.data.AI_RECEPTIONIST_ENABLED && !result.data.HUMAN_FALLBACK_NUMBER) {
     throw new Error(
       "Invalid environment configuration:\nHUMAN_FALLBACK_NUMBER is required when AI_RECEPTIONIST_ENABLED=false — the kill switch must always have a real destination to forward to.",
+    );
+  }
+  if (
+    result.data.AI_RECEPTIONIST_ENABLED &&
+    !result.data.EMERGENCY_TRANSFER_NUMBER &&
+    !result.data.HUMAN_FALLBACK_NUMBER
+  ) {
+    throw new Error(
+      "Invalid environment configuration:\nEMERGENCY_TRANSFER_NUMBER (or HUMAN_FALLBACK_NUMBER as a fallback) is required when AI_RECEPTIONIST_ENABLED=true — a real emergency escalation must always have a real destination to transfer to, not just a logged error.",
     );
   }
   return result.data;

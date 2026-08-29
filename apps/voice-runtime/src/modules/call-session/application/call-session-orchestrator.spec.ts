@@ -325,6 +325,34 @@ describe("CallSessionOrchestrator", () => {
       expect(callTransfer.transferCalls).toHaveLength(0);
     });
 
+    it("falls back to HUMAN_FALLBACK_NUMBER when EMERGENCY_TRANSFER_NUMBER specifically is not configured — some real human destination beats silently continuing the AI conversation", async () => {
+      delete process.env["EMERGENCY_TRANSFER_NUMBER"];
+      process.env["HUMAN_FALLBACK_NUMBER"] = "+15550001111";
+      const { orchestrator, orchestratorClient, stt, callTransfer } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "Connecting you now.",
+          toolCallsExecuted: ["escalateEmergency"],
+          interrupted: false,
+          state: "emergency_transfer",
+          escalation: { severity: "critical", action: "forward_call" },
+        },
+      ];
+
+      await orchestrator.onCallStart(baseParams({ callSid: "CA-emergency-fallback" }), sink);
+      const session = stt.sessions[0]!;
+      session.emitFinalTranscript("burst pipe flooding my basement", 0.9);
+      await flushMicrotasks();
+
+      expect(callTransfer.transferCalls).toHaveLength(1);
+      expect(callTransfer.transferCalls[0]).toEqual({
+        callSid: "CA-emergency-fallback",
+        destination: "+15550001111",
+      });
+    });
+
     it("does not attempt a transfer for a non-forward_call escalation action (e.g. priority_notify)", async () => {
       const { orchestrator, orchestratorClient, stt, callTransfer } = buildOrchestratorUnderTest();
       const sink = new FakeMediaStreamSink();

@@ -11,6 +11,12 @@ function validEnv(overrides: Record<string, string> = {}): Record<string, string
     DEEPGRAM_API_KEY: "deepgram-key",
     ELEVENLABS_API_KEY: "elevenlabs-key",
     ELEVENLABS_VOICE_ID: "voice-1",
+    // AI_RECEPTIONIST_ENABLED defaults to true (see below), which requires
+    // EMERGENCY_TRANSFER_NUMBER (or HUMAN_FALLBACK_NUMBER) be set — a real
+    // emergency mid-call must always have a real destination to transfer
+    // to. Set here so every other test in this file, which isn't testing
+    // that rule specifically, gets a valid baseline env by default.
+    EMERGENCY_TRANSFER_NUMBER: "+15550009999",
     ...overrides,
   };
 }
@@ -78,6 +84,29 @@ describe("voice-runtime env.schema validate()", () => {
     );
 
     expect(result.AI_RECEPTIONIST_ENABLED).toBe(false);
+    expect(result.HUMAN_FALLBACK_NUMBER).toBe("+15550001234");
+  });
+
+  it("EMERGENCY TRANSFER: throws at boot when AI_RECEPTIONIST_ENABLED=true (the default) but neither EMERGENCY_TRANSFER_NUMBER nor HUMAN_FALLBACK_NUMBER is set — a real emergency mid-call must always have a real destination to transfer to, not just a logged error", () => {
+    const env = validEnv({ EMERGENCY_TRANSFER_NUMBER: "" });
+    delete env["EMERGENCY_TRANSFER_NUMBER"];
+
+    expect(() => validate(env)).toThrow(/EMERGENCY_TRANSFER_NUMBER .* is required/);
+  });
+
+  it("EMERGENCY TRANSFER: passes when AI_RECEPTIONIST_ENABLED=true and EMERGENCY_TRANSFER_NUMBER is set", () => {
+    const result = validate(validEnv({ EMERGENCY_TRANSFER_NUMBER: "+15550009999" }));
+
+    expect(result.EMERGENCY_TRANSFER_NUMBER).toBe("+15550009999");
+  });
+
+  it("EMERGENCY TRANSFER: passes when AI_RECEPTIONIST_ENABLED=true and only HUMAN_FALLBACK_NUMBER (no EMERGENCY_TRANSFER_NUMBER) is set — HUMAN_FALLBACK_NUMBER is the documented fallback destination", () => {
+    const env = validEnv({ HUMAN_FALLBACK_NUMBER: "+15550001234" });
+    delete env["EMERGENCY_TRANSFER_NUMBER"];
+
+    const result = validate(env);
+
+    expect(result.EMERGENCY_TRANSFER_NUMBER).toBeUndefined();
     expect(result.HUMAN_FALLBACK_NUMBER).toBe("+15550001234");
   });
 });
