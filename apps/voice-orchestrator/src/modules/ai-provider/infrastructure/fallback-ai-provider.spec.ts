@@ -18,10 +18,15 @@ async function collect(chunks: AsyncIterable<AiCompletionChunk>): Promise<AiComp
   return result;
 }
 
-function fakeProvider(name: string, chunks: AiCompletionChunk[]): AiProviderPort {
+function fakeProvider(
+  name: string,
+  chunks: AiCompletionChunk[],
+  onSignal?: (signal: AbortSignal | undefined) => void,
+): AiProviderPort {
   return {
     providerName: name,
-    async *streamCompletion() {
+    async *streamCompletion(_request, signal) {
+      onSignal?.(signal);
       for (const chunk of chunks) {
         yield chunk;
       }
@@ -126,5 +131,51 @@ describe("FallbackAiProvider", () => {
       { type: "text_delta", text: "from anthropic" },
       { type: "done", stopReason: "end_turn" },
     ]);
+  });
+
+  /**
+   * Regression coverage for a real bug found live: none of the three
+   * provider adapters bound their own fetch() call, and the only
+   * AbortSignal a real turn ever supplies is barge-in interrupt, which is
+   * undefined on an ordinary turn. Traced live: a hung (not erroring, not
+   * unreachable, genuinely hung) LLM vendor connection would leave a real
+   * caller in dead air for the rest of the call, nothing anywhere on this
+   * path would ever time out. Fixed by combining the caller's own signal
+   * with an internal AbortSignal.timeout() before it ever reaches a
+   * provider. The actual 15s firing itself isn't asserted here (Jest's
+   * fake timers don't intercept AbortSignal.timeout's own native timer,
+   * confirmed directly, and a real 15s wait doesn't belong in this suite),
+   * that's standard, already-proven platform behavior; what these tests
+   * cover is the part that's actually this class's own logic: a bounding
+   * signal is always installed, and it still correctly reflects the
+   * caller's own interrupt signal exactly as before.
+   */
+  it("always passes a defined AbortSignal to the provider, even when the caller supplies none, so a hung vendor call is never left completely unbounded", async () => {
+    let observedSignal: AbortSignal | undefined;
+    const primary = fakeProvider("openai", [{ type: "done", stopReason: "end_turn" }], (signal) => {
+      observedSignal = signal;
+    });
+    const router = new FallbackAiProvider([primary], new CircuitBreakerRegistry());
+
+    await collect(router.streamCompletion(baseRequest()));
+
+    expect(observedSignal).toBeInstanceOf(AbortSignal);
+    expect(observedSignal?.aborted).toBe(false);
+  });
+
+  it("still aborts the signal reaching the provider when the caller's own interrupt signal fires, preserving barge-in behavior through the new combined signal", async () => {
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    const primary = fakeProvider("openai", [{ type: "done", stopReason: "end_turn" }], (signal) => {
+      observedSignal = signal;
+    });
+    const router = new FallbackAiProvider([primary], new CircuitBreakerRegistry());
+
+    await collect(router.streamCompletion(baseRequest(), controller.signal));
+    expect(observedSignal?.aborted).toBe(false);
+
+    controller.abort();
+
+    expect(observedSignal?.aborted).toBe(true);
   });
 });
