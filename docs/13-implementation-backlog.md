@@ -109,13 +109,13 @@ Maps to the module structure in [14-backend-stack-and-code-standards.md](14-back
 Split across two apps as actually built: `apps/voice-orchestrator` (the NestJS conversation/tool-broker/LLM Gateway "brain", Phase 6-9) and `apps/voice-runtime` (the LiveKit Agents "ears and mouth", added after Phase 9 — see [27-voice-runtime-provisioning.md](27-voice-runtime-provisioning.md)). This list predates that split; items are annotated with which app closed them.
 
 1. **Done — `apps/voice-runtime`.** LiveKit Agents (`agents-js`) project scaffold, SIP trunk integration (Twilio as carrier, per [02](02-voice-pipeline-and-telephony.md) §2).
-2. **Done — `apps/voice-runtime`.** Streaming STT (Deepgram) + VAD (Silero) wired via `AgentSession`; turn-detector *tuning* against real call timing is still open (needs live calls to measure against).
+2. **Done — `apps/voice-runtime`.** Streaming STT (Deepgram) + VAD (Silero) wired via `AgentSession`; turn-detector _tuning_ against real call timing is still open (needs live calls to measure against).
 3. **Done — `apps/voice-orchestrator`.** LLM Gateway (`ai-provider` module), prompt assembly, tool-call handling. Streaming tool-call parsing and prompt caching are provider-level concerns already inside that module; not revisited here.
 4. **Done — `apps/voice-runtime`.** Cartesia TTS wired. **Not done**: sentence-level chunking — `HandleTurnUseCase`'s HTTP contract returns one complete `responseText` per turn (docs/24 §2.2), not a token stream, so TTS currently starts only after the full turn completes server-side. Closing this needs voice-orchestrator's turn endpoint to become a streaming response, a real architecture change, not a runtime-side fix.
 5. **Done — `apps/voice-orchestrator`.** Conversation state machine (`conversation/domain`), tested.
 6. **Open.** Filler-phrase injection — blocked on the same streaming gap as item 4 (nothing to inject mid-stream into a non-streamed response yet).
 7. **Done — both apps.** `escalateEmergency`'s `transferTargets` (resolved via `ResolveOnCallUseCase`, threaded through `TurnResultResponseDto`) drives `apps/voice-runtime`'s `WarmTransferTask` call. Unverified against a real SIP trunk/live call — see docs/27 §5.
-8. **Partially done.** `GET /v1/conversations/by-call/:callId` now exists (closes the docs/24 §5 gap at the HTTP layer) so a restarted runtime process *can* rehydrate a conversationId. The runtime itself doesn't yet call it on reconnect — `apps/voice-runtime`'s own room-disconnect handling is still open.
+8. **Partially done.** `GET /v1/conversations/by-call/:callId` now exists (closes the docs/24 §5 gap at the HTTP layer) so a restarted runtime process _can_ rehydrate a conversationId. The runtime itself doesn't yet call it on reconnect — `apps/voice-runtime`'s own room-disconnect handling is still open.
 9. **Done — `apps/voice-runtime`.** `/healthz`/`/readyz` + `ServerOptions.drainTimeout`. ECS Fargate-level blue/green task wiring is separate infra work ([10-deployment-cicd.md](10-deployment-cicd.md)).
 10. **Open.** Conversation quality eval harness — unchanged.
 

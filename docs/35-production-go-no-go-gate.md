@@ -38,8 +38,8 @@ Nothing below is marked GREEN based on code inspection alone where the requireme
 - [ ] Duplicate protection works — 🟢 (verified at every write path — DB unique constraints + Redis idempotency)
 - [ ] Emergency detection works — 🟢 (verified, structural + fail-safe-toward-escalation)
 - [ ] Live SIP transfer works — 🔴 (Blocker 4)
-- [ ] Real PostgreSQL integration test passes — 🔴 (Blocker 3 — unexecuted, no Docker in any environment used so far)
-- [ ] Tenant isolation passes — 🟡 (verified via RLS code/schema inspection and the integration test _file_ exists and is correct; the test itself hasn't literally run — same Blocker 3)
+- [x] Real PostgreSQL integration test passes — 🟢 (Blocker 3 **closed 2026-08-30** — `Tests: 9 passed, 9 total` against a real testcontainers Postgres; evidence in [docs/29](29-phase11-12-blocker-resolution.md))
+- [x] Tenant isolation passes — 🟢 (`tenant-isolation.integration-spec.ts` literally ran and passed on 2026-08-30 against real Postgres as the non-owning `app_runtime` role — no longer inspection-only)
 - [ ] Staging deployment works — 🔴 (Blocker 5)
 - [ ] Monitoring works — 🔴 (Blocker 5 — not built)
 - [ ] Alerting works — 🔴 (Blocker 5 — not built)
@@ -50,22 +50,40 @@ Nothing below is marked GREEN based on code inspection alone where the requireme
 
 ## PRODUCTION READINESS: **NO-GO**
 
-Unchanged from the Phase 11/12 audit's own conclusion — this document doesn't relitigate that verdict, it operationalizes what closes it. 6 of 19 checklist items are 🔴, all tracing back to the same 5 blockers in [docs/29](29-phase11-12-blocker-resolution.md).
+Still NO-GO, but measurably closer: **4 of 19** checklist items are 🔴, down from 6. Blocker 3 is closed (2026-08-30) and took two rows green with it. The remaining red items trace to 4 blockers, not 5, in [docs/29](29-phase11-12-blocker-resolution.md).
+
+Also updated 2026-08-30: Blocker 1 is no longer "another party must build a runtime" — `apps/voice-runtime` exists in this repository (Phase 15B) and boots. It now needs six vendor credentials (Twilio ×3, Deepgram ×1, ElevenLabs ×2), which is a purchasing task, not an engineering one.
 
 ## Recommended blocker resolution order (with reasoning)
 
-1. **Blocker 3 (real Postgres gate)** — cheapest by far: no vendor, no account, no external party, just Docker on any machine. Should be resolved first purely because it's nearly free and removes an entire row from every checklist above.
+1. ~~**Blocker 3 (real Postgres gate)**~~ — ✅ **DONE 2026-08-30.** Was the cheapest by far, exactly as predicted: Docker on one machine, no vendor, no account. Closed two checklist rows.
 2. **Blocker 2 (HCP credentials)** — an account-provisioning task, no engineering dependency on Blocker 1. Can run in parallel with #1, and unblocks docs/32 entirely on its own.
 3. **Blocker 1 (Yash's runtime)** — the largest, most involved blocker; unblocks the majority of the remaining 🔴 rows in the E2E matrix once resolved.
 4. **Blocker 5 (staging/deployment/alerting)** — needed before any of the above can be tested somewhere persistent rather than ad hoc; sequenced after 1-3 because there's nothing meaningful to deploy to staging until the runtime exists to test against.
 5. **Blocker 4 (live SIP/emergency transfer)** — deliberately last: it depends on Blocker 1 being resolved first, and it's the highest-risk test to run for the first time, so it should happen once the rest of the pipeline is already proven stable, not before.
 
-## The exact first command/test to run once the first blocker is available
+## The exact next command to run
 
-Since Blocker 3 is recommended first and requires nothing beyond Docker:
+Blocker 3's command has been run and passed (see above). The next gate is the
+first real phone call — Blocker 1 — which needs the six vendor credentials
+listed in [docs/29](29-phase11-12-blocker-resolution.md) Blocker 1, then:
+
+```bash
+pnpm --filter @ethixweb/voice-runtime run start:dev
+```
+
+Expected: a clean boot on port 3200 and `GET /healthz` → 200. Today it fails
+closed at bootstrap on those six variables, which is correct behaviour, not a
+defect. Once it boots, follow [docs/41](41-first-local-real-call.md)'s 22
+steps and capture evidence per step — do not mark any of them passed without
+actually running them.
+
+For the record, Blocker 3's own command remains:
 
 ```bash
 pnpm --filter @ethixweb/core-api run test:integration
 ```
 
-Expected: `Tests: 8 passed, 8 total` (5 from `lead-call-fk-integrity.integration-spec.ts` + 3 from `tenant-isolation.integration-spec.ts`). If this doesn't literally print that, do not mark Blocker 3 GREEN — capture the actual failure and treat it as a real finding, not a flake to retry past.
+Expected: `Tests: 9 passed, 9 total` (the document originally predicted 8; a
+third suite has since been added). If it ever prints less, treat that as a
+real regression, not a flake to retry past.
