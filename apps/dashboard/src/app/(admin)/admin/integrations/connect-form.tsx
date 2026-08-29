@@ -24,14 +24,14 @@ export function ConnectIntegrationForm({ businessId }: { businessId: string }) {
       {state.error ? <div style={errorStyle}>{state.error}</div> : null}
       {state.ok ? (
         <div style={successStyle}>
-          Connected — click Verify below to confirm the credential works.
+          Connected. Click Verify below to confirm the credential works.
         </div>
       ) : null}
 
       <label style={labelStyle} htmlFor="crmType">
         CRM
       </label>
-      <select id="crmType" name="crmType" required style={inputStyle}>
+      <select id="crmType" name="crmType" required className="clay-input" style={inputStyle}>
         {CRM_TYPES.map((t) => (
           <option key={t} value={t}>
             {t}
@@ -48,6 +48,7 @@ export function ConnectIntegrationForm({ businessId }: { businessId: string }) {
         type="password"
         required
         autoComplete="off"
+        className="clay-input"
         style={inputStyle}
       />
       <input type="hidden" name="credentialType" value="api_key" />
@@ -55,9 +56,14 @@ export function ConnectIntegrationForm({ businessId }: { businessId: string }) {
       <label style={labelStyle} htmlFor="baseUrl">
         Base URL override (optional, e.g. sandbox)
       </label>
-      <input id="baseUrl" name="baseUrl" type="text" style={inputStyle} />
+      <input id="baseUrl" name="baseUrl" type="text" className="clay-input" style={inputStyle} />
 
-      <button type="submit" disabled={pending} style={submitStyle}>
+      <button
+        type="submit"
+        disabled={pending}
+        className="clay-btn clay-btn-primary"
+        style={submitStyle}
+      >
         {pending ? "Connecting…" : "Connect"}
       </button>
     </form>
@@ -73,36 +79,28 @@ const labelStyle: React.CSSProperties = {
 };
 const inputStyle: React.CSSProperties = {
   width: "100%",
-  padding: "7px 10px",
-  border: "1px solid var(--border)",
-  borderRadius: 6,
+  padding: "8px 11px",
   fontSize: "0.85rem",
   fontFamily: "inherit",
 };
 const submitStyle: React.CSSProperties = {
   marginTop: 14,
-  padding: "8px 14px",
-  background: "var(--accent)",
-  color: "#fff",
-  border: "none",
-  borderRadius: 6,
+  padding: "9px 16px",
   fontSize: "0.85rem",
-  fontWeight: 600,
-  cursor: "pointer",
 };
 const errorStyle: React.CSSProperties = {
   background: "var(--danger-soft)",
   color: "var(--danger)",
-  padding: "8px 12px",
-  borderRadius: 6,
+  padding: "9px 12px",
+  borderRadius: "var(--radius-sm)",
   fontSize: "0.8rem",
   marginBottom: 10,
 };
 const successStyle: React.CSSProperties = {
-  background: "var(--accent-soft)",
-  color: "var(--accent)",
-  padding: "8px 12px",
-  borderRadius: 6,
+  background: "var(--success-soft)",
+  color: "var(--success)",
+  padding: "9px 12px",
+  borderRadius: "var(--radius-sm)",
   fontSize: "0.8rem",
   marginBottom: 10,
 };

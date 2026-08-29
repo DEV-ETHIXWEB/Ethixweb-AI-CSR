@@ -62,12 +62,14 @@ export default async function UsagePage({
             key={r}
             href={`/admin/usage?businessId=${businessId}&range=${r}`}
             style={{
-              padding: "5px 10px",
-              borderRadius: 6,
+              padding: "6px 12px",
+              borderRadius: "var(--radius-sm)",
               fontSize: "0.78rem",
-              border: "1px solid var(--border)",
-              background: activeRange === r ? "var(--accent-soft)" : "var(--surface)",
-              color: activeRange === r ? "var(--accent)" : "var(--ink)",
+              fontWeight: activeRange === r ? 700 : 500,
+              border: `1px solid ${activeRange === r ? "transparent" : "var(--border)"}`,
+              background: activeRange === r ? "var(--primary-soft)" : "var(--surface)",
+              color: activeRange === r ? "var(--primary)" : "var(--ink-soft)",
+              boxShadow: activeRange === r ? "inset 0 1px oklch(100% 0 0 / .6)" : "none",
               textDecoration: "none",
             }}
           >

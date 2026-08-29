@@ -129,17 +129,18 @@ export default async function OverviewPage({
 const tableHeadStyle: React.CSSProperties = {
   textAlign: "left",
   fontSize: "0.7rem",
+  fontWeight: 700,
   textTransform: "uppercase",
-  letterSpacing: "0.03em",
-  color: "var(--ink-soft)",
-  borderBottom: "1px solid var(--border)",
-  padding: "6px 8px",
+  letterSpacing: "0.04em",
+  color: "var(--ink-faint)",
+  borderBottom: "1px solid var(--border-soft)",
+  padding: "8px 10px",
 };
 
 const tableCellStyle: React.CSSProperties = {
   fontSize: "0.85rem",
-  borderBottom: "1px solid var(--border)",
-  padding: "6px 8px",
+  borderBottom: "1px solid var(--border-soft)",
+  padding: "8px 10px",
 };
 
 const healthRowStyle: React.CSSProperties = {
@@ -148,9 +149,10 @@ const healthRowStyle: React.CSSProperties = {
   justifyContent: "space-between",
   gap: 12,
   background: "var(--surface)",
-  border: "1px solid var(--border)",
-  borderRadius: 6,
-  padding: "8px 12px",
+  border: "1px solid var(--border-soft)",
+  borderRadius: "var(--radius-sm)",
+  boxShadow: "var(--shadow-sm)",
+  padding: "9px 13px",
   minWidth: 200,
   fontSize: "0.82rem",
 };

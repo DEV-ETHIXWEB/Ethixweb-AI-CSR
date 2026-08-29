@@ -168,12 +168,14 @@ export default async function LeadsPage({
 
 function filterLinkStyle(isActive: boolean): React.CSSProperties {
   return {
-    padding: "5px 10px",
-    borderRadius: 6,
+    padding: "6px 12px",
+    borderRadius: "var(--radius-sm)",
     fontSize: "0.78rem",
-    border: "1px solid var(--border)",
-    background: isActive ? "var(--accent-soft)" : "var(--surface)",
-    color: isActive ? "var(--accent)" : "var(--ink)",
+    fontWeight: isActive ? 700 : 500,
+    border: `1px solid ${isActive ? "transparent" : "var(--border)"}`,
+    background: isActive ? "var(--primary-soft)" : "var(--surface)",
+    color: isActive ? "var(--primary)" : "var(--ink-soft)",
+    boxShadow: isActive ? "inset 0 1px oklch(100% 0 0 / .6)" : "none",
     textDecoration: "none",
   };
 }

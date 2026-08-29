@@ -46,21 +46,16 @@ export default function AdminError({
             : "An unexpected error occurred."}
       </p>
       {isAuthError ? (
-        <a href="/login" style={{ color: "var(--accent)", fontWeight: 600, fontSize: "0.85rem" }}>
+        <a href="/login" style={{ color: "var(--primary)", fontWeight: 700, fontSize: "0.85rem" }}>
           Go to sign in
         </a>
       ) : (
         <button
           onClick={reset}
+          className="clay-btn clay-btn-primary"
           style={{
-            padding: "8px 14px",
-            background: "var(--accent)",
-            color: "#fff",
-            border: "none",
-            borderRadius: 6,
+            padding: "9px 16px",
             fontSize: "0.85rem",
-            fontWeight: 600,
-            cursor: "pointer",
           }}
         >
           Try again

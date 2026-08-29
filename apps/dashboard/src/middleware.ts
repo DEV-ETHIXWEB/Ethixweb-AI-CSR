@@ -4,7 +4,7 @@ const SESSION_COOKIE = "ethixweb_session";
 const PUBLIC_PATHS = ["/login"];
 
 /**
- * Edge middleware only checks for the session cookie's PRESENCE — it
+ * Edge middleware only checks for the session cookie's PRESENCE, it
  * cannot safely parse/validate the JWTs inside it here (no core-api round
  * trip from the edge, and no reason to duplicate core-api's own token
  * validation). Every actual authenticated data fetch still goes through
@@ -33,5 +33,12 @@ export function middleware(request: NextRequest): NextResponse {
 }
 
 export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
+  // Excludes static assets under public/ (e.g. ethixweb-emblem.png, used on
+  // the login page itself) in addition to the framework internals already
+  // excluded: an unauthenticated request for a plain image file must never
+  // be redirected to an HTML login page, or the login page's own logo (and
+  // any future public/ asset) silently breaks for a signed-out visitor.
+  matcher: [
+    "/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|svg|webp|ico|gif)$).*)",
+  ],
 };

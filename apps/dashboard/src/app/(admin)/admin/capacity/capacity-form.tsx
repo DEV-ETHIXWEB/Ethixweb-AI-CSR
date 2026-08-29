@@ -75,7 +75,12 @@ export function CapacityForm({
         min={0}
       />
 
-      <button type="submit" disabled={pending} style={submitButtonStyle}>
+      <button
+        type="submit"
+        disabled={pending}
+        className="clay-btn clay-btn-primary"
+        style={submitButtonStyle}
+      >
         {pending ? "Saving…" : "Save configuration"}
       </button>
     </form>
@@ -112,6 +117,7 @@ function Field({
         min={min}
         max={max}
         step={step}
+        className="clay-input"
         style={inputStyle}
       />
     </div>
@@ -127,9 +133,7 @@ const labelStyle: React.CSSProperties = {
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
-  padding: "7px 10px",
-  border: "1px solid var(--border)",
-  borderRadius: 6,
+  padding: "8px 11px",
   fontSize: "0.85rem",
   fontFamily: "inherit",
 };
@@ -143,30 +147,24 @@ const checkboxRowStyle: React.CSSProperties = {
 };
 
 const submitButtonStyle: React.CSSProperties = {
-  padding: "9px 16px",
-  background: "var(--accent)",
-  color: "#fff",
-  border: "none",
-  borderRadius: 6,
+  padding: "10px 18px",
   fontSize: "0.85rem",
-  fontWeight: 600,
-  cursor: "pointer",
 };
 
 const errorBoxStyle: React.CSSProperties = {
   background: "var(--danger-soft)",
   color: "var(--danger)",
-  padding: "8px 12px",
-  borderRadius: 6,
+  padding: "9px 12px",
+  borderRadius: "var(--radius-sm)",
   fontSize: "0.8rem",
   marginBottom: 16,
 };
 
 const successBoxStyle: React.CSSProperties = {
-  background: "var(--accent-soft)",
-  color: "var(--accent)",
-  padding: "8px 12px",
-  borderRadius: 6,
+  background: "var(--success-soft)",
+  color: "var(--success)",
+  padding: "9px 12px",
+  borderRadius: "var(--radius-sm)",
   fontSize: "0.8rem",
   marginBottom: 16,
 };
