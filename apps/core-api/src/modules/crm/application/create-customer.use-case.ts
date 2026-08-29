@@ -47,6 +47,14 @@ export interface CreateCustomerCommand {
  * this use-case itself has no search-before-create logic (that discipline
  * belongs to whatever orchestrates the two, matching the confirmed fact
  * that HCP itself has no create-time duplicate prevention, docs/05 §2.8).
+ *
+ * `doExecute` is DELIBERATELY three separate steps, not one
+ * `tenantContext.run` wrapping everything — same connection-pool-safety
+ * fix as SearchCustomerUseCase (see that class's own comment for the full
+ * reasoning): `adapter.createCustomer` goes through ResilientCrmAdapter's
+ * circuit-breaker + retry (up to 6 attempts, exponential backoff to a 64s
+ * cap), so holding a Postgres transaction open around it risked holding it
+ * for 60-90+ seconds under a degraded CRM.
  */
 @Injectable()
 export class CreateCustomerUseCase {
@@ -94,43 +102,48 @@ export class CreateCustomerUseCase {
   }
 
   private async doExecute(command: CreateCustomerCommand): Promise<CustomerResult> {
-    return this.tenantContext.run(command.tenantId, async (db) => {
-      const integration = await this.integrationRepository.findById(
-        db,
-        command.tenantId,
-        command.integrationId,
-      );
-      if (!integration) {
-        throw new IntegrationNotFoundError(command.integrationId);
-      }
+    const { integration, credential } = await this.tenantContext.run(
+      command.tenantId,
+      async (db) => {
+        const integration = await this.integrationRepository.findById(
+          db,
+          command.tenantId,
+          command.integrationId,
+        );
+        if (!integration) {
+          throw new IntegrationNotFoundError(command.integrationId);
+        }
+        const credential = await this.integrationRepository.getDecryptedCredential(
+          db,
+          command.tenantId,
+          command.integrationId,
+        );
+        return { integration, credential };
+      },
+    );
+    const adapter = this.adapterRegistry.resolve(integration.crmType, command.tenantId);
+    // The CrmSyncLog row's own idempotency key is a per-attempt audit
+    // identity (docs/13 crm-integration §5), a distinct concept from the
+    // caller-facing dedup key above — a caller retrying with the SAME
+    // idempotencyKey after this use-case already cached a "completed"
+    // result never reaches this code path a second time at all (returned
+    // early above), so a fresh row per genuine attempt is correct here.
+    const syncLogKey = randomUUID();
+    const requestPayload = {
+      name: command.name,
+      phoneE164: command.phoneE164,
+      email: command.email,
+    };
 
-      const credential = await this.integrationRepository.getDecryptedCredential(
-        db,
-        command.tenantId,
-        command.integrationId,
-      );
-      const adapter = this.adapterRegistry.resolve(integration.crmType, command.tenantId);
-      // The CrmSyncLog row's own idempotency key is a per-attempt audit
-      // identity (docs/13 crm-integration §5), a distinct concept from the
-      // caller-facing dedup key above — a caller retrying with the SAME
-      // idempotencyKey after this use-case already cached a "completed"
-      // result never reaches this code path a second time at all (returned
-      // early above), so a fresh row per genuine attempt is correct here.
-      const syncLogKey = randomUUID();
-      const requestPayload = {
+    try {
+      const result = await adapter.createCustomer(credential, {
         name: command.name,
         phoneE164: command.phoneE164,
         email: command.email,
-      };
-
-      try {
-        const result = await adapter.createCustomer(credential, {
-          name: command.name,
-          phoneE164: command.phoneE164,
-          email: command.email,
-          address: command.address,
-        });
-        await this.crmSyncLogRepository.record(db, {
+        address: command.address,
+      });
+      await this.tenantContext.run(command.tenantId, (db) =>
+        this.crmSyncLogRepository.record(db, {
           tenantId: command.tenantId,
           integrationId: command.integrationId,
           operation: "createCustomer",
@@ -140,15 +153,17 @@ export class CreateCustomerUseCase {
           idempotencyKey: syncLogKey,
           requestPayload,
           responsePayload: result,
-        });
-        this.logger.info("CRM customer created", {
-          tenantId: command.tenantId,
-          integrationId: command.integrationId,
-          crmCustomerId: result.crmCustomerId,
-        });
-        return result;
-      } catch (error) {
-        await this.crmSyncLogRepository.record(db, {
+        }),
+      );
+      this.logger.info("CRM customer created", {
+        tenantId: command.tenantId,
+        integrationId: command.integrationId,
+        crmCustomerId: result.crmCustomerId,
+      });
+      return result;
+    } catch (error) {
+      await this.tenantContext.run(command.tenantId, (db) =>
+        this.crmSyncLogRepository.record(db, {
           tenantId: command.tenantId,
           integrationId: command.integrationId,
           operation: "createCustomer",
@@ -158,9 +173,9 @@ export class CreateCustomerUseCase {
           idempotencyKey: syncLogKey,
           requestPayload,
           responsePayload: { error: error instanceof Error ? error.message : String(error) },
-        });
-        throw error;
-      }
-    });
+        }),
+      );
+      throw error;
+    }
   }
 }

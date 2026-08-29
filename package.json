@@ -16,6 +16,7 @@
     "test": "turbo run test",
     "test:unit": "turbo run test:unit",
     "test:integration": "turbo run test:integration",
+    "dev": "turbo run start:dev --filter=@ethixweb/core-api --filter=@ethixweb/voice-orchestrator --filter=@ethixweb/voice-runtime --filter=@ethixweb/dashboard --parallel",
     "format": "prettier --write \"**/*.{ts,tsx,md,json,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,md,json,yml,yaml}\"",
     "prisma:generate": "pnpm --filter @ethixweb/database run generate",

@@ -12,8 +12,9 @@ import { verifyTwilioSignature } from "../../infrastructure/twilio-signature.uti
  *
  * Twilio's own recommended inbound-webhook check (docs/08-security-observability-reliability.md
  * §1.3) — reconstructs the exact URL Twilio signed against plus the
- * form-decoded POST params (available on `request.body` once
- * `@fastify/formbody` has parsed them — see main.ts), and rejects with 403
+ * form-decoded POST params (available on `request.body` once Nest's
+ * FastifyAdapter's own built-in urlencoded parser has parsed them — see
+ * main.ts's own comment), and rejects with 403
  * (InvalidTwilioSignatureError) rather than the platform's usual 401 for a
  * missing/invalid *platform* credential: Twilio can never present a JWT or
  * `X-Api-Key` (see SmsWebhooksController's own `@Public()` comment), so this
@@ -61,11 +62,12 @@ export class TwilioSignatureGuard implements CanActivate {
 }
 
 /**
- * `@fastify/formbody` parses `application/x-www-form-urlencoded` bodies
- * into a plain string-keyed object — Twilio never sends repeated keys or
- * nested structures on this webhook, so a defensive `String(...)` coercion
- * (rather than trusting the parser's inferred type) is enough without
- * pulling in the DTO/class-validator pipeline just to compute a signature.
+ * Nest's FastifyAdapter's own built-in urlencoded parser (see main.ts's
+ * own comment) parses `application/x-www-form-urlencoded` bodies into a
+ * plain string-keyed object — Twilio never sends repeated keys or nested
+ * structures on this webhook, so a defensive type-check per value (rather
+ * than trusting the parser's inferred type) is enough without pulling in
+ * the DTO/class-validator pipeline just to compute a signature.
  */
 function extractFormParams(body: unknown): Record<string, string> {
   if (typeof body !== "object" || body === null) {

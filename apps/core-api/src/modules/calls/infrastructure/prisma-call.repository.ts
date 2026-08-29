@@ -108,9 +108,10 @@ export class PrismaCallRepository implements CallRepository {
     db: Db,
     tenantId: string,
     id: string,
-    status: CallStatus,
+    fromStatus: CallStatus,
+    toStatus: CallStatus,
     fields: { endReason?: string | undefined; endedAt?: string | undefined },
-  ): Promise<Call> {
+  ): Promise<Call | null> {
     const existing = await db.call.findFirst({ where: { id, tenantId } });
     if (!existing) {
       throw new Error(
@@ -124,19 +125,26 @@ export class PrismaCallRepository implements CallRepository {
         ? Math.max(0, Math.round((endedAt.getTime() - existing.startedAt.getTime()) / 1000))
         : undefined;
 
+    // Compare-and-swap on `fromStatus` — see this method's own port comment
+    // (call-repository.port.ts) for why: a blind `updateMany({ where: {
+    // id, tenantId } })` here (the previous implementation) let two
+    // concurrent EndCall requests with different terminal statuses both
+    // read status="in_progress", both pass the domain transition check,
+    // and both write — whichever committed last silently overwrote the
+    // other's terminal status with no error, corrupting the call's final
+    // outcome. `count === 0` here means a concurrent writer already moved
+    // the row off `fromStatus` before this write landed.
     const { count } = await db.call.updateMany({
-      where: { id, tenantId },
+      where: { id, tenantId, status: fromStatus },
       data: {
-        status,
+        status: toStatus,
         ...(fields.endReason !== undefined ? { endReason: fields.endReason } : {}),
         ...(endedAt !== undefined ? { endedAt } : {}),
         ...(durationSeconds !== undefined ? { durationSeconds } : {}),
       },
     });
     if (count === 0) {
-      throw new Error(
-        `PrismaCallRepository.updateStatus: no call ${id} found for tenant ${tenantId}`,
-      );
+      return null;
     }
     const updated = await db.call.findFirst({ where: { id, tenantId } });
     if (!updated) {

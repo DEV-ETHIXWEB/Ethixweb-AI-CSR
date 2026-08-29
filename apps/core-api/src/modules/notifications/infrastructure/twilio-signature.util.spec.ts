@@ -30,4 +30,18 @@ describe("verifyTwilioSignature", () => {
 
     expect(verifyTwilioSignature(url, params, signature, "wrong-token")).toBe(false);
   });
+
+  /**
+   * Regression coverage for a real bug found live during a security audit:
+   * this used to compare signatures with a plain `===`, a variable-time
+   * comparison. `crypto.timingSafeEqual` throws on a length mismatch
+   * rather than returning false, so a header shorter/longer than the real
+   * signature is exactly the case most likely to expose a naive fix that
+   * forgot the length check — this proves it returns `false` cleanly
+   * instead of throwing.
+   */
+  it("rejects (without throwing) a signature header of a different length than the real one", () => {
+    expect(verifyTwilioSignature(url, params, "short", authToken)).toBe(false);
+    expect(() => verifyTwilioSignature(url, params, "short", authToken)).not.toThrow();
+  });
 });

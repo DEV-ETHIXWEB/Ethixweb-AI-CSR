@@ -6,7 +6,6 @@ import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
-import formbody from "@fastify/formbody";
 import { AppModule } from "./app.module";
 
 async function bootstrap(): Promise<void> {
@@ -21,17 +20,19 @@ async function bootstrap(): Promise<void> {
     { rawBody: true },
   );
 
-  // Registered directly on the underlying Fastify instance (Nest's
-  // FastifyAdapter has no first-class `.register()` wrapper for plugins
-  // that isn't just a passthrough to this) — Twilio's inbound SMS webhook
-  // (modules/notifications/interfaces/sms-webhooks.controller.ts) POSTs
-  // `application/x-www-form-urlencoded`, which Fastify doesn't parse by
-  // default (only `application/json` is built in). Without this, that
-  // route's `@Body()` would be empty/undefined for every real Twilio
-  // request. `@fastify/formbody` ships as a transitive dependency of
-  // `@nestjs/platform-fastify` already but is declared directly in this
-  // app's package.json rather than relied on as a phantom dependency.
-  await app.getHttpAdapter().getInstance().register(formbody);
+  // Twilio's inbound SMS webhook (modules/notifications/interfaces/sms-webhooks.controller.ts)
+  // POSTs `application/x-www-form-urlencoded`. Nest's FastifyAdapter
+  // already registers a urlencoded content-type parser itself
+  // (registerUrlencodedContentParser, querystring.parse-based) during
+  // app.init()/app.listen() — sufficient for Twilio's flat key-value form
+  // bodies (no nested/array fields). A manual `@fastify/formbody`
+  // registration was tried here previously but crashes bootstrap with
+  // FST_ERR_CTP_ALREADY_PRESENT: it registers the same content type
+  // directly on the raw Fastify instance without going through Nest's
+  // `useBodyParser` (which sets the `_isParserRegistered` guard), so
+  // Nest's own registration collides with it moments later. Do not
+  // re-add a manual `@fastify/formbody` registration without also
+  // routing it through `app.useBodyParser(...)`.
 
   // Fails closed: unknown properties are stripped, not silently accepted,
   // and validation failures reject the request rather than proceeding with

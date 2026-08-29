@@ -1,9 +1,18 @@
 import { coreApiUrl } from "./core-api-url";
 import { getSession, setSession, clearSession, type SessionData } from "./session";
 
+// Node's fetch has no default timeout. Same unbounded-fetch bug class
+// found and fixed across the live-call path this session
+// (HttpCoreApiClient, FallbackAiProvider, HttpOrchestratorClient,
+// TwilioCallTransferProvider, the notification senders, the CRM adapter):
+// a hung core-api response here would leave an operator staring at a
+// loading dashboard page indefinitely, every Server Component's data
+// fetch goes through this one function.
+const REQUEST_TIMEOUT_MS = 8000;
+
 export class UnauthenticatedError extends Error {
   constructor() {
-    super("No active session — the caller must sign in again.");
+    super("No active session, the caller must sign in again.");
     this.name = "UnauthenticatedError";
   }
 }
@@ -20,14 +29,14 @@ export class CoreApiError extends Error {
 
 /**
  * Server-side-only authenticated fetch against core-api. Used from Server
- * Components and Route Handlers — never shipped to the browser bundle
+ * Components and Route Handlers, never shipped to the browser bundle
  * (nothing in this file touches document/window, and every call site is
  * itself server-only, so Next.js's server/client boundary keeps this out
  * of client JS by construction, not by convention alone).
  *
  * Retries exactly once on a 401 by rotating the refresh token (core-api's
- * refresh endpoint is itself single-use/rotating — confirmed by audit —
- * so a second 401 after that retry is treated as a genuinely expired
+ * refresh endpoint is itself single-use/rotating, confirmed by audit, so
+ * a second 401 after that retry is treated as a genuinely expired
  * session, not retried further).
  */
 export async function coreApiFetch<T>(
@@ -47,6 +56,7 @@ export async function coreApiFetch<T>(
         ...(init?.body ? { "Content-Type": "application/json" } : {}),
       },
       cache: "no-store" as const,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       ...(init?.body ? { body: JSON.stringify(init.body) } : {}),
     });
 
@@ -55,7 +65,7 @@ export async function coreApiFetch<T>(
   if (res.status === 401) {
     const refreshed = await tryRefresh(session);
     if (!refreshed) {
-      await clearSession();
+      await clearSessionCookieIfPossible();
       throw new UnauthenticatedError();
     }
     res = await attempt(refreshed.accessToken);
@@ -72,12 +82,30 @@ export async function coreApiFetch<T>(
   return (await res.json()) as T;
 }
 
+/**
+ * The common case (an access token aging past its TTL during ordinary
+ * browsing) is now handled proactively in middleware.ts, which refreshes
+ * and persists the new session cookie BEFORE a Server Component ever
+ * renders, the only place in the App Router allowed to do both. This is
+ * the fallback for what that proactive check can miss (clock skew, a
+ * token revoked server-side for an unrelated reason): still attempts the
+ * refresh and still uses the new token for THIS request's retry, but
+ * setSession's cookie write is wrapped below since a Server Component's
+ * own render is NOT a context Next.js allows a cookie write from. Found
+ * live, not hypothetical, as a hard "Cookies can only be modified in a
+ * Server Action or Route Handler" crash. Losing the persist here (rather
+ * than the whole page) is the acceptable degradation: the request in
+ * flight still succeeds, and worst case the browser's stale cookie
+ * repeats this same fallback once more before core-api's refresh-token
+ * rotation eventually forces a real re-login.
+ */
 async function tryRefresh(session: SessionData): Promise<SessionData | null> {
   const res = await fetch(coreApiUrl("/auth/refresh"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ refreshToken: session.refreshToken }),
     cache: "no-store",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) {
     return null;
@@ -88,6 +116,23 @@ async function tryRefresh(session: SessionData): Promise<SessionData | null> {
     accessToken: tokens.accessToken,
     refreshToken: tokens.refreshToken,
   };
-  await setSession(updated);
+  try {
+    await setSession(updated);
+  } catch {
+    // Called from a Server Component render, not a Server Action/Route
+    // Handler, which is expected in the fallback path this function exists
+    // for (see the function's own comment). Proceed with the refreshed
+    // token for this request regardless.
+  }
   return updated;
+}
+
+async function clearSessionCookieIfPossible(): Promise<void> {
+  try {
+    await clearSession();
+  } catch {
+    // Same Server-Component-render restriction as tryRefresh's own
+    // setSession call. The UnauthenticatedError this function's one
+    // caller throws right after is what actually matters here.
+  }
 }

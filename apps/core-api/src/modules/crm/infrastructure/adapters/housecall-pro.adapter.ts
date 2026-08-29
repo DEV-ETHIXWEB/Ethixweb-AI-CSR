@@ -16,6 +16,17 @@ import type {
 const DEFAULT_BASE_URL = process.env["HOUSECALL_PRO_API_BASE_URL"];
 const PAGE_SIZE = 50;
 const MAX_PAGES_SCANNED = 20; // bounds the client-side phone-search fallback below at 1000 customers scanned
+// Node's fetch has no default timeout, and this call had none: same
+// unbounded-fetch bug class found and fixed for the live-call path this
+// session (HttpCoreApiClient, FallbackAiProvider, HttpOrchestratorClient,
+// TwilioCallTransferProvider). ResilientCrmAdapter's own retry (2 attempts,
+// 250ms delay, tuned specifically so a CRM outage never blocks a live
+// conversation for long, see its own CRM_RETRY_OPTIONS comment) only
+// bounds the gap BETWEEN attempts; a hang WITHIN a single attempt was
+// never bounded at all, meaning that earlier fix's own "never blocks the
+// conversation" goal could still be defeated by a CRM response that
+// hangs rather than errors.
+const REQUEST_TIMEOUT_MS = 5000;
 
 // [UNVERIFIED] docs/05-crm-integration.md §2.6: two independent sources
 // disagree on the exact signature header name, and neither is confirmed —
@@ -214,6 +225,7 @@ export class HousecallProAdapter implements CRMAdapter {
           Accept: "application/json",
         },
         body: body ? JSON.stringify(body) : null,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
       throw new CrmAdapterError(

@@ -1,4 +1,19 @@
-# 30 — Yash Runtime: Live Integration Checklist
+# 30 — Voice Runtime: Live Integration Checklist (SUPERSEDED — see docs/41)
+
+**This document is historical.** It assumed a "Yash's responsibility" vs.
+"Ethixweb repository responsibility" split for connecting an external,
+not-yet-built runtime to `voice-orchestrator`. `apps/voice-runtime` now
+exists in this repo, self-owned by Akash (this project's sole owner) —
+there is no external party or responsibility split anymore, and the actual
+live-first-call checklist is [docs/41-first-local-real-call.md](41-first-local-real-call.md),
+written against the real service. Kept below only as historical record of
+the original contract-level checklist; do not treat the "YASH'S
+RESPONSIBILITY" section as a real, unowned gap — those items are `apps/voice-runtime`'s
+own implementation, already built (Twilio webhook, signature verification,
+Deepgram/ElevenLabs integration, tenant routing, idempotency, barge-in —
+see docs/41 for what's actually verified).
+
+---
 
 This is a practical checklist, not a second contract document — [docs/28](28-yash-runtime-integration-package.md) is and remains the source of truth for every request/response shape, field, endpoint, and rule below. Nothing here invents anything docs/28 or [docs/24](24-runtime-orchestrator-contract.md) doesn't already state; this file exists to turn that contract into a literal checklist with responsibility clearly assigned, for the moment a live runtime is ready to connect.
 

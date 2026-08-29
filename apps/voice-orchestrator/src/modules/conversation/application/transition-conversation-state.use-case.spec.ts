@@ -20,6 +20,7 @@ function baseConversation(overrides: Partial<Conversation> = {}): Conversation {
     endedAt: null,
     capacityReservationId: "reservation-1",
     endReason: null,
+    version: 1,
     ...overrides,
   };
 }
@@ -61,5 +62,68 @@ describe("TransitionConversationStateUseCase", () => {
     await expect(useCase.execute("tenant-1", "conv-1", "greeting")).rejects.toThrow(
       ConversationAlreadyEndedError,
     );
+  });
+
+  describe("lost CAS race against a concurrent conversation write", () => {
+    // Regression tests for the same class of bug fixed in EndConversationUseCase
+    // and HandleTurnUseCase: POST /:id/interrupt (this use case) and
+    // POST /:id/turns (HandleTurnUseCase) can race for the same conversation
+    // — findById/save here is not itself atomic against a concurrent writer.
+
+    it("retries once and succeeds when a benign concurrent write (e.g. a turn's transcript append) landed first", async () => {
+      const repository = new FakeConversationRepository();
+      const seeded = baseConversation();
+      repository.seed(seeded);
+      const useCase = new TransitionConversationStateUseCase(repository);
+      const originalSave = repository.save.bind(repository);
+      let firstAttempt = true;
+      repository.save = async (conversation) => {
+        if (firstAttempt) {
+          firstAttempt = false;
+          await originalSave({
+            ...seeded,
+            transcript: [
+              {
+                turnIndex: 0,
+                speaker: "caller",
+                text: "hi",
+                confidence: null,
+                offsetMs: 0,
+                at: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+          });
+        }
+        return originalSave(conversation);
+      };
+
+      const result = await useCase.execute("tenant-1", "conv-1", "identifying");
+
+      expect(result.state).toBe("identifying");
+      // The concurrent turn's own write survives — this use case doesn't
+      // own `transcript`, so retrying must not clobber it.
+      expect(result.transcript).toHaveLength(1);
+    });
+
+    it("throws ConversationAlreadyEndedError, not a silent no-op, when the conversation ended mid-race", async () => {
+      const repository = new FakeConversationRepository();
+      const seeded = baseConversation();
+      repository.seed(seeded);
+      const useCase = new TransitionConversationStateUseCase(repository);
+      const originalSave = repository.save.bind(repository);
+      repository.save = async (conversation) => {
+        await originalSave({
+          ...seeded,
+          state: "ended",
+          endedAt: "2026-01-01T00:00:00.000Z",
+          endReason: "caller_hangup",
+        });
+        return originalSave(conversation);
+      };
+
+      await expect(useCase.execute("tenant-1", "conv-1", "identifying")).rejects.toThrow(
+        ConversationAlreadyEndedError,
+      );
+    });
   });
 });

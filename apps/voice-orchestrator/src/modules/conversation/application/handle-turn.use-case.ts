@@ -47,13 +47,24 @@ export interface HandleTurnResult {
   interrupted: boolean;
   state: Conversation["state"];
   /**
-   * Phone numbers to transfer to, in ring order — present only when this
-   * turn's `escalateEmergency` tool call returned `action: "forward_call"`.
-   * The runtime executes the actual SIP transfer (docs/24 §4's
-   * "emergency-transfer SIP handoff" checklist item); this service only
-   * surfaces the destination, per docs/02 §4/§0's text-in-text-out boundary.
+   * Populated iff `escalateEmergency` succeeded THIS turn (docs/28 §M: "the
+   * tool result itself signals this to your runtime"). Previously this was
+   * only an internal `escalation.triggered` event with no HTTP-visible
+   * counterpart — a real runtime has no event bus to subscribe to, only
+   * this response, so `action: "forward_call"` was undetectable over the
+   * documented contract. Additive field, absent (not null) on every turn
+   * that didn't escalate, to keep existing consumers' shape checks unaffected.
+   *
+   * `transferDestination`: the real, currently-on-call phone number to
+   * transfer to when `action === "forward_call"` (core-api's
+   * EscalateEmergencyUseCase resolves it via ResolveOnCallUseCase, see its
+   * own comment). Absent/null when the action isn't forward_call, or when
+   * no on-call target could be resolved — the Voice Runtime's own
+   * static EMERGENCY_TRANSFER_NUMBER/HUMAN_FALLBACK_NUMBER fallback covers
+   * that case, so this field degrading to null is a normal, expected
+   * outcome, not an error condition.
    */
-  transferTargets: string[] | null;
+  escalation?: { severity: string; action: string; transferDestination: string | null };
 }
 
 /** Bounds a pathological model tool-loop. Not a documented constant — an INFERRED safety limit; a real call needs at most a handful (searchCustomer → escalateEmergency → createLead). */
@@ -162,7 +173,8 @@ export class HandleTurnUseCase {
     let responseText = "";
     const toolCallsExecuted: string[] = [];
     let interrupted = false;
-    let transferTargets: string[] | null = null;
+    let escalation:
+      { severity: string; action: string; transferDestination: string | null } | undefined;
 
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       conversation.messages = compressMessages(conversation.messages);
@@ -185,20 +197,22 @@ export class HandleTurnUseCase {
 
       for (const toolCall of turn.toolCalls) {
         toolCallsExecuted.push(toolCall.name);
-        const toolResult = await this.runTool(conversation, toolCall, command.allowedTools);
-        if (
-          toolCall.name === "escalateEmergency" &&
-          isRecord(toolResult) &&
-          toolResult["action"] === "forward_call" &&
-          Array.isArray(toolResult["transferTargets"])
-        ) {
-          transferTargets = toolResult["transferTargets"] as string[];
-        }
+        const { output, escalation: toolEscalation } = await this.runTool(
+          conversation,
+          toolCall,
+          command.allowedTools,
+        );
         conversation.messages.push({
           role: "tool",
           toolCallId: toolCall.id,
-          content: JSON.stringify(toolResult),
+          content: JSON.stringify(output),
         });
+        // Last escalation in the turn wins — MAX_TOOL_ITERATIONS bounds a
+        // pathological loop, not a realistic multi-escalation turn, but a
+        // deterministic rule beats an arbitrary first/last pick left unstated.
+        if (toolEscalation) {
+          escalation = toolEscalation;
+        }
       }
     }
 
@@ -213,7 +227,7 @@ export class HandleTurnUseCase {
       });
     }
 
-    await this.repository.save(conversation);
+    await this.saveTurnResult(conversation);
 
     const durationMs = Date.now() - startedAt;
     await this.eventBus.publish({
@@ -231,8 +245,63 @@ export class HandleTurnUseCase {
       toolCallsExecuted,
       interrupted,
       state: conversation.state,
-      transferTargets,
+      ...(escalation ? { escalation } : {}),
     };
+  }
+
+  /**
+   * `conversation` here already carries this whole turn's mutations
+   * (transcript/messages pushes, `leadId`, etc. — all applied in place
+   * during `runTurn`), read at a `version` that may now be stale: a turn
+   * can run for seconds (LLM streaming, tool calls), long enough for the
+   * caller to hang up mid-turn and EndConversationUseCase's `save()` to
+   * land first — a real race, not a hypothetical one (see that use case's
+   * own `resolveLostRace` comment). If the CAS is lost specifically
+   * because the conversation ended in the meantime, this turn's state
+   * update is deliberately DISCARDED rather than retried — replaying it
+   * on top of the newer version would silently resurrect an ended
+   * conversation (clobber `endedAt` back to null), corrupting exactly the
+   * state EndConversationUseCase just correctly wrote. The turn's response
+   * text was very likely already streamed to the caller before the hangup
+   * was processed, so this method still lets that response return to the
+   * Voice Runtime — only the Redis-side transcript/message persistence for
+   * this turn is lost, not the live conversation the caller already heard.
+   * Any other lost-CAS cause (e.g. a concurrent `POST /:id/interrupt`
+   * transitioning `state`, or two turns genuinely overlapping) gets a
+   * single retry on the freshly-read version, same "one re-read is enough,
+   * don't loop for a third writer" discipline used throughout this module —
+   * but the retry keeps `fresh.state`, not `conversation`'s own (stale)
+   * copy of it: this use case never legitimately owns `state` (only
+   * TransitionConversationStateUseCase and EndConversationUseCase do), so
+   * blindly replaying `conversation` wholesale would silently clobber
+   * whatever the concurrent writer changed it to — the exact same class of
+   * silent-corruption bug this whole CAS mechanism exists to prevent, just
+   * relocated to a different field.
+   */
+  private async saveTurnResult(conversation: Conversation): Promise<void> {
+    const saved = await this.repository.save(conversation);
+    if (saved) {
+      return;
+    }
+    const fresh = await this.repository.findById(conversation.tenantId, conversation.id);
+    if (!fresh) {
+      return;
+    }
+    if (fresh.endedAt) {
+      this.logger.warn(
+        "conversation ended mid-turn — this turn's state update was discarded rather than resurrecting the ended conversation",
+        { tenantId: conversation.tenantId, conversationId: conversation.id },
+      );
+      return;
+    }
+    const retry: Conversation = { ...conversation, version: fresh.version, state: fresh.state };
+    const retrySaved = await this.repository.save(retry);
+    if (!retrySaved) {
+      this.logger.warn(
+        "conversation lost a concurrent-write race twice in a row while saving a turn — this turn's state update was discarded",
+        { tenantId: conversation.tenantId, conversationId: conversation.id },
+      );
+    }
   }
 
   private async streamOneCompletion(
@@ -243,6 +312,7 @@ export class HandleTurnUseCase {
     let text = "";
     const toolCalls: AiToolCallRequest[] = [];
     let interrupted = false;
+    let providerErrorMessage: string | null = null;
 
     const stream = this.aiProvider.streamCompletion(
       {
@@ -259,6 +329,9 @@ export class HandleTurnUseCase {
         if (signal?.aborted) {
           interrupted = true;
           break;
+        }
+        if (chunk.type === "error") {
+          providerErrorMessage = chunk.message;
         }
         const handled = this.applyChunk(chunk, toolCalls);
         text += handled.text;
@@ -280,6 +353,29 @@ export class HandleTurnUseCase {
           reason: error instanceof Error ? error.message : String(error),
         });
       }
+    }
+
+    // Found live, not hypothetical: with every LLM provider unavailable
+    // (unconfigured, or all down), FallbackAiProvider.streamCompletion
+    // yields a single `{type: "error"}` chunk and nothing else —
+    // applyChunk logs it and stops, but previously this method still
+    // returned `{text: "", toolCalls: [], interrupted: false}`, an
+    // ordinary-looking SUCCESSFUL result with nothing wrong flagged. That
+    // flowed straight through runTurn into a 200 HandleTurnResult with
+    // responseText: "" and interrupted: false, which the Voice Runtime's
+    // `if (turnResult.responseText) { speak(...) }` treats as "nothing to
+    // say" rather than a failure — the caller was left in silent dead air
+    // indefinitely, with no apology, no retry, nothing. Thrown here
+    // instead (only when the provider layer reported an error AND nothing
+    // usable came out of it — real partial text/tool-calls before a
+    // mid-stream error are preserved and returned as-is, matching
+    // FallbackAiProvider's own "a failure after the first chunk is
+    // surfaced as-is" contract) so it propagates as an ordinary 500 the
+    // Voice Runtime's EXISTING, already-tested turn-retry-then-apologize
+    // logic already handles correctly — not a new failure mode, routing a
+    // previously-silent one through infrastructure that already exists.
+    if (providerErrorMessage !== null && !interrupted && !text && toolCalls.length === 0) {
+      throw new Error(`AI provider completion failed: ${providerErrorMessage}`);
     }
 
     return { text, toolCalls, interrupted };
@@ -307,7 +403,10 @@ export class HandleTurnUseCase {
     conversation: Conversation,
     toolCall: AiToolCallRequest,
     allowedTools: readonly string[],
-  ): Promise<unknown> {
+  ): Promise<{
+    output: unknown;
+    escalation?: { severity: string; action: string; transferDestination: string | null };
+  }> {
     const at = new Date().toISOString();
     await this.eventBus.publish({
       type: "tool.called",
@@ -338,10 +437,14 @@ export class HandleTurnUseCase {
       });
 
       if (result.status === "success") {
-        await this.reactToToolSuccess(conversation, toolCall.name, result.output);
-        return result.output;
+        const escalation = await this.reactToToolSuccess(
+          conversation,
+          toolCall.name,
+          result.output,
+        );
+        return { output: result.output, ...(escalation ? { escalation } : {}) };
       }
-      return { error: "tool_unavailable", detail: result.reason };
+      return { output: { error: "tool_unavailable", detail: result.reason } };
     } catch (error) {
       // A rejected tool (unknown/unauthorized/invalid args) is returned to
       // the MODEL as a structured error rather than thrown — docs/04 §2:
@@ -354,16 +457,24 @@ export class HandleTurnUseCase {
         toolName: toolCall.name,
         reason,
       });
-      return { error: "tool_rejected", detail: reason };
+      return { output: { error: "tool_rejected", detail: reason } };
     }
   }
 
-  /** Side effects the ORCHESTRATOR owns, not the model (docs/04 §3.8: "the model decides, infrastructure code acts"). */
+  /**
+   * Side effects the ORCHESTRATOR owns, not the model (docs/04 §3.8: "the
+   * model decides, infrastructure code acts"). Returns the escalation
+   * signal (rather than only publishing the internal `escalation.triggered`
+   * event) so `runTool`/`runTurn` can additionally surface it on the HTTP
+   * response — docs/28 §M's "the tool result itself signals this to your
+   * runtime" has no other channel a real, out-of-process Voice Runtime can
+   * observe.
+   */
   private async reactToToolSuccess(
     conversation: Conversation,
     toolName: string,
     output: unknown,
-  ): Promise<void> {
+  ): Promise<{ severity: string; action: string; transferDestination: string | null } | undefined> {
     if (toolName === "createLead" && isRecord(output) && typeof output["lead_id"] === "string") {
       conversation.leadId = output["lead_id"];
       await this.eventBus.publish({
@@ -373,19 +484,26 @@ export class HandleTurnUseCase {
         leadId: output["lead_id"],
         at: new Date().toISOString(),
       });
-      return;
+      return undefined;
     }
 
     if (toolName === "escalateEmergency" && isRecord(output) && output["isEmergency"] === true) {
+      const severity = String(output["severity"]);
+      const action = String(output["action"]);
+      const transferDestination =
+        typeof output["transferDestination"] === "string" ? output["transferDestination"] : null;
       await this.eventBus.publish({
         type: "escalation.triggered",
         tenantId: conversation.tenantId,
         conversationId: conversation.id,
-        severity: String(output["severity"]),
-        action: String(output["action"]),
+        severity,
+        action,
         at: new Date().toISOString(),
       });
+      return { severity, action, transferDestination };
     }
+
+    return undefined;
   }
 
   private appendTranscript(conversation: Conversation, turn: TranscriptTurn): void {

@@ -25,7 +25,7 @@ Everything above, plus:
 - [ ] Secrets stored in a real secret manager, not `.env` files on a server (this repo currently validates env vars at boot but does not mandate any particular secret-storage backend — that's a deployment-topology decision, not something this codebase enforces).
 - [ ] Monitoring: dashboards showing call volume, error rates, latency — **not currently built** (flagged as a gap in the Phase 12 audit, not fabricated as done).
 - [ ] Alerting: a real alerting provider (PagerDuty/Opsgenie/equivalent) wired to failure conditions — **not currently built**.
-- [ ] A rollback path that doesn't strand a caller with no working phone line (see [docs/29](29-phase11-12-blocker-resolution.md) Blocker 5, and the rollback note in the Phase 12 report — no repo-level "kill switch" tooling exists yet; today this would be a manual telephony-routing change on Yash's side).
+- [x] A rollback path that doesn't strand a caller with no working phone line — closed: `voice-runtime`'s `AI_RECEPTIONIST_ENABLED` env var ([docs/19](19-operational-runbooks.md) §7) is a real, repo-level kill switch (env var + restart, no deploy, no external party) that forwards every call to a human number instead of the AI. Verified against a locally running instance for both states; not yet verified against a real Twilio account. This was previously a genuine gap ("no repo-level kill switch tooling exists yet") from before `voice-runtime` existed in this repo (Phase 15B) — no longer accurate.
 
 ### Optional (nice to have, not blocking)
 

@@ -15,7 +15,7 @@
     "migrate:dev": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
     "db:setup-local-runtime-role": "node scripts/setup-local-runtime-role.mjs",
-    "seed:local": "node scripts/seed-local.mjs"
+    "db:seed-local-pilot-tenant": "node scripts/seed-local-pilot-tenant.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",

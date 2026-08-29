@@ -3,7 +3,9 @@ import { APP_FILTER } from "@nestjs/core";
 import { ToolBrokerModule } from "../tool-broker/tool-broker.module";
 import { CALL_ADMISSION_PORT } from "./domain/call-admission.port";
 import { CAPACITY_CONFIG_PROVIDER } from "./domain/capacity-config";
+import { TENANT_STATUS_PROVIDER } from "./domain/tenant-status.port";
 import { HttpCapacityConfigProvider } from "./infrastructure/http-capacity-config.provider";
+import { HttpTenantStatusProvider } from "./infrastructure/http-tenant-status.provider";
 import { RedisCallAdmissionAdapter } from "./infrastructure/redis-call-admission.adapter";
 import { CapacityExceededFilter } from "./interfaces/capacity-exceeded.filter";
 
@@ -27,6 +29,7 @@ import { CapacityExceededFilter } from "./interfaces/capacity-exceeded.filter";
   providers: [
     { provide: CALL_ADMISSION_PORT, useClass: RedisCallAdmissionAdapter },
     { provide: CAPACITY_CONFIG_PROVIDER, useClass: HttpCapacityConfigProvider },
+    { provide: TENANT_STATUS_PROVIDER, useClass: HttpTenantStatusProvider },
     // Registered here rather than app.module.ts (unlike the app-wide
     // DomainExceptionFilter) so this filter's dependency on
     // CAPACITY_CONFIG_PROVIDER stays scoped to the module that owns it.
@@ -35,6 +38,6 @@ import { CapacityExceededFilter } from "./interfaces/capacity-exceeded.filter";
     // coexist as APP_FILTER providers.
     { provide: APP_FILTER, useClass: CapacityExceededFilter },
   ],
-  exports: [CALL_ADMISSION_PORT, CAPACITY_CONFIG_PROVIDER],
+  exports: [CALL_ADMISSION_PORT, CAPACITY_CONFIG_PROVIDER, TENANT_STATUS_PROVIDER],
 })
 export class CapacityModule {}

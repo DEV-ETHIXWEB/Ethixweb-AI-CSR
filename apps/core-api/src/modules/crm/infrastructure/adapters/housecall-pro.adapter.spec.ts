@@ -81,6 +81,25 @@ describe("HousecallProAdapter", () => {
     expect(JSON.parse(init.body as string)).toMatchObject({ first_name: "Jane", last_name: "Doe" });
   });
 
+  /**
+   * Regression coverage for a real bug found live: this call had no
+   * timeout at all, same unbounded-fetch bug class found and fixed for
+   * the live-call path this session. ResilientCrmAdapter's own retry (2
+   * attempts, 250ms delay, tuned so a CRM outage never blocks a live
+   * conversation for long) only bounds the gap between attempts; a hang
+   * WITHIN a single attempt was never bounded, which could have defeated
+   * that earlier fix's own "never blocks the conversation" goal.
+   */
+  it("bounds the request with a timeout, so a hung HCP response is never left completely unbounded", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(201, { id: "cust-new" }));
+
+    await adapter.createCustomer(CREDENTIAL, { name: "Jane Doe", phoneE164: "+15551234567" });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(init.signal?.aborted).toBe(false);
+  });
+
   describe("createLead — safety contract", () => {
     it("posts to /leads and never calls any job/schedule/dispatch-shaped URL", async () => {
       fetchMock.mockResolvedValueOnce(jsonResponse(201, { id: "lead-1", status: "new" }));

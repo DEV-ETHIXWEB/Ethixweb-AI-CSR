@@ -31,4 +31,17 @@ export interface Conversation {
   startedAt: string;
   endedAt: string | null;
   endReason: string | null;
+  /**
+   * Optimistic-concurrency counter, starting at 1 on `create()` — the ONLY
+   * field a use case never sets by hand; it travels unmodified from
+   * whatever `findById`/`findByCallId` returned through to `save()`, which
+   * uses it as the compare-and-swap check (RedisConversationRepository's
+   * own comment). Necessary because two concurrent operations on the same
+   * conversation is a real, previously-shipped-broken scenario (a live
+   * turn's slow tool call racing an incoming end-of-call signal) — Redis
+   * has no equivalent of Postgres's own transaction isolation to lean on
+   * instead, and a blind last-write-wins `SET` silently loses whichever
+   * side wrote first.
+   */
+  version: number;
 }

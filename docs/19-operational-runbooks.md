@@ -19,7 +19,10 @@ Every Sev1/Sev2 gets a **blameless post-incident review** within 3 business days
 
 1. Confirm scope: check the voice vendor's status page (LiveKit Cloud, per [02-voice-pipeline-and-telephony.md](02-voice-pipeline-and-telephony.md)) and cross-reference against the platform's own connection-failure metrics — distinguish "vendor is down" from "our config/credentials broke."
 2. If vendor-confirmed: this is the scenario [08](08-security-observability-reliability.md) §3's reliability patterns are built for — voice reconnect handles brief blips automatically; a sustained outage needs a human decision.
-3. **Fallback decision (must be pre-configured per tenant, not decided live under pressure)**: each business's phone-number configuration includes a pre-agreed "AI platform down" forwarding target (typically the office's own main line or an answering service) — on a confirmed sustained vendor outage, the on-call engineer (or an automated health-check-triggered action, Phase 2+) redirects carrier-level call routing to that fallback target. This is why [11-roadmap-risks-future.md](11-roadmap-risks-future.md)'s risk table treats this as a required runbook rather than an implicit assumption — a caller must never simply get silence because the AI layer is down.
+3. **Fallback decision (must be pre-configured per tenant, not decided live under pressure)**: each business's phone-number configuration includes a pre-agreed "AI platform down" forwarding target (typically the office's own main line or an answering service). Two mechanisms now exist, fastest first — see §8 below for the full procedure:
+   - **Preferred, fastest**: flip `AI_RECEPTIONIST_ENABLED=false` on `voice-runtime` (§8) — this repo's own kill switch, an env var + restart, no external party involved, no deploy.
+   - **Fallback, if voice-runtime itself is unreachable**: redirect carrier-level call routing (Twilio Console) to the fallback target directly — slower, requires Twilio Console access, but works even if this platform's own infrastructure is what's down.
+     This is why [11-roadmap-risks-future.md](11-roadmap-risks-future.md)'s risk table treats this as a required runbook rather than an implicit assumption — a caller must never simply get silence because the AI layer is down.
 4. Monitor vendor status page for resolution; revert carrier routing to the platform once confirmed healthy and a fresh synthetic canary call succeeds.
 5. Post-incident: review whether the outage duration matched what [02](02-voice-pipeline-and-telephony.md) §2's "honest trade-off" section anticipated (LiveKit's recent uptime trailing its own SLA) — if outages are more frequent/longer than planned for, that's an input to the ADR-006-style revisit-trigger discussion in [20-architecture-decision-records.md](20-architecture-decision-records.md), not just a one-off incident.
 
@@ -60,7 +63,25 @@ Every Sev1/Sev2 gets a **blameless post-incident review** within 3 business days
 4. Notify the affected tenant directly and transparently — this is a trust-critical moment for a platform whose entire value proposition is reliability or lack thereof.
 5. This is always a Sev1/Sev2 post-incident review, specifically checking whether the [18](18-abuse-prevention-and-telephony-fraud.md) controls (destination allowlist, spend caps) functioned as designed or whether a gap needs closing.
 
-## 7. Recurring operational cadence (not incident-triggered, scheduled)
+## 7. Runbook: disable the AI receptionist / forward all calls to a human
+
+Closes the gap [29-phase11-12-blocker-resolution.md](29-phase11-12-blocker-resolution.md) Blocker 5 flagged: "no repo-level kill switch tooling exists yet; today this would be a manual telephony-routing change on Yash's side." That was true before `voice-runtime` existed in this repo (Phase 15B) — it is not true anymore.
+
+**When to use this**: any Sev1/Sev2 where the AI answering calls at all is worse than a human doing it — a bad deploy, a runaway LLM cost/behavior issue, a security incident affecting the voice path, or simply "we need to think and don't want the AI live while we do."
+
+**Mechanism**: `apps/voice-runtime`'s `AI_RECEPTIONIST_ENABLED` env var (`env.schema.ts`, `TwilioVoiceController`). When `false`, every inbound call is forwarded via `<Dial>` straight to `HUMAN_FALLBACK_NUMBER` — tenant resolution, the AI, and the media stream are never touched at all. Fails closed at boot: `HUMAN_FALLBACK_NUMBER` is required whenever this is `false`, so the switch can never activate without a real destination.
+
+**Procedure**:
+
+1. Set `AI_RECEPTIONIST_ENABLED=false` and `HUMAN_FALLBACK_NUMBER=<the on-call number/queue>` in `voice-runtime`'s deployed environment (Secrets Manager / task definition env, per [08](08-security-observability-reliability.md) §1.2 — never a plaintext `.env` in any real environment).
+2. Restart the `voice-runtime` service/task. This is a config change, not a deploy — no new image build, no code change.
+3. Confirm: call the tenant's number (or hit the webhook directly) and confirm the response is `<Response><Dial>...</Dial></Response>`, not `<Connect><Stream>...`.
+4. This applies to **every** tenant/number this `voice-runtime` deployment serves (it is not per-tenant today) — if only one tenant needs isolating, use §6's feature-flag kill-switch for that narrower case instead.
+5. To re-enable: set `AI_RECEPTIONIST_ENABLED=true` (or unset it — `true` is the default) and restart again.
+
+**Verified**: TwiML output tested directly against a locally running `voice-runtime` instance for both states (switch on → `<Dial>`, switch off → normal `<Connect><Stream>` flow, both confirmed unaffected by the other) — not merely unit-tested. Not yet verified against a real Twilio account/live call (needs real Twilio credentials, tracked the same as every other real-provider gap in this project).
+
+## 8. Recurring operational cadence (not incident-triggered, scheduled)
 
 | Activity                                                                                                                                                                 | Cadence                                                                      | Reference                                                                                                                                              |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |

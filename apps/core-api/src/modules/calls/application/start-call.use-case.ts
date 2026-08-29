@@ -44,6 +44,19 @@ export class StartCallUseCase {
     });
 
     return this.tenantContext.run(command.tenantId, async (db) => {
+      // A SAVEPOINT immediately before the insert attempt — Postgres aborts
+      // the ENTIRE enclosing transaction after any error (including this
+      // UNIQUE(telephony_call_sid) violation), so without this, the
+      // recovery findByTelephonyCallSid read below fails with `25P02:
+      // current transaction is aborted`. Identical bug, identical fix, as
+      // CreateLeadUseCase.upsertByCallId and CustomerCacheUpserter.upsert —
+      // see either's own comment for the full explanation. Found here by
+      // deliberately searching for the same race pattern elsewhere in the
+      // codebase after finding it live in createLead, then confirmed live
+      // (8 concurrent StartCall calls for the same telephonyCallSid — the
+      // real idempotency key for a duplicated Twilio call.started webhook
+      // delivery — produced 1 success + 7 HTTP 500s before this fix).
+      await db.$executeRaw`SAVEPOINT start_call_attempt`;
       try {
         const call = await this.callRepository.create(db, {
           tenantId: command.tenantId,
@@ -65,6 +78,9 @@ export class StartCallUseCase {
         if (!(error instanceof CallAlreadyExistsError)) {
           throw error;
         }
+        // Un-poisons the transaction so the recovery read below can
+        // actually run — see the SAVEPOINT comment above.
+        await db.$executeRaw`ROLLBACK TO SAVEPOINT start_call_attempt`;
         const existing = await this.callRepository.findByTelephonyCallSid(
           db,
           command.tenantId,

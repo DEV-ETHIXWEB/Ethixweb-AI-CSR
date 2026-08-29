@@ -148,6 +148,56 @@ describe("ResolveCustomerUseCase", () => {
   });
 
   it(
+    "CONNECTION-POOL SAFETY: the CRM search call happens between two SEPARATE " +
+      "tenantContext.run transactions, never nested inside one held open for its duration — " +
+      "see this use case's own comment on why a single wrapping transaction would leave a real " +
+      "Postgres connection held open for as long as a degraded CRM's retry/backoff takes",
+    async () => {
+      const customerRepository = new FakeCustomerRepository();
+      const crmCustomerSyncPort = new FakeCrmCustomerSyncPort();
+      crmCustomerSyncPort.searchResults.set("+15551234567", {
+        crmCustomerId: "crm-customer-99",
+        name: "Jane Doe",
+        phoneE164: "+15551234567",
+        raw: {},
+      });
+      const useCase = buildUseCase(customerRepository, crmCustomerSyncPort);
+      const tenantContext = (useCase as unknown as { tenantContext: TenantContextService })
+        .tenantContext;
+      const events: string[] = [];
+      jest.spyOn(tenantContext, "run").mockImplementation(async (_tenantId, work) => {
+        events.push("run:start");
+        const result = await (work as (db: never) => Promise<unknown>)({
+          $executeRaw: async () => 0,
+        } as never);
+        events.push("run:end");
+        return result;
+      });
+      jest.spyOn(crmCustomerSyncPort, "searchCustomer").mockImplementation(async (...args) => {
+        events.push("search:start");
+        const result = crmCustomerSyncPort.searchResults.get(args[2]) ?? null;
+        events.push("search:end");
+        return result;
+      });
+
+      await useCase.execute({
+        tenantId: "tenant-1",
+        businessId: "business-1",
+        phoneE164: "+15551234567",
+      });
+
+      expect(events).toEqual([
+        "run:start",
+        "run:end", // the cache read — its own, already-closed transaction
+        "search:start",
+        "search:end", // the CRM call — no transaction open around it at all
+        "run:start",
+        "run:end", // the cache write-back — a fresh, separate transaction
+      ]);
+    },
+  );
+
+  it(
     "CONCURRENCY: two simultaneous resolve() calls that BOTH miss the local cache and BOTH " +
       "find the same NEW CRM customer never write back two rows — the same race-safe upsert " +
       "path createCustomer uses, exercised through resolve() specifically",

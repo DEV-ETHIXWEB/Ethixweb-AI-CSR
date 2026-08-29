@@ -18,6 +18,12 @@ import {
   CAPACITY_CONFIG_PROVIDER,
   type CapacityConfigProvider,
 } from "../../capacity/domain/capacity-config";
+import { TenantNotServiceableError } from "../../capacity/domain/errors";
+import {
+  SERVICEABLE_TENANT_STATUSES,
+  TENANT_STATUS_PROVIDER,
+  type TenantStatusProvider,
+} from "../../capacity/domain/tenant-status.port";
 import type { Conversation } from "../domain/conversation.entity";
 import {
   CONVERSATION_REPOSITORY,
@@ -59,7 +65,14 @@ export interface StartConversationCommand {
  * introduced into this deliberately telephony-concept-free contract, see
  * StartConversationDto's own comment).
  *
- * CAPACITY GATE (docs/36): admission is checked FIRST, before even the
+ * TENANT-STATUS GATE (docs/15 §2): checked before EVEN the capacity gate —
+ * a suspended/offboarded/expired/archived tenant should never consume a
+ * capacity slot for a call this platform isn't going to keep serving.
+ * `getStatus()` fails open to `"active"` on a core-api outage (see
+ * HttpTenantStatusProvider's own comment), so this gate can never itself
+ * turn a core-api hiccup into a platform-wide outage.
+ *
+ * CAPACITY GATE (docs/36): admission is checked next, before even the
  * Call-row creation above — a call that can't be admitted should never
  * reach core-api at all. `reserve()` throws `CapacityExceededError`
  * (429 + Retry-After, DomainExceptionFilter) when neither this tenant's
@@ -80,6 +93,7 @@ export class StartConversationUseCase {
     @Inject(CORE_API_CLIENT) private readonly coreApiClient: CoreApiClientPort,
     @Inject(CALL_ADMISSION_PORT) private readonly callAdmission: CallAdmissionPort,
     @Inject(CAPACITY_CONFIG_PROVIDER) private readonly capacityConfig: CapacityConfigProvider,
+    @Inject(TENANT_STATUS_PROVIDER) private readonly tenantStatus: TenantStatusProvider,
     @Inject(APP_LOGGER) private readonly logger: StructuredLogger,
   ) {}
 
@@ -88,6 +102,17 @@ export class StartConversationUseCase {
       "ethixweb.tenant_id": command.tenantId,
       "ethixweb.business_id": command.businessId,
     });
+
+    const status = await this.tenantStatus.getStatus(command.tenantId);
+    if (!SERVICEABLE_TENANT_STATUSES.has(status)) {
+      this.logger.warn("call rejected: tenant not serviceable", {
+        tenantId: command.tenantId,
+        businessId: command.businessId,
+        callId: command.callId,
+        status,
+      });
+      throw new TenantNotServiceableError(command.tenantId, status);
+    }
 
     const capacity = await this.capacityConfig.getActiveConfig(
       command.tenantId,
@@ -175,6 +200,7 @@ export class StartConversationUseCase {
         startedAt: now,
         endedAt: null,
         endReason: null,
+        version: 1,
       });
 
       return this.publishStarted(conversation, now);

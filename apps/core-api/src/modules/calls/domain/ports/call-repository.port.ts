@@ -41,13 +41,28 @@ export interface CallRepository {
   create(db: Db, input: CreateCallInput): Promise<Call>;
   findById(db: Db, tenantId: string, id: string): Promise<Call | null>;
   findByTelephonyCallSid(db: Db, tenantId: string, telephonyCallSid: string): Promise<Call | null>;
+  /**
+   * Compare-and-swap on `fromStatus`, same discipline as
+   * PrismaLeadRepository's own `updateStatus` (leads/infrastructure/
+   * prisma-lead.repository.ts) — an `updateMany({ where: { id, tenantId,
+   * status: fromStatus } })`, never a blind `update()`. Returns `null`
+   * (rather than throwing, unlike the Lead repository's own
+   * ConcurrentLeadModificationError) when the row's status was no longer
+   * `fromStatus` at write time, so EndCallUseCase can distinguish "another
+   * request already landed the exact same target status" (a benign,
+   * legitimate race — the Voice Runtime may signal call-ended twice) from
+   * "another request landed a genuinely conflicting terminal status" (a
+   * real 409) — a distinction the Lead repository's own callers don't need
+   * to make the same way.
+   */
   updateStatus(
     db: Db,
     tenantId: string,
     id: string,
-    status: CallStatus,
+    fromStatus: CallStatus,
+    toStatus: CallStatus,
     fields: { endReason?: string | undefined; endedAt?: string | undefined },
-  ): Promise<Call>;
+  ): Promise<Call | null>;
   /** Dispatcher-facing call inbox + the dashboard's activeCallsCount/callsToday composition — filterable by status/createdAt, mirrors ListLeadsUseCase's own repository call exactly. */
   listByBusiness(
     db: Db,

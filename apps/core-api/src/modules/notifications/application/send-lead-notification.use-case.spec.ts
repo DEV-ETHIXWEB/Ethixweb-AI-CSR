@@ -374,6 +374,100 @@ describe("SendLeadNotificationUseCase", () => {
     expect(flaky.send).toHaveBeenCalledTimes(3);
   }, 10000);
 
+  it(
+    "NO SILENT GAP: warns loudly when a lead has zero active notification channels configured " +
+      "— found live: this used to be an indistinguishable-from-success silent no-op, meaning an " +
+      "emergency-priority lead could reach zero humans with nothing anywhere saying so",
+    async () => {
+      const channelRepository = new FakeNotificationChannelRepository();
+      // Deliberately NOT seeding any channel for this business.
+      const logger = createNoopLogger();
+      const warnSpy = jest.spyOn(logger, "warn");
+      const useCase = new SendLeadNotificationUseCase(
+        new FakeTenantContextService() as unknown as TenantContextService,
+        channelRepository,
+        new FakeNotificationRepository(),
+        new ChannelSenderRegistry(),
+        fakeLead(),
+        fakeCustomer(),
+        fakeClaimMappingStore().store,
+        logger,
+      );
+
+      const outcomes = await useCase.execute({
+        tenantId: "tenant-1",
+        businessId: "business-1",
+        leadId: "lead-1",
+      });
+
+      expect(outcomes).toEqual([]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("NO active channels"),
+        expect.objectContaining({ tenantId: "tenant-1", leadId: "lead-1" }),
+      );
+    },
+  );
+
+  it(
+    "CONNECTION-POOL SAFETY: the sender.send() call happens between two SEPARATE " +
+      "tenantContext.run transactions, never nested inside one held open for its duration — " +
+      "see this use case's own comment on why a single wrapping transaction would leave a real " +
+      "Postgres connection held open across every sender's retry budget",
+    async () => {
+      const channelRepository = new FakeNotificationChannelRepository();
+      channelRepository.seed({
+        id: "chan-1",
+        tenantId: "tenant-1",
+        businessId: "business-1",
+        channelType: "sms",
+        destination: { phone: "+15559999999" },
+        isActive: true,
+        priorityOrder: 0,
+      });
+      const registry = new ChannelSenderRegistry();
+      const sms = fakeSender("sms");
+      registry.register(sms.sender);
+      const tenantContext = new FakeTenantContextService() as unknown as TenantContextService;
+      const useCase = new SendLeadNotificationUseCase(
+        tenantContext,
+        channelRepository,
+        new FakeNotificationRepository(),
+        registry,
+        fakeLead(),
+        fakeCustomer(),
+        fakeClaimMappingStore().store,
+        createNoopLogger(),
+      );
+      const events: string[] = [];
+      jest.spyOn(tenantContext, "run").mockImplementation(async (_tenantId, work) => {
+        events.push("run:start");
+        const result = await (work as (db: never) => Promise<unknown>)({
+          $executeRaw: async () => 0,
+        } as never);
+        events.push("run:end");
+        return result;
+      });
+      sms.send.mockImplementation(async () => {
+        events.push("send:start");
+        events.push("send:end");
+        return { success: true };
+      });
+
+      await useCase.execute({ tenantId: "tenant-1", businessId: "business-1", leadId: "lead-1" });
+
+      expect(events).toEqual([
+        "run:start",
+        "run:end", // execute()'s own channel-list read — its own, already-closed transaction
+        "run:start",
+        "run:end", // reserving the Notification row (dedup check) — its own, already-closed transaction
+        "send:start",
+        "send:end", // the sender call — no transaction open around it at all
+        "run:start",
+        "run:end", // marking the notification sent — a fresh, separate transaction
+      ]);
+    },
+  );
+
   it("moves a notification to dead_letter once the retry budget is exhausted, surfacing the real failure reason", async () => {
     const channelRepository = new FakeNotificationChannelRepository();
     channelRepository.seed({

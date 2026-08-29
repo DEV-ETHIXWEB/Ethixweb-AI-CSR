@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { TenantsModule } from "../tenants/tenants.module";
 import { EscalateEmergencyUseCase } from "./application/escalate-emergency.use-case";
 import { GetBusinessHoursUseCase } from "./application/get-business-hours.use-case";
 import { ResolveOnCallUseCase } from "./application/resolve-oncall.use-case";
@@ -12,6 +13,7 @@ import { EmergencyRulesController } from "./interfaces/emergency-rules.controlle
 import { EmergencyRulesToolController } from "./interfaces/emergency-rules-tool.controller";
 
 @Module({
+  imports: [TenantsModule],
   controllers: [EmergencyRulesController, EmergencyRulesToolController],
   providers: [
     { provide: EMERGENCY_RULE_REPOSITORY, useClass: PrismaEmergencyRuleRepository },

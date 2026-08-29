@@ -3,16 +3,19 @@ import { CallNotFoundForLeadError, CustomerNotFoundForLeadError } from "../domai
 import { createNoopLogger } from "./__fakes__/fake-logger";
 import { FakeCrmLeadSyncPort } from "./__fakes__/fake-crm-lead-sync-port";
 import { FakeCustomerLookupPort } from "./__fakes__/fake-customer-lookup-port";
+import { FakeGetCallUseCase } from "./__fakes__/fake-get-call-use-case";
 import { FakeLeadRepository } from "./__fakes__/fake-lead-repository";
 import { FakeOutboxWriterFactory } from "./__fakes__/fake-outbox-writer-factory";
 import { FakeTenantContextService } from "./__fakes__/fake-tenant-context";
 import { CreateLeadUseCase, type CreateLeadCommand } from "./create-lead.use-case";
+import type { GetCallUseCase } from "../../calls/application/get-call.use-case";
 
 function buildUseCase(
   leadRepository = new FakeLeadRepository(),
   customerLookupPort = new FakeCustomerLookupPort(),
   crmLeadSyncPort = new FakeCrmLeadSyncPort(),
   outboxWriterFactory = new FakeOutboxWriterFactory(),
+  getCallUseCase = new FakeGetCallUseCase(),
 ) {
   return new CreateLeadUseCase(
     new FakeTenantContextService() as unknown as TenantContextService,
@@ -20,6 +23,7 @@ function buildUseCase(
     customerLookupPort,
     crmLeadSyncPort,
     outboxWriterFactory,
+    getCallUseCase as unknown as GetCallUseCase,
     createNoopLogger(),
   );
 }
@@ -106,6 +110,81 @@ describe("CreateLeadUseCase", () => {
     },
   );
 
+  it(
+    "SECURITY REGRESSION: rejects a callId that belongs to a DIFFERENT tenant, even though the " +
+      "customer/business in the command are the caller's own valid ones — found live under " +
+      "adversarial testing: tenant A could otherwise create a Lead keyed by tenant B's real " +
+      "callId (cross-tenant data corruption), and because leads.call_id is a correct GLOBAL " +
+      "unique constraint (Call.id is already globally unique), that row then permanently blocked " +
+      "tenant B from ever creating their OWN legitimate lead for that call — tenant B's insert hit " +
+      "the same constraint, but the RLS-scoped recovery read found nothing (the row belongs to " +
+      "tenant A), surfacing as an unhandled 500 rather than a clean rejection",
+    async () => {
+      const customerLookupPort = new FakeCustomerLookupPort();
+      seedCustomer(customerLookupPort);
+      const getCallUseCase = new FakeGetCallUseCase();
+      getCallUseCase.seed({
+        id: "call-1",
+        tenantId: "some-other-tenant",
+        businessId: "business-1",
+        customerId: "customer-1",
+        direction: "inbound",
+        fromNumber: "+15551234567",
+        toNumber: "+15559876543",
+        telephonyCallSid: "CAfake-other-tenant",
+        status: "in_progress",
+        endReason: null,
+        durationSeconds: null,
+        startedAt: new Date().toISOString(),
+        endedAt: null,
+      });
+      const useCase = buildUseCase(
+        new FakeLeadRepository(),
+        customerLookupPort,
+        new FakeCrmLeadSyncPort(),
+        new FakeOutboxWriterFactory(),
+        getCallUseCase,
+      );
+
+      await expect(useCase.execute(baseCommand())).rejects.toThrow(CallNotFoundForLeadError);
+    },
+  );
+
+  it(
+    "SECURITY REGRESSION: rejects a callId that belongs to the caller's own tenant but a " +
+      "DIFFERENT business — same vulnerability class as the cross-tenant case above, one level " +
+      "narrower (a multi-business tenant referencing another of its own businesses' calls)",
+    async () => {
+      const customerLookupPort = new FakeCustomerLookupPort();
+      seedCustomer(customerLookupPort);
+      const getCallUseCase = new FakeGetCallUseCase();
+      getCallUseCase.seed({
+        id: "call-1",
+        tenantId: "tenant-1",
+        businessId: "some-other-business",
+        customerId: "customer-1",
+        direction: "inbound",
+        fromNumber: "+15551234567",
+        toNumber: "+15559876543",
+        telephonyCallSid: "CAfake-other-business",
+        status: "in_progress",
+        endReason: null,
+        durationSeconds: null,
+        startedAt: new Date().toISOString(),
+        endedAt: null,
+      });
+      const useCase = buildUseCase(
+        new FakeLeadRepository(),
+        customerLookupPort,
+        new FakeCrmLeadSyncPort(),
+        new FakeOutboxWriterFactory(),
+        getCallUseCase,
+      );
+
+      await expect(useCase.execute(baseCommand())).rejects.toThrow(CallNotFoundForLeadError);
+    },
+  );
+
   it("never blocks lead creation when the CRM sync fails — records a local-only lead with crmLeadId null", async () => {
     const customerLookupPort = new FakeCustomerLookupPort();
     seedCustomer(customerLookupPort);
@@ -181,6 +260,52 @@ describe("CreateLeadUseCase", () => {
         },
       );
       expect(total).toBe(1);
+    },
+  );
+
+  it(
+    "REGRESSION: issues SAVEPOINT before the insert attempt and ROLLBACK TO SAVEPOINT before " +
+      "the recovery read on a call_id race — without this, the recovery read runs inside a " +
+      "Postgres transaction Postgres itself already aborted after the constraint violation " +
+      "(25P02: 'current transaction is aborted'), which a mocked repository can never simulate " +
+      "but genuine concurrent load against real Postgres hit immediately (found and fixed as a " +
+      "real production-blocking bug, not a theoretical one)",
+    async () => {
+      const executedRawStatements: string[] = [];
+      const fakeDb = {
+        $executeRaw: (strings: TemplateStringsArray) => {
+          executedRawStatements.push(strings.join(""));
+          return Promise.resolve(0);
+        },
+      };
+      const tenantContext = {
+        run: async <T>(_tenantId: string, work: (db: unknown) => Promise<T>): Promise<T> =>
+          work(fakeDb),
+      };
+      const leadRepository = new FakeLeadRepository();
+      const customerLookupPort = new FakeCustomerLookupPort();
+      seedCustomer(customerLookupPort);
+      const useCase = new CreateLeadUseCase(
+        tenantContext as unknown as TenantContextService,
+        leadRepository,
+        customerLookupPort,
+        new FakeCrmLeadSyncPort(),
+        new FakeOutboxWriterFactory(),
+        new FakeGetCallUseCase() as unknown as GetCallUseCase,
+        createNoopLogger(),
+      );
+      const command = baseCommand();
+
+      await Promise.all([useCase.execute(command), useCase.execute(command)]);
+
+      expect(executedRawStatements).toContain("SAVEPOINT create_lead_attempt");
+      expect(executedRawStatements).toContain("ROLLBACK TO SAVEPOINT create_lead_attempt");
+      // The SAVEPOINT must precede its own ROLLBACK for the losing call.
+      const savepointIndex = executedRawStatements.indexOf("SAVEPOINT create_lead_attempt");
+      const rollbackIndex = executedRawStatements.indexOf(
+        "ROLLBACK TO SAVEPOINT create_lead_attempt",
+      );
+      expect(savepointIndex).toBeLessThan(rollbackIndex);
     },
   );
 

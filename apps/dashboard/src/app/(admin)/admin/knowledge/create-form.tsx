@@ -23,7 +23,7 @@ export function CreateKnowledgeForm({ businessId }: { businessId: string }) {
 
       {state.error ? <div style={errorStyle}>{state.error}</div> : null}
       {state.ok ? (
-        <div style={successStyle}>Added as draft — approve it below to make it live.</div>
+        <div style={successStyle}>Added as draft. Approve it below to make it live.</div>
       ) : null}
 
       <div style={rowStyle}>
@@ -31,13 +31,27 @@ export function CreateKnowledgeForm({ businessId }: { businessId: string }) {
           <label style={labelStyle} htmlFor="category">
             Category
           </label>
-          <input id="category" name="category" required style={inputStyle} placeholder="Services" />
+          <input
+            id="category"
+            name="category"
+            required
+            className="clay-input"
+            style={inputStyle}
+            placeholder="Services"
+          />
         </div>
         <div style={{ flex: 2 }}>
           <label style={labelStyle} htmlFor="title">
             Title
           </label>
-          <input id="title" name="title" required style={inputStyle} placeholder="Drain cleaning" />
+          <input
+            id="title"
+            name="title"
+            required
+            className="clay-input"
+            style={inputStyle}
+            placeholder="Drain cleaning"
+          />
         </div>
       </div>
 
@@ -49,6 +63,7 @@ export function CreateKnowledgeForm({ businessId }: { businessId: string }) {
         name="content"
         required
         rows={3}
+        className="clay-input"
         style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
         placeholder="We provide same-day drain cleaning across the metro area."
       />
@@ -70,12 +85,18 @@ export function CreateKnowledgeForm({ businessId }: { businessId: string }) {
             type="number"
             defaultValue={0}
             min={0}
+            className="clay-input"
             style={{ ...inputStyle, width: 64 }}
           />
         </div>
       </div>
 
-      <button type="submit" disabled={pending} style={submitStyle}>
+      <button
+        type="submit"
+        disabled={pending}
+        className="clay-btn clay-btn-primary"
+        style={submitStyle}
+      >
         {pending ? "Adding…" : "Add as draft"}
       </button>
     </form>
@@ -90,9 +111,7 @@ const labelStyle: React.CSSProperties = {
 };
 const inputStyle: React.CSSProperties = {
   width: "100%",
-  padding: "7px 10px",
-  border: "1px solid var(--border)",
-  borderRadius: 6,
+  padding: "8px 11px",
   fontSize: "0.85rem",
   marginBottom: 10,
 };
@@ -104,28 +123,22 @@ const checkboxStyle: React.CSSProperties = {
   fontSize: "0.8rem",
 };
 const submitStyle: React.CSSProperties = {
-  padding: "8px 14px",
-  background: "var(--accent)",
-  color: "#fff",
-  border: "none",
-  borderRadius: 6,
+  padding: "9px 16px",
   fontSize: "0.85rem",
-  fontWeight: 600,
-  cursor: "pointer",
 };
 const errorStyle: React.CSSProperties = {
   background: "var(--danger-soft)",
   color: "var(--danger)",
-  padding: "8px 12px",
-  borderRadius: 6,
+  padding: "9px 12px",
+  borderRadius: "var(--radius-sm)",
   fontSize: "0.8rem",
   marginBottom: 10,
 };
 const successStyle: React.CSSProperties = {
-  background: "var(--accent-soft)",
-  color: "var(--accent)",
-  padding: "8px 12px",
-  borderRadius: 6,
+  background: "var(--success-soft)",
+  color: "var(--success)",
+  padding: "9px 12px",
+  borderRadius: "var(--radius-sm)",
   fontSize: "0.8rem",
   marginBottom: 10,
 };

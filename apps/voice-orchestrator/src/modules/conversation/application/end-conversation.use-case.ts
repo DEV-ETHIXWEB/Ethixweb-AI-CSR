@@ -12,7 +12,7 @@ import {
   type CallAdmissionPort,
 } from "../../capacity/domain/call-admission.port";
 import type { Conversation } from "../domain/conversation.entity";
-import { ConversationNotFoundError } from "../domain/errors";
+import { ConversationNotFoundError, ConversationSaveConflictError } from "../domain/errors";
 import {
   CONVERSATION_REPOSITORY,
   type ConversationRepository,
@@ -88,7 +88,28 @@ export class EndConversationUseCase {
     conversation.state = "ended";
     conversation.endedAt = now;
     conversation.endReason = command.endReason;
-    const saved = await this.repository.save(conversation);
+
+    const directSave = await this.repository.save(conversation);
+    let saved: Conversation;
+    if (directSave) {
+      saved = directSave;
+    } else {
+      const resolved = await this.resolveLostRace(command, now);
+      if (resolved.alreadyEndedByOther) {
+        // A concurrent writer already ended this conversation before this
+        // request's own write landed — idempotent no-op, identical in
+        // spirit to the up-front `conversation.endedAt` check above. Must
+        // NOT fall through to the best-effort side effects/event publish
+        // below: those already ran (or are running) for the winner's own
+        // request: an earlier version of this fix got exactly this wrong,
+        // by resolving to the winner's Conversation but still unconditionally
+        // re-running every side effect and re-publishing conversation.ended
+        // for a request that actually lost the race — caught by this
+        // class's own lost-CAS-race spec before it shipped.
+        return resolved.conversation;
+      }
+      saved = resolved.conversation;
+    }
 
     await this.endCallBestEffort(saved, now, command.endReason);
     await this.recordCallDurationUsageBestEffort(saved, now);
@@ -108,6 +129,43 @@ export class EndConversationUseCase {
     });
 
     return saved;
+  }
+
+  /**
+   * A concurrent writer (typically a still-in-flight HandleTurnUseCase's
+   * end-of-turn `save()`, racing this end signal — e.g. the caller hangs up
+   * while a slow tool call is still running) already saved a newer version
+   * before this request's CAS write landed. Re-reads and resolves it
+   * exactly like a fresh call to this use-case would: idempotent no-op if
+   * the winner was ALSO an end (a legitimate duplicate hangup signal), or a
+   * single reapply of this end mutation on top of the winner's version if
+   * it wasn't. Unlike EndCallUseCase's identical-shaped re-read (which is
+   * provably sufficient because terminal call statuses have no further
+   * outgoing transitions), a conversation's `state` has no such invariant —
+   * so this second save can itself lose a race, which throws
+   * ConversationSaveConflictError rather than looping, since a THIRD
+   * concurrent writer in the same instant is not a scenario worth silently
+   * retrying forever for.
+   */
+  private async resolveLostRace(
+    command: EndConversationCommand,
+    now: string,
+  ): Promise<{ conversation: Conversation; alreadyEndedByOther: boolean }> {
+    const fresh = await this.repository.findById(command.tenantId, command.conversationId);
+    if (!fresh) {
+      throw new ConversationNotFoundError(command.conversationId);
+    }
+    if (fresh.endedAt) {
+      return { conversation: fresh, alreadyEndedByOther: true };
+    }
+    fresh.state = "ended";
+    fresh.endedAt = now;
+    fresh.endReason = command.endReason;
+    const saved = await this.repository.save(fresh);
+    if (!saved) {
+      throw new ConversationSaveConflictError(command.conversationId);
+    }
+    return { conversation: saved, alreadyEndedByOther: false };
   }
 
   private async endCallBestEffort(

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
@@ -9,7 +10,7 @@ import type { SessionData } from "@/lib/session";
 interface NavItem {
   label: string;
   href: string;
-  /** Roles allowed to see this item — omit for "every authenticated role." */
+  /** Roles allowed to see this item, omit for "every authenticated role." */
   roles?: SessionData["role"][];
 }
 
@@ -57,10 +58,21 @@ export function NavShell({
   return (
     <div style={styles.shell}>
       <aside style={styles.sidebar}>
-        <div style={styles.brand}>Ethixweb Operations</div>
+        <div style={styles.brandRow}>
+          <Image
+            src="/ethixweb-wordmark.png"
+            alt="Ethixweb"
+            width={148}
+            height={22}
+            priority
+            style={styles.brandWordmark}
+          />
+          <span style={styles.brandSubtitle}>Operations</span>
+        </div>
 
         {businesses.length > 1 ? (
           <select
+            className="clay-input"
             style={styles.businessSelect}
             value={activeBusinessId}
             onChange={(e) => handleBusinessChange(e.target.value)}
@@ -96,7 +108,11 @@ export function NavShell({
         <div style={styles.userFooter}>
           <div style={styles.userEmail}>{session.email}</div>
           <div style={styles.userRole}>{session.role}</div>
-          <button style={styles.logoutButton} onClick={handleLogout}>
+          <button
+            className="clay-btn clay-btn-secondary"
+            style={styles.logoutButton}
+            onClick={handleLogout}
+          >
             Sign out
           </button>
         </div>
@@ -109,62 +125,77 @@ export function NavShell({
 const styles = {
   shell: { display: "flex", minHeight: "100vh" },
   sidebar: {
-    width: 220,
+    width: 232,
     flex: "none",
     background: "var(--surface)",
-    borderRight: "1px solid var(--border)",
+    borderRight: "1px solid var(--border-soft)",
+    boxShadow: "1px 0 0 oklch(100% 0 0 / .6), 4px 0 24px -12px oklch(16% .02 275 / .12)",
     display: "flex",
     flexDirection: "column",
-    padding: "20px 14px",
+    padding: "22px 16px",
   },
-  brand: { fontSize: "0.92rem", fontWeight: 700, marginBottom: 16, padding: "0 6px" },
+  brandRow: {
+    display: "flex",
+    alignItems: "baseline",
+    gap: 8,
+    marginBottom: 20,
+    padding: "0 4px",
+  },
+  brandWordmark: { display: "block", width: "auto" },
+  brandSubtitle: {
+    fontSize: "0.7rem",
+    fontWeight: 600,
+    color: "var(--ink-faint)",
+    letterSpacing: "0.01em",
+  },
   businessSelect: {
-    marginBottom: 16,
-    padding: "6px 8px",
-    borderRadius: 6,
-    border: "1px solid var(--border)",
+    width: "100%",
+    marginBottom: 18,
+    padding: "8px 10px",
     fontSize: "0.8rem",
   },
   businessSingle: {
-    marginBottom: 16,
-    padding: "6px 8px",
+    marginBottom: 18,
+    padding: "8px 10px",
     fontSize: "0.8rem",
+    fontWeight: 600,
     color: "var(--ink-soft)",
+    background: "var(--surface-sunken)",
+    borderRadius: "var(--radius-sm)",
   },
   nav: { display: "flex", flexDirection: "column", gap: 2, flex: 1 },
   navLink: {
-    padding: "8px 10px",
-    borderRadius: 6,
+    padding: "9px 12px",
+    borderRadius: "var(--radius-sm)",
     fontSize: "0.85rem",
+    fontWeight: 500,
     textDecoration: "none",
-    color: "var(--ink)",
+    color: "var(--ink-soft)",
+    transition: "background 0.12s ease, color 0.12s ease",
   },
   navLinkActive: {
-    background: "var(--accent-soft)",
-    color: "var(--accent)",
-    fontWeight: 600,
+    background: "var(--primary-soft)",
+    color: "var(--primary)",
+    fontWeight: 700,
+    boxShadow: "inset 0 1px oklch(100% 0 0 / .6)",
   },
   userFooter: {
-    borderTop: "1px solid var(--border)",
-    paddingTop: 12,
-    marginTop: 12,
+    borderTop: "1px solid var(--border-soft)",
+    paddingTop: 14,
+    marginTop: 14,
   },
   userEmail: { fontSize: "0.78rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" },
   userRole: {
-    fontSize: "0.68rem",
-    color: "var(--ink-soft)",
+    fontSize: "0.66rem",
+    color: "var(--ink-faint)",
     textTransform: "uppercase",
-    letterSpacing: "0.03em",
-    marginBottom: 8,
+    letterSpacing: "0.04em",
+    marginBottom: 10,
   },
   logoutButton: {
     width: "100%",
-    padding: "6px 10px",
-    background: "transparent",
-    border: "1px solid var(--border)",
-    borderRadius: 6,
+    padding: "8px 10px",
     fontSize: "0.78rem",
-    cursor: "pointer",
   },
-  content: { flex: 1, padding: "28px 32px", maxWidth: 1200 },
+  content: { flex: 1, padding: "28px 32px", maxWidth: 1240 },
 } satisfies Record<string, React.CSSProperties>;

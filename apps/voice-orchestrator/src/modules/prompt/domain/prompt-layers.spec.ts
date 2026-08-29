@@ -34,4 +34,12 @@ describe("assembleLayeredPrompt", () => {
     expect(result).not.toContain("[BUSINESS OVERRIDE]");
     expect(result).toContain("[RUNTIME CONTEXT]");
   });
+
+  it("instructs the model to reflect escalateEmergency's decision in createLead's priority field — the only thing that actually drives a human notification's urgency (docs/07 §5.1)", () => {
+    expect(PLATFORM_BASE_PROMPT_V1).toContain("createLead");
+    expect(PLATFORM_BASE_PROMPT_V1).toContain('"emergency"');
+    expect(PLATFORM_BASE_PROMPT_V1).toContain('"urgent"');
+    expect(PLATFORM_BASE_PROMPT_V1).toContain("forward_call");
+    expect(PLATFORM_BASE_PROMPT_V1).toContain("priority_notify");
+  });
 });

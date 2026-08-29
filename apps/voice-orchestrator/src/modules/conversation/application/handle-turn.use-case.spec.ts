@@ -45,6 +45,7 @@ function baseConversation(overrides: Partial<Conversation> = {}): Conversation {
     endedAt: null,
     capacityReservationId: "reservation-1",
     endReason: null,
+    version: 1,
     ...overrides,
   };
 }
@@ -204,13 +205,16 @@ describe("HandleTurnUseCase", () => {
     expect(saved?.leadId).toBe("lead-1");
   });
 
-  it("surfaces transferTargets on the turn result when escalateEmergency returns forward_call", async () => {
+  it("surfaces escalation on the result when escalateEmergency succeeds with isEmergency true", async () => {
     const repository = new FakeConversationRepository();
     repository.seed(baseConversation());
     const aiProvider = new FakeAiProvider();
     aiProvider.responses = [
       [
-        { type: "tool_call", toolCall: { id: "call-1", name: "escalateEmergency", arguments: {} } },
+        {
+          type: "tool_call",
+          toolCall: { id: "call-1", name: "escalateEmergency", arguments: {} },
+        },
         { type: "done", stopReason: "tool_use" },
       ],
       [
@@ -223,7 +227,7 @@ describe("HandleTurnUseCase", () => {
         isEmergency: true,
         severity: "critical",
         action: "forward_call",
-        transferTargets: ["+15551234567"],
+        transferDestination: "+15559876543",
       }),
     };
     const { useCase } = buildUseCase({
@@ -233,20 +237,71 @@ describe("HandleTurnUseCase", () => {
     });
 
     const result = await useCase.execute(
-      baseCommand({ transcript: "there's a gas leak", allowedTools: ["escalateEmergency"] }),
+      baseCommand({ transcript: "burst pipe flooding now", allowedTools: ["escalateEmergency"] }),
     );
 
-    expect(result.transferTargets).toEqual(["+15551234567"]);
+    // transferDestination (the real, currently-on-call phone number core-api
+    // resolved via ResolveOnCallUseCase) must flow all the way through to
+    // the HTTP-visible result — this is what lets the Voice Runtime
+    // actually transfer to the right destination instead of falling back
+    // to its own static env var.
+    expect(result.escalation).toEqual({
+      severity: "critical",
+      action: "forward_call",
+      transferDestination: "+15559876543",
+    });
   });
 
-  it("leaves transferTargets null when no tool call escalates with forward_call", async () => {
+  it("surfaces escalation with transferDestination: null when core-api couldn't resolve an on-call target", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        {
+          type: "tool_call",
+          toolCall: { id: "call-1", name: "escalateEmergency", arguments: {} },
+        },
+        { type: "done", stopReason: "tool_use" },
+      ],
+      [
+        { type: "text_delta", text: "Connecting you now." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const escalateHandler = {
+      execute: jest.fn().mockResolvedValue({
+        isEmergency: true,
+        severity: "critical",
+        action: "forward_call",
+        transferDestination: null,
+      }),
+    };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "escalateEmergency", handler: escalateHandler }],
+    });
+
+    const result = await useCase.execute(
+      baseCommand({ transcript: "burst pipe flooding now", allowedTools: ["escalateEmergency"] }),
+    );
+
+    expect(result.escalation).toEqual({
+      severity: "critical",
+      action: "forward_call",
+      transferDestination: null,
+    });
+  });
+
+  it("omits escalation from the result when no tool call escalates", async () => {
     const repository = new FakeConversationRepository();
     repository.seed(baseConversation());
     const { useCase } = buildUseCase({ repository });
 
-    const result = await useCase.execute(baseCommand({ transcript: "just a routine question" }));
+    const result = await useCase.execute(baseCommand());
 
-    expect(result.transferTargets).toBeNull();
+    expect(result.escalation).toBeUndefined();
   });
 
   it("stops the loop and marks interrupted when the abort signal fires mid-stream", async () => {
@@ -271,6 +326,54 @@ describe("HandleTurnUseCase", () => {
     expect(result.responseText).toBe("Sorry, let me");
   });
 
+  /**
+   * Regression coverage for a real, live-reproducible bug found while
+   * auditing the complete inbound-call path end to end: with every LLM
+   * provider unavailable (this exact repo's own local dev environment has
+   * zero OPENAI_API_KEY/ANTHROPIC_API_KEY/GEMINI_API_KEY configured right
+   * now), FallbackAiProvider yields a single `{type: "error"}` chunk and
+   * nothing else. Before this fix, that produced a "successful" 200
+   * HandleTurnResult with responseText: "" and interrupted: false — the
+   * Voice Runtime's `if (turnResult.responseText) { speak(...) }` treats
+   * that as "nothing to say," leaving a real caller in silent dead air
+   * indefinitely, with no apology and no retry ever triggered.
+   */
+  it("THROWS (rather than silently returning an empty success) when the AI provider layer reports an error and produces no usable text or tool calls", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        {
+          type: "error",
+          message: "All AI providers failed or are unavailable: ",
+          retryable: false,
+        },
+      ],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    await expect(useCase.execute(baseCommand())).rejects.toThrow(/AI provider completion failed/);
+  });
+
+  it("does NOT throw when a provider error arrives only AFTER real text already streamed — that partial text is preserved, not discarded", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "Let me check that for" },
+        { type: "error", message: "connection reset mid-stream", retryable: false },
+      ],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    const result = await useCase.execute(baseCommand());
+
+    expect(result.responseText).toBe("Let me check that for");
+    expect(result.interrupted).toBe(false);
+  });
+
   it("compresses the message history before each provider call once it exceeds the context window", async () => {
     const repository = new FakeConversationRepository();
     const longHistory = Array.from({ length: 45 }, (_unused, index) => ({
@@ -285,6 +388,76 @@ describe("HandleTurnUseCase", () => {
 
     const sentMessages = aiProvider.requests[0]?.messages ?? [];
     expect(sentMessages.length).toBeLessThan(longHistory.length + 1);
+  });
+
+  describe("lost CAS race against a concurrent conversation write", () => {
+    // Regression tests for a real bug: a turn's runTurn() can take seconds
+    // (LLM streaming, tool calls) between reading the conversation and its
+    // final save() — long enough for the caller to hang up mid-turn and
+    // EndConversationUseCase to save first. Without a CAS, this turn's
+    // final save() would silently last-write-wins clobber `endedAt` back to
+    // null, resurrecting an ended conversation.
+
+    it("discards this turn's state update without throwing when the conversation ended mid-turn", async () => {
+      const repository = new FakeConversationRepository();
+      const seeded = baseConversation();
+      repository.seed(seeded);
+      const { useCase } = buildUseCase({ repository });
+      const originalSave = repository.save.bind(repository);
+      repository.save = async (conversation) => {
+        // Simulate EndConversationUseCase winning the race right as this
+        // turn's own final save() runs.
+        await originalSave({
+          ...seeded,
+          state: "ended",
+          endedAt: "2026-01-01T00:00:00.000Z",
+          endReason: "caller_hangup",
+        });
+        return originalSave(conversation);
+      };
+
+      // The response text was very likely already streamed to the caller
+      // before the hangup was processed — the turn must still return it,
+      // not throw, even though its state update is about to be discarded.
+      const result = await useCase.execute(baseCommand());
+      expect(result.responseText).toBe("hi");
+
+      const stored = await repository.findById("tenant-1", "conv-1");
+      expect(stored?.endedAt).toBe("2026-01-01T00:00:00.000Z");
+      expect(stored?.endReason).toBe("caller_hangup");
+      // This turn's own transcript update must NOT have been written on
+      // top of — the ended conversation must not be resurrected.
+      expect(stored?.state).toBe("ended");
+    });
+
+    it("retries once and succeeds when a benign concurrent write (not an end) landed first, preserving that write's state", async () => {
+      const repository = new FakeConversationRepository();
+      const seeded = baseConversation();
+      repository.seed(seeded);
+      const { useCase } = buildUseCase({ repository });
+      const originalSave = repository.save.bind(repository);
+      let firstAttempt = true;
+      repository.save = async (conversation) => {
+        if (firstAttempt) {
+          firstAttempt = false;
+          // A concurrent POST /:id/interrupt (TransitionConversationStateUseCase)
+          // bumps the version and changes `state` without ending the conversation.
+          await originalSave({ ...seeded, state: "identifying" });
+        }
+        return originalSave(conversation);
+      };
+
+      const result = await useCase.execute(baseCommand());
+
+      expect(result.responseText).toBe("hi");
+      const stored = await repository.findById("tenant-1", "conv-1");
+      expect(stored?.transcript.map((t) => t.speaker)).toEqual(["caller", "agent"]);
+      expect(stored?.endedAt).toBeNull();
+      // This use case doesn't own `state` — the concurrent writer's value
+      // must survive the retry, not get silently overwritten by this
+      // turn's own stale ("greeting") copy of it.
+      expect(stored?.state).toBe("identifying");
+    });
   });
 
   describe("turn-level idempotency", () => {

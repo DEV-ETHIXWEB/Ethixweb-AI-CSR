@@ -1,4 +1,13 @@
-# 28 — Voice Runtime Integration Package (for Yash)
+# 28 — Voice Runtime Integration Package
+
+**Historical framing note**: this was originally written for an external
+integrator ("Yash") to wire a separate, not-yet-built runtime against
+`voice-orchestrator`. That plan changed with Phase 15B — `apps/voice-runtime`
+in this repo is now that runtime, self-owned by Akash (this project's sole
+owner), and it implements this exact contract. The contract itself below
+remains the accurate, current interface spec (still worth reading in full
+if extending or debugging `apps/voice-runtime`'s own integration with
+`voice-orchestrator`); only the "for an external party" framing is stale.
 
 This is the complete, standalone contract for connecting a real Voice Runtime (Twilio + LiveKit + Deepgram, or any equivalent telephony/STT/TTS stack) to `apps/voice-orchestrator`. You should not need to read any other file in this backend to wire your runtime against it — everything here is either copied verbatim from the real, tested DTOs/guards/use-cases, or explicitly marked as not yet verified against a live system.
 
@@ -124,6 +133,21 @@ Deliberately **excluded** from this response: the system prompt and raw message 
 
 `toolCallsExecuted` lists every tool name the model _requested_ this turn (including ones later rejected — see the note in [27-phase10-runtime-integration-e2e.md](27-phase10-runtime-integration-e2e.md) §5). Useful for your own logging; you never need to act on it.
 
+**`escalation` (optional field, added for the voice-runtime build — Phase 15B)**: present only on the turn where `escalateEmergency` succeeded with `isEmergency: true`. Absent (not `null`) on every other turn — check with `if (response.escalation)`, not a null check.
+
+```json
+{
+  "conversationId": "...",
+  "responseText": "Okay, I'm connecting you to someone right now, please stay on the line.",
+  "toolCallsExecuted": ["escalateEmergency"],
+  "interrupted": false,
+  "state": "emergency_transfer",
+  "escalation": { "severity": "critical", "action": "forward_call" }
+}
+```
+
+This closes a real, previously-open gap: earlier revisions of this document said "the tool result itself signals this to your runtime" (§M), but the actual `TurnResultResponseDto` had no such field — only an internal `escalation.triggered` event existed, which an out-of-process HTTP client cannot subscribe to. `action` is one of `EmergencyAction` (`forward_call`, `priority_notify`, `standard_lead` — see `apps/voice-orchestrator/src/modules/tool-broker/application/handlers/escalate-emergency.handler.ts`); only `forward_call` requires your runtime to execute a transfer. `severity` is `critical` | `high` | `medium`, informational.
+
 ## D. Authentication
 
 Single shared bearer token, every request, every endpoint except `GET /healthz` and `GET /readyz`:
@@ -188,7 +212,9 @@ If your runtime's process crashes and restarts mid-call, it currently has no way
 
 ## M. Emergency behavior
 
-You do not detect emergencies — the model does, via the `escalateEmergency` tool, which must be present in every turn's `allowedTools` list for a qualification-stage conversation. When the model calls it and gets back `action: "forward_call"`, that is a signal **to your runtime**, not an automatic action this backend takes — you are responsible for executing the actual SIP transfer/call-forward. This mechanism has **not been verified against a live SIP trunk** in this environment (no live telephony available) — test it explicitly before relying on it for a real emergency call.
+You do not detect emergencies — the model does, via the `escalateEmergency` tool, which must be present in every turn's `allowedTools` list for a qualification-stage conversation. When the model calls it and gets back `action: "forward_call"`, that is a signal **to your runtime**, not an automatic action this backend takes — you are responsible for executing the actual SIP transfer/call-forward.
+
+The signal arrives as `escalation: {severity, action}` on that turn's `TurnResultResponseDto` (§C.2) — added in the voice-runtime build (Phase 15B) to close what was previously an undetectable gap (the tool result was only ever published as an internal event, never exposed over HTTP). This mechanism has **not been verified against a live SIP trunk** in this environment (no live telephony available) — test it explicitly before relying on it for a real emergency call.
 
 ## N. Error responses
 

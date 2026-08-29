@@ -1,4 +1,22 @@
-# 39 — Local Twilio Testing Runbook (preparation, not yet executable)
+# 39 — Local Twilio Testing Runbook (SUPERSEDED — see docs/41)
+
+**This entire document is historical.** It was written when the actual voice
+runtime was planned to be an external party's ("Yash's") separate,
+not-yet-built service — that plan changed with Phase 15B: `apps/voice-runtime`
+is now a real, self-owned service in this repo, built by Akash (the sole
+person handling this project — see this repo's own README and docs/00-INDEX.md
+for current ownership), not an external dependency. **Use
+[docs/41-first-local-real-call.md](41-first-local-real-call.md) instead** —
+it is the accurate, current, step-by-step runbook for exactly what this
+document was trying to prepare for, written against the real
+`apps/voice-runtime` that exists today.
+
+Kept below only as historical record of the original architecture reasoning
+(the intended chain, why Twilio's TwiML/webhook payload needs a translation
+layer voice-orchestrator itself deliberately doesn't have) — every specific
+claim about what is/isn't built is **stale**; do not follow the steps below.
+
+---
 
 This is a developer runbook for the eventual first real inbound call test, written now so the steps are ready the moment they become possible. **It does not describe working functionality today** — confirmed by direct audit before writing this: no Twilio Voice webhook route exists anywhere in this repository (only the unrelated `TwilioSignatureGuard`/`twilio-sms.sender.ts` for outbound SMS notifications, a completely different feature). The actual voice runtime — the thing a Twilio Voice webhook would need to reach — is Yash's, external to this repo, and does not exist yet (docs/29 Blocker 1). This document is preparation, not a claim that local Twilio testing works today.
 

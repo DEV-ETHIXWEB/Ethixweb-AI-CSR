@@ -19,6 +19,7 @@ function baseConversation(overrides: Partial<Conversation> = {}): Conversation {
     endedAt: null,
     capacityReservationId: "reservation-1",
     endReason: null,
+    version: 1,
     ...overrides,
   };
 }

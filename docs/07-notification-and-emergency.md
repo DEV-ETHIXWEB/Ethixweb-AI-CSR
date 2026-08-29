@@ -82,7 +82,7 @@ flowchart TB
     C -->|yes| E["severity from matched rule\n(critical / high / medium)"]
     E --> F{"severity == critical?"}
     F -->|yes| G["action: forward_call\n(immediate SIP transfer to\non-call rotation, per 5.3)"]
-    F -->|no| H["action: priority_notify\n(same pipeline as §2/§3,\nmarked urgent, higher-priority\nchannel ordering)"]
+    F -->|no| H["action: priority_notify\n(same pipeline as §2/§3 — every\nactive channel is notified, not\njust one. The platform-base system\nprompt explicitly instructs the AI\nto set createLead's priority to\n'urgent' when this fires — every\nchannel's rendered message then\nshows 'PRIORITY: URGENT' prominently.\nLLM-followed, not code-enforced —\nunlike forward_call, which the\nConversation Orchestrator executes\nitself regardless of what the model\ndoes next)"]
     G --> I{"business_hours + oncall\nconfig for this severity"}
     H --> I
     I --> J["Executed per business's\nconfigured schedule\n(business hours / after-hours /\nholiday — see 5.4)"]

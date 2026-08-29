@@ -33,6 +33,16 @@ export class CustomerCacheUpserter {
   ) {}
 
   async upsert(db: Db, input: CreateCustomerInput): Promise<UpsertResult> {
+    // A SAVEPOINT taken immediately before the insert attempt — Postgres
+    // aborts the ENTIRE enclosing transaction after any error (including a
+    // unique-constraint violation), so without this, the recovery
+    // findByPhone call below fails with `25P02: current transaction is
+    // aborted, commands ignored until end of transaction block` even though
+    // this looks like it's handling the race. Same real bug, found the same
+    // way, as CreateLeadUseCase.upsertByCallId's identical comment — see
+    // that one for the full explanation of why no mocked-repository unit
+    // test can catch this.
+    await db.$executeRaw`SAVEPOINT create_customer_attempt`;
     try {
       const customer = await this.customerRepository.create(db, input);
       return { customer, created: true };
@@ -40,6 +50,7 @@ export class CustomerCacheUpserter {
       if (!(error instanceof CustomerPhoneAlreadyExistsError)) {
         throw error;
       }
+      await db.$executeRaw`ROLLBACK TO SAVEPOINT create_customer_attempt`;
       const existing = await this.customerRepository.findByPhone(
         db,
         input.tenantId,

@@ -69,6 +69,17 @@ export class RecordUsageUseCase {
     }
 
     return this.tenantContext.run(command.tenantId, async (db) => {
+      // A SAVEPOINT immediately before the insert attempt — Postgres aborts
+      // the ENTIRE enclosing transaction after any error (including this
+      // dedupKey unique-constraint violation), so without this, the
+      // recovery findByDedupKey read below fails with `25P02: current
+      // transaction is aborted`. Identical bug, identical fix, as
+      // CreateLeadUseCase.upsertByCallId / CustomerCacheUpserter.upsert /
+      // StartCallUseCase — see any of their comments for the full
+      // explanation; found here by deliberately searching the codebase for
+      // every "catch a P2002-mapped error, then read on the same db" call
+      // site after the first instance was found live.
+      await db.$executeRaw`SAVEPOINT record_usage_attempt`;
       try {
         const record = await this.usageRecordRepository.create(db, {
           tenantId: command.tenantId,
@@ -95,6 +106,9 @@ export class RecordUsageUseCase {
         if (!(error instanceof UsageRecordDedupKeyExistsError)) {
           throw error;
         }
+        // Un-poisons the transaction so the recovery read below can
+        // actually run — see the SAVEPOINT comment above.
+        await db.$executeRaw`ROLLBACK TO SAVEPOINT record_usage_attempt`;
         const existing = await this.usageRecordRepository.findByDedupKey(
           db,
           command.tenantId,

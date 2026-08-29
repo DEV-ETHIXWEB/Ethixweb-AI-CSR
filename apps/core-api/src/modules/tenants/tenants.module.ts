@@ -12,10 +12,11 @@ import { TENANT_REPOSITORY } from "./domain/ports/tenant-repository.port";
 import { PrismaBusinessRepository } from "./infrastructure/prisma-business.repository";
 import { PrismaTenantRepository } from "./infrastructure/prisma-tenant.repository";
 import { BusinessesController } from "./interfaces/businesses.controller";
+import { TenantStatusToolController } from "./interfaces/tenant-status-tool.controller";
 import { TenantsController } from "./interfaces/tenants.controller";
 
 @Module({
-  controllers: [TenantsController, BusinessesController],
+  controllers: [TenantsController, BusinessesController, TenantStatusToolController],
   providers: [
     { provide: TENANT_REPOSITORY, useClass: PrismaTenantRepository },
     { provide: BUSINESS_REPOSITORY, useClass: PrismaBusinessRepository },
@@ -28,5 +29,12 @@ import { TenantsController } from "./interfaces/tenants.controller";
     ListBusinessesUseCase,
     UpdateBusinessUseCase,
   ],
+  // GetBusinessUseCase: emergency-rules module's GetBusinessHoursUseCase
+  // needs a business's own `timezone` column to correctly evaluate
+  // business-hours (see that class's own comment) — the same
+  // cross-module use-case reuse pattern already established elsewhere
+  // (e.g. SendLeadNotificationUseCase importing GetLeadUseCase/
+  // GetCustomerUseCase from other modules), not a new precedent.
+  exports: [GetBusinessUseCase],
 })
 export class TenantsModule {}

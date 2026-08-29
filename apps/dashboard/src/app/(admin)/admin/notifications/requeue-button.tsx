@@ -21,7 +21,12 @@ export function RequeueButton({ notificationId }: { notificationId: string }) {
 
   return (
     <div>
-      <button onClick={handleClick} disabled={isPending} style={buttonStyle}>
+      <button
+        onClick={handleClick}
+        disabled={isPending}
+        className="clay-btn clay-btn-primary"
+        style={buttonStyle}
+      >
         {isPending ? "Retrying…" : "Requeue"}
       </button>
       {result ? (
@@ -29,7 +34,8 @@ export function RequeueButton({ notificationId }: { notificationId: string }) {
           style={{
             fontSize: "0.7rem",
             marginTop: 4,
-            color: result.success ? "var(--accent)" : "var(--danger)",
+            fontWeight: 600,
+            color: result.success ? "var(--success)" : "var(--danger)",
           }}
         >
           {result.success ? "Sent" : (result.error ?? "Failed")}
@@ -40,12 +46,6 @@ export function RequeueButton({ notificationId }: { notificationId: string }) {
 }
 
 const buttonStyle: React.CSSProperties = {
-  padding: "4px 10px",
+  padding: "5px 12px",
   fontSize: "0.72rem",
-  fontWeight: 600,
-  border: "1px solid var(--accent)",
-  background: "var(--accent-soft)",
-  color: "var(--accent)",
-  borderRadius: 6,
-  cursor: "pointer",
 };

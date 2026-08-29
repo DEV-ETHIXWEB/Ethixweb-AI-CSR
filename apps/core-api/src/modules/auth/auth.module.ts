@@ -24,6 +24,7 @@ import { ApiKeysController } from "./interfaces/api-keys.controller";
 import { AuthController } from "./interfaces/auth.controller";
 import { AuthGuard } from "./interfaces/guards/auth.guard";
 import { RolesGuard } from "./interfaces/guards/roles.guard";
+import { ServiceRateLimitGuard } from "./interfaces/guards/service-rate-limit.guard";
 
 @Module({
   // JwtModule registered with no default secret/options — JwtTokenService
@@ -53,9 +54,16 @@ import { RolesGuard } from "./interfaces/guards/roles.guard";
     // token is collected globally regardless of which module registers it,
     // so this still applies to every route in the application, including
     // the tenants/businesses controllers in a different module. Order
-    // matters: AuthGuard establishes `request.principal` before RolesGuard
-    // reads it.
+    // matters: AuthGuard establishes `request.principal` before
+    // ServiceRateLimitGuard/RolesGuard read it.
     { provide: APP_GUARD, useClass: AuthGuard },
+    // docs/13's tool-broker backlog item 5 ("per-tenant token bucket, Redis"),
+    // never built anywhere until now — see this guard's own comment for
+    // the full reasoning. Registered globally the same way as AuthGuard/
+    // RolesGuard so every module's internal/* tool-broker controllers are
+    // covered without each one importing AuthModule; it only actually acts
+    // on api_key-authenticated requests.
+    { provide: APP_GUARD, useClass: ServiceRateLimitGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
   ],
 })

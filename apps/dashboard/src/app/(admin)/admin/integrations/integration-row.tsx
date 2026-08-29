@@ -59,10 +59,20 @@ export function IntegrationRow({ integration }: { integration: Integration }) {
           <StatusPill label={current.status} tone={STATUS_TONE[current.status] ?? "unknown"} />
           {current.status !== "disconnected" ? (
             <>
-              <button onClick={handleVerify} disabled={isPending} style={verifyButtonStyle}>
+              <button
+                onClick={handleVerify}
+                disabled={isPending}
+                className="clay-btn clay-btn-primary"
+                style={verifyButtonStyle}
+              >
                 Verify
               </button>
-              <button onClick={handleDisconnect} disabled={isPending} style={disconnectButtonStyle}>
+              <button
+                onClick={handleDisconnect}
+                disabled={isPending}
+                className="clay-btn clay-btn-secondary"
+                style={disconnectButtonStyle}
+              >
                 Disconnect
               </button>
             </>
@@ -78,29 +88,20 @@ export function IntegrationRow({ integration }: { integration: Integration }) {
 
 const rowStyle: React.CSSProperties = {
   background: "var(--surface)",
-  border: "1px solid var(--border)",
+  border: "1px solid var(--border-soft)",
   borderRadius: "var(--radius)",
-  padding: "12px 14px",
-  marginBottom: 8,
+  boxShadow: "var(--shadow-sm)",
+  padding: "13px 15px",
+  marginBottom: 10,
 };
 
 const verifyButtonStyle: React.CSSProperties = {
-  padding: "4px 10px",
+  padding: "5px 12px",
   fontSize: "0.72rem",
-  fontWeight: 600,
-  border: "1px solid var(--accent)",
-  background: "var(--accent-soft)",
-  color: "var(--accent)",
-  borderRadius: 6,
-  cursor: "pointer",
 };
 
 const disconnectButtonStyle: React.CSSProperties = {
-  padding: "4px 10px",
+  padding: "5px 12px",
   fontSize: "0.72rem",
-  border: "1px solid var(--border)",
-  background: "var(--surface)",
   color: "var(--danger)",
-  borderRadius: 6,
-  cursor: "pointer",
 };
