@@ -72,42 +72,77 @@ export class CallSessionOrchestrator {
    * anywhere in this runtime's scope (TenantRoutingProvider only resolves
    * tenantId/businessId, not a fallback destination — a real deployment
    * wanting that should extend TenantRoute, not this class).
+   *
+   * CAPACITY-429 HANDLING: docs/36 §3 admits capacity at exactly this call
+   * (`StartConversationUseCase`'s FIRST gate) — so a call-start 429 is the
+   * PRIMARY case docs/36 §4's "the Voice Runtime is expected to play its
+   * own short waiting/brochure experience... and retry per Retry-After" is
+   * actually describing, not an edge case. Found live, not hypothetical:
+   * this used to fall into the generic catch-all below and immediately
+   * apologize-and-hang-up on ANY capacity rejection, even though the exact
+   * retry-with-brochure loop this needs already existed one level down, in
+   * handleFinalTranscript's own turn-retry handling (see its own comment) —
+   * just never applied to the one place capacity is actually gated. Mirrors
+   * that same loop exactly, not a new pattern.
    */
   async onCallStart(params: CallSessionParams, sink: MediaStreamSink): Promise<void> {
     const log = this.logger.child({ tenantId: params.tenantId, callId: params.callId });
 
-    try {
-      const conversation = await this.orchestrator.startConversation({
-        tenantId: params.tenantId,
-        businessId: params.businessId,
-        callId: params.callId,
-        callerAni: params.callerAni,
-        toNumber: params.toNumber,
-        timezone: params.timezone,
-      });
-      this.conversationId = conversation.id;
-      log.info("conversation started", { conversationId: conversation.id });
-    } catch (error) {
-      if (error instanceof OrchestratorConflictError) {
-        // docs/28 §B.1's 409 case: a retried start for a callId that
-        // actually succeeded the first time. Per §I's documented gap,
-        // there is no lookup-by-callId route — this runtime's process
-        // model (one CallSessionOrchestrator instance per live WebSocket
-        // connection, never restarted mid-call, see class-level comment)
-        // means this path is unreachable in normal operation, not silently
-        // swallowed: if it IS reached, the call cannot be recovered, so it
-        // fails the same way any other start failure does below.
-        log.warn("conversation start returned 409 — cannot recover conversationId (docs/28 §I)", {
-          error: error.message,
+    let conversationId: string;
+    let capacityAttempts = 0;
+    for (;;) {
+      try {
+        const conversation = await this.orchestrator.startConversation({
+          tenantId: params.tenantId,
+          businessId: params.businessId,
+          callId: params.callId,
+          callerAni: params.callerAni,
+          toNumber: params.toNumber,
+          timezone: params.timezone,
         });
-      } else {
-        log.error("conversation start failed — playing apology and ending call", {
-          reason: error instanceof Error ? error.message : String(error),
-        });
+        conversationId = conversation.id;
+        log.info("conversation started", { conversationId: conversation.id });
+        break;
+      } catch (error) {
+        if (error instanceof OrchestratorCapacityExceededError) {
+          capacityAttempts += 1;
+          if (capacityAttempts > MAX_CAPACITY_RETRY_ATTEMPTS) {
+            log.warn("capacity retry budget exhausted at call start — ending call", {
+              attempts: capacityAttempts,
+            });
+            await this.speakApologyAndClose(sink);
+            return;
+          }
+          const segment = error.waitingExperience.brochureSegment;
+          if (segment) {
+            await this.speak(segment.text, sink);
+          }
+          await sleep(error.retryAfterSeconds * 1000);
+          continue;
+        }
+        if (error instanceof OrchestratorConflictError) {
+          // docs/28 §B.1's 409 case: a retried start for a callId that
+          // actually succeeded the first time. Per §I's documented gap,
+          // there is no lookup-by-callId route — this runtime's process
+          // model (one CallSessionOrchestrator instance per live WebSocket
+          // connection, never restarted mid-call, see class-level comment)
+          // means this path is unreachable in normal operation, not
+          // silently swallowed: if it IS reached, the call cannot be
+          // recovered, so it fails the same way any other start failure
+          // does below.
+          log.warn("conversation start returned 409 — cannot recover conversationId (docs/28 §I)", {
+            error: error.message,
+          });
+        } else {
+          log.error("conversation start failed — playing apology and ending call", {
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
+        await this.speakApologyAndClose(sink);
+        return;
       }
-      await this.speakApologyAndClose(sink);
-      return;
     }
+    this.conversationId = conversationId;
 
     try {
       this.sttSession = await this.stt.openSession({

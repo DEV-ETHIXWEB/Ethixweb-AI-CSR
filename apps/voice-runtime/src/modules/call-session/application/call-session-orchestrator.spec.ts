@@ -416,6 +416,72 @@ describe("CallSessionOrchestrator", () => {
     });
   });
 
+  describe("capacity rejection (429) at call start", () => {
+    /**
+     * Regression coverage for a real gap found live: docs/36 §3 admits
+     * capacity at exactly this call (StartConversationUseCase's FIRST
+     * gate), so this is the PRIMARY case docs/36 §4's "play the
+     * waiting/brochure experience and retry" is describing — not the
+     * mid-turn case, which already had this exact retry loop. Before this
+     * fix, onCallStart's catch-all treated a capacity-429 the same as any
+     * other start failure: immediate apology and hangup, never the
+     * brochure/retry experience the 429 response body is specifically
+     * shaped to support.
+     */
+    it("speaks the brochure segment and retries the call-start itself after retryAfterSeconds, then proceeds normally", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+        orchestratorClient.startResponses = [
+          new OrchestratorCapacityExceededError(0, {
+            brochureSegment: { id: "seg-1", text: "We're licensed and insured." },
+            overflowNumber: null,
+          }),
+        ];
+
+        const startPromise = orchestrator.onCallStart(baseParams(), sink);
+        await jest.advanceTimersByTimeAsync(0);
+        await startPromise;
+
+        expect(tts.synthesizeCalls).toContain("We're licensed and insured.");
+        expect(orchestratorClient.startCalls).toHaveLength(2);
+        expect(stt.sessions).toHaveLength(1); // the STT session opens only after the retry succeeds
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("gives up and apologizes once the call-start capacity retry budget is exhausted", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+        const capacityError = (): OrchestratorCapacityExceededError =>
+          new OrchestratorCapacityExceededError(0, {
+            brochureSegment: null,
+            overflowNumber: null,
+          });
+        orchestratorClient.startResponses = [
+          capacityError(),
+          capacityError(),
+          capacityError(),
+          capacityError(),
+        ];
+
+        const startPromise = orchestrator.onCallStart(baseParams(), sink);
+        await jest.runAllTimersAsync();
+        await startPromise;
+
+        expect(tts.synthesizeCalls.at(-1)).toMatch(/unable to take your call/i);
+        expect(sink.closed).toBe(true);
+        expect(stt.sessions).toHaveLength(0); // never got far enough to open STT
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+  });
+
   describe("capacity rejection (429)", () => {
     it("speaks the brochure segment and retries after retryAfterSeconds, then succeeds", async () => {
       jest.useFakeTimers();
