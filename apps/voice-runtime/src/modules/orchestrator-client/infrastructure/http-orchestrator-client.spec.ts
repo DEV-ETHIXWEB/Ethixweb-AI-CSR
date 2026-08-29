@@ -62,6 +62,28 @@ describe("HttpOrchestratorClient", () => {
     expect(JSON.parse(init.body as string)).toMatchObject({ callId: "c1" });
   });
 
+  /**
+   * Regression coverage for a real bug found live: startConversation,
+   * interrupt, and endConversation never accepted an AbortSignal at all,
+   * and handleTurn's own signal is barge-in interrupt only (undefined on
+   * an ordinary turn), so nothing anywhere on this client bounded a
+   * request to voice-orchestrator, the actual live call path from Twilio
+   * connecting through every turn to hangup. A hung (not erroring, not
+   * unreachable) voice-orchestrator response would have left a real caller
+   * in dead air for the rest of the call, or a hangup itself hanging.
+   */
+  it("always passes a defined AbortSignal to fetch, even on calls that never accepted one before this fix, so a hung voice-orchestrator response is never left completely unbounded", async () => {
+    const fetchSpy = jest.fn().mockResolvedValue(jsonResponse(200, { id: "conv-1" }));
+    global.fetch = fetchSpy;
+    const client = buildClient();
+
+    await client.endConversation("conv-1", { tenantId: "t1", endReason: "caller_hangup" });
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(init.signal?.aborted).toBe(false);
+  });
+
   it("maps a 429 response into OrchestratorCapacityExceededError carrying waitingExperience and retryAfterSeconds", async () => {
     global.fetch = jest.fn().mockResolvedValue(
       jsonResponse(

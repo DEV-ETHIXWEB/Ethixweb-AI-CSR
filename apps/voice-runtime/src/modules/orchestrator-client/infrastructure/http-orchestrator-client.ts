@@ -14,8 +14,25 @@ import {
   type TurnResult,
 } from "../domain/orchestrator-client.port";
 
+// None of startConversation/interrupt/endConversation ever accepted a
+// signal at all, and handleTurn's own signal parameter is barge-in
+// interrupt only (undefined on an ordinary turn), so nothing anywhere on
+// this client bounded a request to voice-orchestrator, the actual live
+// call path from the moment Twilio's Media Stream connects through every
+// turn to hangup. Same unbounded-fetch bug class found and fixed in
+// voice-orchestrator's own HttpCoreApiClient and FallbackAiProvider: a
+// hung (not erroring, not unreachable, genuinely hung) voice-orchestrator
+// response would leave a real caller in dead air for the rest of the
+// call, or a hangup itself hanging. Set above voice-orchestrator's own
+// worst-case internal processing time (a 15s LLM call plus however many
+// per-tool calls a turn makes, see FallbackAiProvider's own
+// STREAM_TIMEOUT_MS comment) so a slow-but-genuinely-recovering
+// voice-orchestrator response isn't mistaken for a hang and retried
+// prematurely by CallSessionOrchestrator's own turn-retry loop.
+const REQUEST_TIMEOUT_MS = 20_000;
+
 /**
- * Implements docs/28 §A-§C exactly — every path/verb/body shape here is
+ * Implements docs/28 §A-§C exactly, every path/verb/body shape here is
  * copied from that contract, not invented. `fetch` (Node 22's built-in),
  * matching HttpCoreApiClient's own choice in voice-orchestrator rather than
  * pulling in axios/got for a single outbound client.
@@ -73,19 +90,28 @@ export class HttpOrchestratorClient implements OrchestratorClientPort {
     body: unknown,
     signal?: AbortSignal,
   ): Promise<T> {
+    const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const boundedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}/v1${path}`, {
         method,
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.token}` },
         body: JSON.stringify(body),
-        ...(signal ? { signal } : {}),
+        signal: boundedSignal,
       });
     } catch (error) {
-      // A network-level failure (DNS, connection refused, or the AbortSignal
-      // firing) — indistinguishable from "ambiguous outcome" per docs/28 §G,
-      // so callers must apply the SAME retry-with-same-idempotencyKey rule
-      // as a 5xx, not treat this as a hard failure.
+      // A network-level failure (DNS, connection refused, the caller's own
+      // interrupt AbortSignal firing, or the timeout above firing) is
+      // indistinguishable from "ambiguous outcome" per docs/28 §G, so
+      // callers must apply the SAME retry-with-same-idempotencyKey rule as
+      // a 5xx, not treat this as a hard failure. The caller's own signal
+      // (barge-in) still needs to propagate as-is rather than being
+      // reframed as a retryable HTTP error, checked against the ORIGINAL
+      // signal, not the combined one, since the combined signal is also
+      // aborted whenever the timeout fires and that case must NOT take
+      // this early-return branch.
       if (signal?.aborted) {
         throw error;
       }
