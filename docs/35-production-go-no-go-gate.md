@@ -44,9 +44,9 @@ Nothing below is marked GREEN based on code inspection alone where the requireme
 - [ ] Monitoring works — 🔴 (Blocker 5 — not built)
 - [ ] Alerting works — 🔴 (Blocker 5 — not built)
 - [ ] Rollback works — 🟡 (code/DB rollback via standard tooling is fine; a real telephony kill-switch now exists — `voice-runtime`'s `AI_RECEPTIONIST_ENABLED`, [docs/19](19-operational-runbooks.md) §7 — verified locally for both states, not yet against a real Twilio account, hence still 🟡 not 🟢)
-- [ ] Full test suite passes — 🟢 (606/606, re-confirmed this session)
+- [ ] Full test suite passes — 🟢 (733/733 unit tests across all four apps — core-api 499, voice-orchestrator 170, voice-runtime 62, dashboard 2 — re-confirmed this session; Docker-dependent integration suites still blocked, see Blocker 3 above)
 - [ ] No scheduling/booking capability — 🟢 (verified structurally — 8-tool catalog, zero scheduling tools, adversarial test passing)
-- [ ] No critical security findings — 🟢 (auth/tenant-isolation/secret-handling audited this session, no critical findings; rate-limiting and the Twilio `trustProxy` assumption remain open medium-priority items, not critical)
+- [ ] No critical security findings — 🟢 (auth/tenant-isolation/secret-handling audited this session, no critical findings; per-tenant rate limiting on the tool-broker surface has since shipped (`ServiceRateLimitGuard`) — the Twilio `trustProxy` assumption is the one item still genuinely open, medium-priority, not critical)
 
 ## PRODUCTION READINESS: **NO-GO**
 
