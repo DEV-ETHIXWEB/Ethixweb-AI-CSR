@@ -12,10 +12,11 @@ import { TENANT_REPOSITORY } from "./domain/ports/tenant-repository.port";
 import { PrismaBusinessRepository } from "./infrastructure/prisma-business.repository";
 import { PrismaTenantRepository } from "./infrastructure/prisma-tenant.repository";
 import { BusinessesController } from "./interfaces/businesses.controller";
+import { TenantStatusToolController } from "./interfaces/tenant-status-tool.controller";
 import { TenantsController } from "./interfaces/tenants.controller";
 
 @Module({
-  controllers: [TenantsController, BusinessesController],
+  controllers: [TenantsController, BusinessesController, TenantStatusToolController],
   providers: [
     { provide: TENANT_REPOSITORY, useClass: PrismaTenantRepository },
     { provide: BUSINESS_REPOSITORY, useClass: PrismaBusinessRepository },

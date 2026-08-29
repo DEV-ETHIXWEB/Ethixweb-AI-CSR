@@ -7,6 +7,7 @@ import { FakeCapacityConfigProvider } from "./__fakes__/fake-capacity-config";
 import { FakeConversationRepository } from "./__fakes__/fake-conversation-repository";
 import { FakeEventBus } from "./__fakes__/fake-event-bus";
 import { createNoopLogger } from "./__fakes__/fake-logger";
+import { FakeTenantStatusProvider } from "./__fakes__/fake-tenant-status";
 import { StartConversationUseCase } from "./start-conversation.use-case";
 
 function fakeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
@@ -29,6 +30,7 @@ function buildUseCase(profile: AgentProfile = fakeProfile()) {
   const coreApiClient = new FakeCoreApiClient();
   const callAdmission = new FakeCallAdmissionPort();
   const capacityConfig = new FakeCapacityConfigProvider();
+  const tenantStatus = new FakeTenantStatusProvider();
   const provider: AgentProfileProvider = { getActiveProfile: async () => profile };
   const useCase = new StartConversationUseCase(
     repository,
@@ -37,9 +39,18 @@ function buildUseCase(profile: AgentProfile = fakeProfile()) {
     coreApiClient,
     callAdmission,
     capacityConfig,
+    tenantStatus,
     createNoopLogger(),
   );
-  return { useCase, repository, eventBus, coreApiClient, callAdmission, capacityConfig };
+  return {
+    useCase,
+    repository,
+    eventBus,
+    coreApiClient,
+    callAdmission,
+    capacityConfig,
+    tenantStatus,
+  };
 }
 
 describe("StartConversationUseCase", () => {
@@ -123,6 +134,68 @@ describe("StartConversationUseCase", () => {
 
       const found = await repository.findByCallId("tenant-1", "call-1");
       expect(found).toBeNull();
+    });
+  });
+
+  describe("docs/15 §2: tenant-status gate", () => {
+    it("proceeds normally for a serviceable tenant status (active)", async () => {
+      const { useCase, coreApiClient, tenantStatus } = buildUseCase();
+      tenantStatus.status = "active";
+
+      await useCase.execute({
+        tenantId: "tenant-1",
+        businessId: "business-1",
+        callId: "call-1",
+        callerAni: "+15551234567",
+      });
+
+      expect(coreApiClient.postCalls).toHaveLength(1);
+    });
+
+    it("throws TenantNotServiceableError and never reserves capacity or calls POST /internal/calls when the tenant is suspended", async () => {
+      const { useCase, coreApiClient, callAdmission, tenantStatus } = buildUseCase();
+      tenantStatus.status = "suspended";
+      const reserveSpy = jest.spyOn(callAdmission, "reserve");
+
+      await expect(
+        useCase.execute({
+          tenantId: "tenant-1",
+          businessId: "business-1",
+          callId: "call-1",
+          callerAni: "+15551234567",
+        }),
+      ).rejects.toMatchObject({ name: "TenantNotServiceableError", status: "suspended" });
+
+      expect(reserveSpy).not.toHaveBeenCalled();
+      expect(coreApiClient.postCalls).toHaveLength(0);
+    });
+
+    it("still rejects an archived tenant (an INFERRED extension of docs/15's explicit 'suspended' case — see tenant-status.port.ts's own comment)", async () => {
+      const { useCase, tenantStatus } = buildUseCase();
+      tenantStatus.status = "archived";
+
+      await expect(
+        useCase.execute({
+          tenantId: "tenant-1",
+          businessId: "business-1",
+          callId: "call-1",
+          callerAni: "+15551234567",
+        }),
+      ).rejects.toMatchObject({ name: "TenantNotServiceableError", status: "archived" });
+    });
+
+    it("still admits a past_due tenant — the documented grace period BEFORE suspension, not itself call-blocking", async () => {
+      const { useCase, coreApiClient, tenantStatus } = buildUseCase();
+      tenantStatus.status = "past_due";
+
+      await useCase.execute({
+        tenantId: "tenant-1",
+        businessId: "business-1",
+        callId: "call-1",
+        callerAni: "+15551234567",
+      });
+
+      expect(coreApiClient.postCalls).toHaveLength(1);
     });
   });
 
