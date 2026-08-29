@@ -158,7 +158,7 @@ test.
 | ElevenLabs API key + voice ID                                     | elevenlabs.io → Profile Settings (key), Voice Library or a cloned voice (voice ID)      | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`                     |
 | voice-orchestrator's service token                                | Generated locally (`openssl rand -base64 48`), set identically in both services' `.env` | `ORCHESTRATOR_SERVICE_TOKEN`                                    |
 | HCP credentials (optional, for step 20)                           | See docs/32-hcp-live-verification-checklist.md                                          | Not a voice-runtime var — stored per-tenant in core-api         |
-| Emergency transfer destination (optional, for the emergency test) | A real on-call number/queue you control for testing                                     | `EMERGENCY_TRANSFER_NUMBER`                                     |
+| Emergency transfer destination (**required for voice-runtime to boot at all**, not just for the emergency test above — env.schema.ts's own `validate()` refuses to start without it or `HUMAN_FALLBACK_NUMBER`) | A real on-call number/queue you control for testing                                     | `EMERGENCY_TRANSFER_NUMBER`                                     |
 
 ## Local run commands (all four services)
 
