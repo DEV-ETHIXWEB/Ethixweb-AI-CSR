@@ -135,7 +135,19 @@ describe("EndConversationUseCase", () => {
           firstAttempt = false;
           // A concurrent turn's own (unrelated) save lands first, bumping
           // the version without ending the conversation.
-          await originalSave({ ...seeded, transcript: [{ turnIndex: 0, speaker: "caller", text: "hi", confidence: null, offsetMs: 0, at: "2026-01-01T00:00:00.000Z" }] });
+          await originalSave({
+            ...seeded,
+            transcript: [
+              {
+                turnIndex: 0,
+                speaker: "caller",
+                text: "hi",
+                confidence: null,
+                offsetMs: 0,
+                at: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+          });
           return originalSave(conversation);
         }
         return originalSave(conversation);

@@ -6,7 +6,11 @@ import { TenantContextService } from "../../../shared/prisma/tenant-context.serv
 import { assertValidCallStatusTransition } from "../domain/call-lifecycle";
 import type { Call, CallStatus } from "../domain/call.entity";
 import { CallNotFoundError } from "../domain/errors";
-import { CALL_REPOSITORY, type CallRepository, type Db } from "../domain/ports/call-repository.port";
+import {
+  CALL_REPOSITORY,
+  type CallRepository,
+  type Db,
+} from "../domain/ports/call-repository.port";
 
 export interface EndCallCommand {
   tenantId: string;

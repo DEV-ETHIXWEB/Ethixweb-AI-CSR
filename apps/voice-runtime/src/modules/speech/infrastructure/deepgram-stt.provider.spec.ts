@@ -84,9 +84,9 @@ describe("DeepgramSttProvider", () => {
     delete process.env["DEEPGRAM_API_KEY"];
     const provider = new DeepgramSttProvider();
 
-    await expect(
-      provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" }),
-    ).rejects.toThrow("DEEPGRAM_API_KEY is not configured");
+    await expect(provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" })).rejects.toThrow(
+      "DEEPGRAM_API_KEY is not configured",
+    );
   });
 
   it("opens the WebSocket against Deepgram's documented URL/query params and Authorization header", async () => {

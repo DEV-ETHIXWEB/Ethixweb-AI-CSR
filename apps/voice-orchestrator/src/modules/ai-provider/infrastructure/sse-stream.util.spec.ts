@@ -41,11 +41,7 @@ describe("readSseEvents", () => {
 
   it("yields multiple events from one chunk, in order", async () => {
     const response = fakeResponse(['data: {"n":1}\n\ndata: {"n":2}\n\ndata: {"n":3}\n\n']);
-    await expect(collect(response)).resolves.toEqual([
-      '{"n":1}',
-      '{"n":2}',
-      '{"n":3}',
-    ]);
+    await expect(collect(response)).resolves.toEqual(['{"n":1}', '{"n":2}', '{"n":3}']);
   });
 
   it("reassembles one event whose data: field spans multiple lines by joining them with \\n, per the SSE spec", async () => {
@@ -60,7 +56,7 @@ describe("readSseEvents", () => {
 
   it("assembles an event correctly even when the chunk boundary splits a multi-byte UTF-8 character", async () => {
     // "café" — the é is a 2-byte UTF-8 sequence; split the bytes mid-character.
-    const full = Buffer.from('data: café\n\n', "utf8");
+    const full = Buffer.from("data: café\n\n", "utf8");
     const splitAt = full.indexOf(0xc3); // first byte of the 2-byte é sequence
     const first = full.subarray(0, splitAt + 1);
     const second = full.subarray(splitAt + 1);
@@ -81,7 +77,7 @@ describe("readSseEvents", () => {
   });
 
   it("yields a trailing event that never received a closing blank line (e.g. the final [DONE] chunk)", async () => {
-    const response = fakeResponse(["data: {\"n\":1}\n\ndata: [DONE]"]);
+    const response = fakeResponse(['data: {"n":1}\n\ndata: [DONE]']);
     await expect(collect(response)).resolves.toEqual(['{"n":1}', "[DONE]"]);
   });
 

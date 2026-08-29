@@ -105,7 +105,13 @@ export class RedisConversationRepository implements ConversationRepository {
 
   private async write(conversation: Conversation): Promise<void> {
     const key = this.key(conversation.tenantId, conversation.id);
-    await this.redis.hset(key, "version", String(conversation.version), "data", JSON.stringify(conversation));
+    await this.redis.hset(
+      key,
+      "version",
+      String(conversation.version),
+      "data",
+      JSON.stringify(conversation),
+    );
     await this.redis.expire(key, CONVERSATION_TTL_SECONDS);
   }
 
