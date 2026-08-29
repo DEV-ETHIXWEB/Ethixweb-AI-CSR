@@ -93,6 +93,27 @@ export class SendLeadNotificationUseCase {
     const customer = await this.getCustomerUseCase.execute(command.tenantId, lead.customerId);
     const payload = buildNotificationPayload(lead, customer);
 
+    if (channels.length === 0) {
+      // Found live, not hypothetical: with zero active channels configured
+      // for this business, the loop below is a silent no-op — the outbox
+      // event still gets marked "dispatched" (this use-case throws
+      // nothing), so nothing anywhere would otherwise indicate that a real
+      // lead, possibly an EMERGENCY-priority one, reached zero humans. No
+      // metrics/alerting backend exists in this codebase (docs/29 Blocker
+      // 5) to page on this, so a loud structured warning is the honest,
+      // currently-available signal — the same convention already used for
+      // "no sender registered for channel type" just below.
+      this.logger.warn(
+        "lead notification has NO active channels configured for this business — nobody was notified",
+        {
+          tenantId: command.tenantId,
+          businessId: command.businessId,
+          leadId: command.leadId,
+          priority: lead.priority,
+        },
+      );
+    }
+
     const outcomes: ChannelSendOutcome[] = [];
     for (const channel of channels) {
       outcomes.push(await this.sendToChannel(command.tenantId, channel, payload));

@@ -375,6 +375,40 @@ describe("SendLeadNotificationUseCase", () => {
   }, 10000);
 
   it(
+    "NO SILENT GAP: warns loudly when a lead has zero active notification channels configured " +
+      "— found live: this used to be an indistinguishable-from-success silent no-op, meaning an " +
+      "emergency-priority lead could reach zero humans with nothing anywhere saying so",
+    async () => {
+      const channelRepository = new FakeNotificationChannelRepository();
+      // Deliberately NOT seeding any channel for this business.
+      const logger = createNoopLogger();
+      const warnSpy = jest.spyOn(logger, "warn");
+      const useCase = new SendLeadNotificationUseCase(
+        new FakeTenantContextService() as unknown as TenantContextService,
+        channelRepository,
+        new FakeNotificationRepository(),
+        new ChannelSenderRegistry(),
+        fakeLead(),
+        fakeCustomer(),
+        fakeClaimMappingStore().store,
+        logger,
+      );
+
+      const outcomes = await useCase.execute({
+        tenantId: "tenant-1",
+        businessId: "business-1",
+        leadId: "lead-1",
+      });
+
+      expect(outcomes).toEqual([]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("NO active channels"),
+        expect.objectContaining({ tenantId: "tenant-1", leadId: "lead-1" }),
+      );
+    },
+  );
+
+  it(
     "CONNECTION-POOL SAFETY: the sender.send() call happens between two SEPARATE " +
       "tenantContext.run transactions, never nested inside one held open for its duration — " +
       "see this use case's own comment on why a single wrapping transaction would leave a real " +
