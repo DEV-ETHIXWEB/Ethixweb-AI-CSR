@@ -54,6 +54,26 @@ describe("TwilioCallTransferProvider", () => {
     );
   });
 
+  /**
+   * Regression coverage for a real bug found live: this call had no
+   * timeout at all, same unbounded-fetch bug class found and fixed for
+   * HttpCoreApiClient, FallbackAiProvider, and HttpOrchestratorClient this
+   * session, here on the single most safety-critical call in the whole
+   * system: the actual transfer during a real emergency escalation.
+   */
+  it("bounds the request with a timeout, so a hung Twilio response is never left completely unbounded", async () => {
+    withEnv();
+    const fetchSpy = jest.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    global.fetch = fetchSpy;
+
+    const provider = new TwilioCallTransferProvider();
+    await provider.transferCall("CA1", "+15550009999");
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(init.signal?.aborted).toBe(false);
+  });
+
   it("XML-escapes a destination containing reserved characters rather than emitting malformed TwiML", async () => {
     withEnv();
     const fetchSpy = jest.fn().mockResolvedValue(new Response(null, { status: 200 }));
