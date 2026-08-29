@@ -250,6 +250,18 @@ Then point the client's Twilio number's Voice webhook at this
 [docs/41](41-first-local-real-call.md) step 12 for the exact Twilio
 Console configuration.
 
+Also set `EMERGENCY_TRANSFER_NUMBER` (the real on-call number/queue a
+`forward_call` emergency escalation transfers to) in this same
+environment before restarting — `voice-runtime` refuses to boot at all
+without it (or `HUMAN_FALLBACK_NUMBER` as a fallback) whenever
+`AI_RECEPTIONIST_ENABLED` is true, which it is by default (env.schema.ts's
+own `validate()`; found live, not hypothetical — this var was silently
+absent from this repo's own local `.env` for a while before that check
+existed). If you also want the kill switch available for this tenant
+before go-live, set `HUMAN_FALLBACK_NUMBER` now too — see
+[docs/19](19-operational-runbooks.md) §7 for how to actually use it during
+an incident.
+
 ## 13. Test customer lookup and lead creation
 
 Exercises the same tool-broker-facing endpoints the AI actually calls
