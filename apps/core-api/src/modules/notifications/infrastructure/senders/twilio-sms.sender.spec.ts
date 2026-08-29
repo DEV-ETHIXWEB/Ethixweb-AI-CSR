@@ -73,4 +73,25 @@ describe("TwilioSmsSender", () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain("400");
   });
+
+  /**
+   * Regression coverage for a real bug found live: this call had no
+   * timeout at all, same unbounded-fetch bug class found and fixed for
+   * TwilioCallTransferProvider (voice-runtime) and the live-call path
+   * this session. A hung Twilio API response would have stalled
+   * SendLeadNotificationUseCase's per-channel send indefinitely rather
+   * than failing within its own 3-attempt retry budget.
+   */
+  it("bounds the request with a timeout, so a hung Twilio response is never left completely unbounded", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ sid: "SM123" }), { status: 201 }),
+    );
+    const sender = new TwilioSmsSender();
+
+    await sender.send({ phone: "+15559999999" }, basePayload());
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(init.signal?.aborted).toBe(false);
+  });
 });
