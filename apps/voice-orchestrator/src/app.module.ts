@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { resolve } from "node:path";
 import { APP_FILTER, APP_GUARD } from "@nestjs/core";
 import { ConfigModule } from "@nestjs/config";
 import { AiProviderModule } from "./modules/ai-provider/ai-provider.module";
@@ -20,7 +21,20 @@ import { DomainExceptionFilter } from "./shared/http/domain-exception.filter";
     // on a missing/malformed required var (REDIS_URL, CORE_API_BASE_URL,
     // CORE_API_SERVICE_API_KEY, ORCHESTRATOR_SERVICE_TOKEN) rather than
     // this service silently rejecting every call once it's already live.
-    ConfigModule.forRoot({ isGlobal: true, validate }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      // Two files, app-specific first — @nestjs/config gives precedence to
+      // the earlier entry. `apps/<service>/.env` holds what belongs to THIS
+      // service alone (PORT above all: every service previously inherited the
+      // root file's single PORT, so booting two of them together bound the
+      // same port and the second crashed). The root `.env` holds what is
+      // genuinely shared across services (DATABASE_URL, REDIS_URL, the JWT
+      // secrets). Both paths are resolved from __dirname, never process.cwd(),
+      // so they hold under Docker and `node dist/main.js` regardless of where
+      // the process was launched from.
+      envFilePath: [resolve(__dirname, "../.env"), resolve(__dirname, "../../../.env")],
+      validate,
+    }),
     AppLoggerModule,
     RedisModule,
     HealthModule,

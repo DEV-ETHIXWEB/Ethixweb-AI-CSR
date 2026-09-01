@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { resolve } from "node:path";
 import { APP_FILTER } from "@nestjs/core";
 import { ConfigModule } from "@nestjs/config";
 import { AuthModule } from "./modules/auth/auth.module";
@@ -26,7 +27,20 @@ import { RedisModule } from "./shared/redis/redis.module";
     // on a missing/malformed required var — see that file's own comment on
     // why this exists instead of every secret failing lazily, mid-request,
     // the first time its owning service is instantiated.
-    ConfigModule.forRoot({ isGlobal: true, validate }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      // Two files, app-specific first — @nestjs/config gives precedence to
+      // the earlier entry. `apps/<service>/.env` holds what belongs to THIS
+      // service alone (PORT above all: every service previously inherited the
+      // root file's single PORT, so booting two of them together bound the
+      // same port and the second crashed). The root `.env` holds what is
+      // genuinely shared across services (DATABASE_URL, REDIS_URL, the JWT
+      // secrets). Both paths are resolved from __dirname, never process.cwd(),
+      // so they hold under Docker and `node dist/main.js` regardless of where
+      // the process was launched from.
+      envFilePath: [resolve(__dirname, "../.env"), resolve(__dirname, "../../../.env")],
+      validate,
+    }),
     AppLoggerModule,
     PrismaModule,
     RedisModule,

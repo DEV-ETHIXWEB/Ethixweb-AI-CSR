@@ -4,11 +4,30 @@ The authoritative tracker for the five external blockers the Phase 11/12 audits 
 
 **Status legend** — 🔴 RED: unavailable/blocking. 🟡 YELLOW: available but not yet verified. 🟢 GREEN: literally tested and verified (evidence attached below, not asserted).
 
-Nothing in this document is currently GREEN. That is the honest state as of this writing, not an oversight.
+Blocker 3 is 🟢 GREEN as of 2026-08-30 (evidence below). Blockers 1, 2, 4 and 5 remain open — all of them waiting on an external account or environment, none on repository work.
 
 ---
 
-## Blocker 1 — Yash's live voice runtime is not present/connected
+## Blocker 1 — no live voice runtime call has been made
+
+> **Updated 2026-08-30.** Everything below was written when the voice runtime
+> was an external dependency owned by someone else. That is no longer true:
+> `apps/voice-runtime` is now a real, self-owned service in this repository
+> (Phase 15B) — NestJS + Twilio + Deepgram + ElevenLabs, 99 unit tests and 9
+> scripted e2e scenarios passing. This blocker is therefore no longer "wait
+> for another party to build a runtime". It is now precisely: **obtain three
+> vendor credentials and make one phone call.**
+>
+> Confirmed on 2026-08-30 that the service boots and fails closed on exactly
+> six missing variables, and nothing else: `TWILIO_ACCOUNT_SID`,
+> `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, `DEEPGRAM_API_KEY`,
+> `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`. Every other required variable
+> already resolves locally. Fill those six, then run
+> [docs/41](41-first-local-real-call.md).
+>
+> The original text is kept below for history, not as current guidance.
+
+### Original entry (superseded)
 
 **Status: 🔴 RED**
 
@@ -96,9 +115,27 @@ Plus `tenant-isolation.integration-spec.ts` (3 tests, same command, same file gl
 
 **Evidence required to mark GREEN**: literal terminal output showing `Tests: 8 passed, 8 total` (5 + 3) from an actual `pnpm test:integration` run — not a description of what the test does.
 
-**Current status**: 🔴 unexecuted in every environment this project has been worked in so far (`docker: command not found`, reconfirmed this session).
+**Current status**: 🟢 **GREEN — executed 2026-08-30** on a Windows machine with Docker Desktop, against a real `postgres:16-alpine` container started by testcontainers.
 
-**Next action**: run `pnpm --filter @ethixweb/core-api run test:integration` on any machine with Docker. This is the cheapest blocker to close — no external account or vendor negotiation required, purely an infrastructure-access problem.
+**Evidence** (literal terminal output, `pnpm --filter @ethixweb/core-api run test:integration`):
+
+```
+PASS test/integration/tenant-isolation.integration-spec.ts (39.624 s)
+PASS test/integration/call-status-race.integration-spec.ts (40.225 s)
+PASS test/integration/lead-call-fk-integrity.integration-spec.ts (40.367 s)
+
+Test Suites: 3 passed, 3 total
+Tests:       9 passed, 9 total
+Time:        41.311 s
+```
+
+9 tests, not the 8 this document originally predicted — a third suite
+(`call-status-race.integration-spec.ts`) was added after this checklist was
+written. The two suites named above as the required evidence both pass.
+
+**Next action**: none. This blocker is closed. It stays closed only as long as
+this suite keeps running — it is not part of `test:unit` and will silently rot
+if nobody runs it, so it belongs in CI on a Docker-capable runner.
 
 ---
 

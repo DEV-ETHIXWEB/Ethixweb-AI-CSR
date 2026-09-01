@@ -253,6 +253,44 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
     });
   });
 
+  describe("lookup by callId (docs/24 §5 — Voice Runtime restart recovery)", () => {
+    it("finds the conversation by callId when the runtime lost its cached conversationId", async () => {
+      const started = await startConversation();
+      const conversation = started.json();
+
+      const res = await sim.inject({
+        method: "GET",
+        url: `/v1/conversations/by-call/${conversation.callId}?tenantId=${conversation.tenantId}`,
+        headers: authHeader(sim.serviceToken),
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().id).toBe(conversation.id);
+      expect(res.json().callId).toBe(conversation.callId);
+    });
+
+    it("404s for an unknown callId", async () => {
+      const res = await sim.inject({
+        method: "GET",
+        url: `/v1/conversations/by-call/${randomUUID()}?tenantId=${randomUUID()}`,
+        headers: authHeader(sim.serviceToken),
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it("404s when the callId is real but addressed with the WRONG tenantId", async () => {
+      const started = await startConversation();
+      const conversation = started.json();
+
+      const res = await sim.inject({
+        method: "GET",
+        url: `/v1/conversations/by-call/${conversation.callId}?tenantId=${randomUUID()}`,
+        headers: authHeader(sim.serviceToken),
+      });
+      expect(res.statusCode).toBe(404);
+    });
+  });
+
   describe("turn-level idempotency (Voice Runtime retry safety)", () => {
     it("a replayed turn with the same idempotencyKey returns the identical result without re-invoking the AI provider", async () => {
       const started = await startConversation();
@@ -444,6 +482,7 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
         isEmergency: true,
         severity: "critical",
         action: "forward_call",
+        transferTargets: ["+15551234567"],
       });
       sim.aiProvider.responses = [
         [
@@ -481,6 +520,7 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.json().toolCallsExecuted).toEqual(["escalateEmergency"]);
+      expect(res.json().transferTargets).toEqual(["+15551234567"]);
     });
   });
 

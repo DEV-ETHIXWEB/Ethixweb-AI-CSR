@@ -22,9 +22,18 @@
 //   SEED_TENANT_NAME, SEED_OWNER_EMAIL, SEED_OWNER_PASSWORD,
 //   SEED_BUSINESS_NAME, SEED_BUSINESS_TIMEZONE, SEED_CRM_TYPE
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import pg from "pg";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
+
+// Same root-`.env` load as setup-local-runtime-role.mjs and prisma.config.ts —
+// this script's cwd is packages/database, the `.env` is at the repo root.
+const rootEnvFile = join(import.meta.dirname, "../../../.env");
+if (existsSync(rootEnvFile)) {
+  process.loadEnvFile(rootEnvFile);
+}
 
 const BCRYPT_COST_FACTOR = 12; // must match apps/core-api's PasswordHash.hash()
 
