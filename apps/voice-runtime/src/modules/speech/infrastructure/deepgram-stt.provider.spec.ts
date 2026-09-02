@@ -44,6 +44,11 @@ class FakeWebSocket extends EventEmitter {
   simulateMessage(payload: unknown): void {
     this.emit("message", Buffer.from(JSON.stringify(payload)));
   }
+
+  simulateClose(code: number, reason: string): void {
+    this.readyState = FakeWebSocket.CLOSED;
+    this.emit("close", code, Buffer.from(reason));
+  }
 }
 
 let lastSocket: FakeWebSocket | undefined;
@@ -66,6 +71,7 @@ jest.mock("ws", () => {
 
 // Imported after jest.mock so the provider picks up the mocked module.
 import { DeepgramSttProvider } from "./deepgram-stt.provider";
+import { createNoopLogger } from "./__fakes__/fake-logger";
 
 describe("DeepgramSttProvider", () => {
   const originalEnv = { ...process.env };
@@ -82,7 +88,7 @@ describe("DeepgramSttProvider", () => {
 
   it("throws when DEEPGRAM_API_KEY is not configured", async () => {
     delete process.env["DEEPGRAM_API_KEY"];
-    const provider = new DeepgramSttProvider();
+    const provider = new DeepgramSttProvider(createNoopLogger());
 
     await expect(provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" })).rejects.toThrow(
       "DEEPGRAM_API_KEY is not configured",
@@ -90,7 +96,7 @@ describe("DeepgramSttProvider", () => {
   });
 
   it("opens the WebSocket against Deepgram's documented URL/query params and Authorization header, defaulting to multilingual (nova-2 + language=multi)", async () => {
-    const provider = new DeepgramSttProvider();
+    const provider = new DeepgramSttProvider(createNoopLogger());
     await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
 
     expect(lastSocket).toBeDefined();
@@ -102,7 +108,7 @@ describe("DeepgramSttProvider", () => {
 
   it("uses DEEPGRAM_MODEL when set, instead of any default", async () => {
     process.env["DEEPGRAM_MODEL"] = "nova-3";
-    const provider = new DeepgramSttProvider();
+    const provider = new DeepgramSttProvider(createNoopLogger());
     await provider.openSession({ sampleRateHz: 16000, encoding: "linear16" });
 
     expect(lastSocket!.url).toContain("model=nova-3");
@@ -122,7 +128,7 @@ describe("DeepgramSttProvider", () => {
   describe("language/model coupling (Spanish/English code-switching)", () => {
     it("falls back to the phone-tuned model when DEEPGRAM_LANGUAGE is explicitly set to a single language, not multi", async () => {
       process.env["DEEPGRAM_LANGUAGE"] = "en";
-      const provider = new DeepgramSttProvider();
+      const provider = new DeepgramSttProvider(createNoopLogger());
       await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
 
       expect(lastSocket!.url).toContain("model=nova-2-phonecall");
@@ -131,7 +137,7 @@ describe("DeepgramSttProvider", () => {
 
     it("respects an explicit DEEPGRAM_MODEL even when it's paired with the multilingual default language, rather than silently overriding the operator's choice", async () => {
       process.env["DEEPGRAM_MODEL"] = "nova-3";
-      const provider = new DeepgramSttProvider();
+      const provider = new DeepgramSttProvider(createNoopLogger());
       await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
 
       expect(lastSocket!.url).toContain("model=nova-3");
@@ -140,7 +146,7 @@ describe("DeepgramSttProvider", () => {
   });
 
   it("buffers audio frames sent before the socket opens, then flushes them in order once it does", async () => {
-    const provider = new DeepgramSttProvider();
+    const provider = new DeepgramSttProvider(createNoopLogger());
     const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
 
     const frame1 = Buffer.from("frame-1");
@@ -155,7 +161,7 @@ describe("DeepgramSttProvider", () => {
   });
 
   it("sends audio directly, without buffering, once the socket is already open", async () => {
-    const provider = new DeepgramSttProvider();
+    const provider = new DeepgramSttProvider(createNoopLogger());
     const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
     lastSocket!.simulateOpen();
 
@@ -166,7 +172,7 @@ describe("DeepgramSttProvider", () => {
   });
 
   it("fires onFinalTranscript only for a Results message with speech_final: true, not merely is_final: true", async () => {
-    const provider = new DeepgramSttProvider();
+    const provider = new DeepgramSttProvider(createNoopLogger());
     const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
     const handler = jest.fn();
     session.onFinalTranscript(handler);
@@ -191,8 +197,47 @@ describe("DeepgramSttProvider", () => {
     });
   });
 
+  /**
+   * Regression coverage for the real gap that made a live "caller says
+   * something, nothing ever happens" bug undiagnosable: this class had
+   * NO close handler at all, so a Deepgram-side rejection (bad auth, an
+   * unsupported model/language/encoding combination, a mid-call
+   * disconnect) that closes the socket WITHOUT ever firing "error" left
+   * zero trace anywhere — audio kept arriving via sendAudio() into an
+   * already-closed socket for the rest of the call, silently.
+   */
+  it("logs a warning when the socket closes abnormally (code !== 1000), including how many frames were already sent", async () => {
+    const warn = jest.fn();
+    const logger = { ...createNoopLogger(), warn };
+    const provider = new DeepgramSttProvider(logger);
+    const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
+    lastSocket!.simulateOpen();
+    session.sendAudio(Buffer.from("frame-1"));
+    session.sendAudio(Buffer.from("frame-2"));
+
+    lastSocket!.simulateClose(1011, "internal error");
+
+    expect(warn).toHaveBeenCalledWith(
+      "Deepgram session closed unexpectedly",
+      expect.objectContaining({ code: 1011, reason: "internal error", framesSent: 2 }),
+    );
+  });
+
+  it("does NOT log a warning for an ordinary close (code 1000) — this session's own close() closing normally", async () => {
+    const warn = jest.fn();
+    const logger = { ...createNoopLogger(), warn };
+    const provider = new DeepgramSttProvider(logger);
+    const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
+    lastSocket!.simulateOpen();
+
+    await session.close();
+    lastSocket!.simulateClose(1000, "");
+
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it("does not fire onFinalTranscript for a speech_final result with an empty transcript (tail-of-silence artifact)", async () => {
-    const provider = new DeepgramSttProvider();
+    const provider = new DeepgramSttProvider(createNoopLogger());
     const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
     const handler = jest.fn();
     session.onFinalTranscript(handler);
@@ -207,7 +252,7 @@ describe("DeepgramSttProvider", () => {
   });
 
   it("fires onSpeechStarted on a SpeechStarted event, without touching onFinalTranscript", async () => {
-    const provider = new DeepgramSttProvider();
+    const provider = new DeepgramSttProvider(createNoopLogger());
     const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
     const speechStarted = jest.fn();
     const finalTranscript = jest.fn();
@@ -221,7 +266,7 @@ describe("DeepgramSttProvider", () => {
   });
 
   it("fires onError when the underlying socket emits an error", async () => {
-    const provider = new DeepgramSttProvider();
+    const provider = new DeepgramSttProvider(createNoopLogger());
     const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
     const errorHandler = jest.fn();
     session.onError(errorHandler);
@@ -233,7 +278,7 @@ describe("DeepgramSttProvider", () => {
   });
 
   it("ignores a non-JSON message instead of throwing", async () => {
-    const provider = new DeepgramSttProvider();
+    const provider = new DeepgramSttProvider(createNoopLogger());
     const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
     const handler = jest.fn();
     session.onFinalTranscript(handler);
@@ -243,7 +288,7 @@ describe("DeepgramSttProvider", () => {
   });
 
   it("close() sends Deepgram's documented CloseStream message before closing an open socket", async () => {
-    const provider = new DeepgramSttProvider();
+    const provider = new DeepgramSttProvider(createNoopLogger());
     const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
     lastSocket!.simulateOpen();
 
@@ -254,7 +299,7 @@ describe("DeepgramSttProvider", () => {
   });
 
   it("close() just closes, without sending CloseStream, when the socket never reached OPEN", async () => {
-    const provider = new DeepgramSttProvider();
+    const provider = new DeepgramSttProvider(createNoopLogger());
     const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
 
     await session.close();

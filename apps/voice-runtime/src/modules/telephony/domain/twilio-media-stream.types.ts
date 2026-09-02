@@ -19,7 +19,17 @@ export interface TwilioStartMessage {
 export interface TwilioMediaMessage {
   event: "media";
   streamSid: string;
-  media: { payload: string; timestamp?: string };
+  /**
+   * `track` distinguishes the caller's real audio ("inbound") from an
+   * echo of whatever THIS service already sent back to the caller
+   * ("outbound") — a bidirectional `<Connect><Stream>` reports BOTH over
+   * the same media-event channel, verified against Twilio's own docs.
+   * Optional in the type only because Twilio's other, non-bidirectional
+   * `<Start><Stream>` mode (unidirectional, not used by this build's own
+   * twiml.builder.ts) omits it; every message this service actually
+   * receives in practice carries one.
+   */
+  media: { payload: string; timestamp?: string; track?: "inbound" | "outbound" };
 }
 
 export interface TwilioStopMessage {

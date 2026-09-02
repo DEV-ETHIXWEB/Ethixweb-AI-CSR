@@ -121,7 +121,25 @@ export class MediaStreamGateway {
       }
 
       if (message.event === "media") {
-        orchestrator.onAudioFrame(Buffer.from(message.media.payload, "base64"));
+        // The single most serious bug found testing a real live call: a
+        // bidirectional <Connect><Stream> echoes back everything THIS
+        // service sends the caller as its own "outbound"-track media
+        // event, on the exact same channel as the caller's real
+        // "inbound" audio — verified against Twilio's own Media Streams
+        // docs, not guessed. Forwarding every media event unfiltered (as
+        // this did before) fed the AI's own TTS output back into its own
+        // speech recognition, continuously, for the whole call —
+        // Deepgram's VAD correctly detected near-constant "speech" (real
+        // audio energy, just half of it our own voice) but could never
+        // produce a coherent transcript from audio that was actually the
+        // caller and the AI talking over each other from Deepgram's
+        // point of view. This is what a real call actually surfaced as
+        // "no response for 30-40 seconds" — not a timeout or retry
+        // issue, a self-poisoned transcript that could only occasionally
+        // resolve to real text by chance.
+        if (message.media.track === "inbound") {
+          orchestrator.onAudioFrame(Buffer.from(message.media.payload, "base64"));
+        }
         return;
       }
 

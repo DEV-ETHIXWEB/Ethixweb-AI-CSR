@@ -1,5 +1,7 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import WebSocket from "ws";
+import type { StructuredLogger } from "@ethixweb/shared-kernel";
+import { APP_LOGGER } from "../../../shared/observability/app-logger.module";
 import type { SpeechToTextProvider, SpeechToTextSession } from "../domain/speech-to-text.port";
 
 const DEEPGRAM_LISTEN_URL = "wss://api.deepgram.com/v1/listen";
@@ -47,6 +49,8 @@ const DEFAULT_LANGUAGE = "multi";
 
 @Injectable()
 export class DeepgramSttProvider implements SpeechToTextProvider {
+  constructor(@Inject(APP_LOGGER) private readonly logger: StructuredLogger) {}
+
   async openSession(options: {
     sampleRateHz: number;
     encoding: "mulaw" | "linear16";
@@ -68,7 +72,7 @@ export class DeepgramSttProvider implements SpeechToTextProvider {
 
     const socket = new WebSocket(url, { headers: { Authorization: `token ${apiKey}` } });
 
-    return new DeepgramSttSession(socket);
+    return new DeepgramSttSession(socket, this.logger, { model, language });
   }
 }
 
@@ -79,19 +83,52 @@ class DeepgramSttSession implements SpeechToTextSession {
   private errorHandler: ((error: Error) => void) | null = null;
   private readonly pendingAudio: Buffer[] = [];
   private ready = false;
+  private framesSent = 0;
 
-  constructor(private readonly socket: WebSocket) {
+  constructor(
+    private readonly socket: WebSocket,
+    private readonly logger: StructuredLogger,
+    private readonly connectionInfo: { model: string; language: string },
+  ) {
     socket.on("open", () => {
       this.ready = true;
+      this.logger.info("Deepgram session opened", {
+        ...this.connectionInfo,
+        bufferedFramesFlushed: this.pendingAudio.length,
+      });
       for (const frame of this.pendingAudio.splice(0)) {
         socket.send(frame);
       }
     });
     socket.on("message", (data: WebSocket.RawData) => this.handleMessage(data));
-    socket.on("error", (error: Error) => this.errorHandler?.(error));
+    socket.on("error", (error: Error) => {
+      this.logger.error("Deepgram session error", { reason: error.message });
+      this.errorHandler?.(error);
+    });
+    // Found live, not hypothetical: a real call produced zero transcripts
+    // and zero errors — this class previously had NO close handler at
+    // all, so a Deepgram-side rejection (bad auth, an unsupported model/
+    // language/encoding combination, a mid-call disconnect) that closes
+    // the socket WITHOUT ever firing "error" was completely invisible;
+    // audio kept arriving via sendAudio() and silently vanished into a
+    // closed socket for the rest of the call. Only logs when the close
+    // wasn't this session's own close() (code 1000, or no code at all
+    // because sockets that never finished opening report none) — most
+    // real diagnostic value is in the abnormal-close case.
+    socket.on("close", (code: number, reason: Buffer) => {
+      if (code !== 1000) {
+        this.logger.warn("Deepgram session closed unexpectedly", {
+          code,
+          reason: reason.toString("utf8"),
+          framesSent: this.framesSent,
+          wasReady: this.ready,
+        });
+      }
+    });
   }
 
   sendAudio(frame: Buffer): void {
+    this.framesSent += 1;
     if (this.ready && this.socket.readyState === WebSocket.OPEN) {
       this.socket.send(frame);
     } else {
@@ -153,21 +190,52 @@ class DeepgramSttSession implements SpeechToTextSession {
       return;
     }
 
-    if (message["type"] === "Results" && message["speech_final"] === true) {
+    // Found live, not hypothetical: a real call produced zero transcripts
+    // AND zero errors — nothing anywhere logged what Deepgram was
+    // actually sending back, so there was no way to tell "no audio is
+    // reaching Deepgram" apart from "audio is arriving but never
+    // finalizing" apart from "Deepgram is rejecting the connection
+    // silently." Every Results message (interim included) is now logged
+    // at debug-equivalent detail — is_final/speech_final/transcript
+    // length/confidence, never the raw transcript text itself (this
+    // logger has no PII-redaction pipeline downstream, unlike
+    // tool_calls.input's documented redaction path).
+    if (message["type"] === "Results") {
       const channel = message["channel"] as
         { alternatives?: Array<Record<string, unknown>> } | undefined;
       const alternative = channel?.alternatives?.[0];
       const transcript =
         typeof alternative?.["transcript"] === "string" ? alternative["transcript"] : "";
+      const confidence =
+        typeof alternative?.["confidence"] === "number" ? alternative["confidence"] : 0;
+      this.logger.info("Deepgram Results event", {
+        isFinal: message["is_final"] === true,
+        speechFinal: message["speech_final"] === true,
+        transcriptLength: transcript.length,
+        confidence,
+      });
+
+      if (message["speech_final"] !== true) {
+        return;
+      }
       if (transcript.trim().length === 0) {
         // Deepgram emits a final, empty-transcript result at the tail of
         // silence — not a caller utterance, must not reach /turns as an
         // empty transcript (HandleTurnDto requires @Length(1, 8000)).
         return;
       }
-      const confidence =
-        typeof alternative?.["confidence"] === "number" ? alternative["confidence"] : 0;
       this.finalHandler?.({ transcript, confidence });
+      return;
+    }
+
+    // Deepgram's documented error frame — arrives as an ordinary JSON
+    // text message on this same socket, not a WebSocket-level "error"
+    // event, so the socket.on("error", ...) handler above never sees it.
+    if (message["type"] === "Error" || typeof message["err_code"] === "string") {
+      this.logger.error("Deepgram returned an error frame", {
+        description: message["description"],
+        errCode: message["err_code"],
+      });
     }
   }
 }
