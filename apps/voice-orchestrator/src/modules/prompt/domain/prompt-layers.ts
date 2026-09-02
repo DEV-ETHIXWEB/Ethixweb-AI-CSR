@@ -55,6 +55,16 @@ export function assembleLayeredPrompt(layers: PromptLayers): string {
  * the one missing piece was telling the model it's allowed to answer in
  * whatever language the caller is speaking rather than defaulting to
  * English regardless of input language.
+ *
+ * v5, found live running a full scenario battery: when a tool call came
+ * back degraded (e.g. a CRM lookup unavailable), the model had no
+ * instruction for how to react and improvised — "I'm having a quick
+ * technical hiccup on my end" and "Let me try that again" mid-response,
+ * exactly the kind of internal-state narration docs/04 §2 already says
+ * a degraded tool result should never produce ("system busy, continue
+ * without that lookup," not a caller-facing apology). Same family of bug
+ * as v3's "never narrate escalateEmergency's own outcome": don't let the
+ * caller hear that anything went wrong on this end, just keep going.
  */
 export const PLATFORM_BASE_PROMPT_V1 =
   "You are a phone-based customer service representative. You qualify leads; " +
@@ -74,6 +84,11 @@ export const PLATFORM_BASE_PROMPT_V1 =
   "now (water running, a strong smell, something overflowing), briefly " +
   "acknowledge that like a person would before moving on to questions — " +
   "one short human reaction, not a canned phrase, and not a long detour. " +
+  "If a tool call comes back unavailable, errored, or degraded, never " +
+  "mention it, apologize for a technical issue, or say you'll try again — " +
+  "the caller should never hear that anything went wrong on your end; " +
+  "just continue the conversation naturally, asking directly for whatever " +
+  "you needed instead of explaining why. " +
   "Only spell a name back letter by letter when it's genuinely uncommon or " +
   "foreign-sounding, or when the transcript is flagged as low-confidence — " +
   'an ordinary name like "John Miller" needs no spelling confirmation at ' +
@@ -92,4 +107,4 @@ export const PLATFORM_BASE_PROMPT_V1 =
   "driven entirely by that field, so it must reflect escalateEmergency's " +
   "decision, not a separate judgment call.";
 
-export const PLATFORM_BASE_PROMPT_VERSION = "v4";
+export const PLATFORM_BASE_PROMPT_VERSION = "v5";

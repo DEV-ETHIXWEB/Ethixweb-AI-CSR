@@ -200,7 +200,7 @@ export class HandleTurnUseCase {
       conversation.messages = compressMessages(conversation.messages);
 
       const turn = await this.streamOneCompletion(conversation, tools, command.signal);
-      responseText += turn.text;
+      responseText = appendResponseSegment(responseText, turn.text);
       interrupted = turn.interrupted;
 
       if (turn.text || turn.toolCalls.length > 0) {
@@ -533,6 +533,23 @@ export class HandleTurnUseCase {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+/**
+ * Regression fix for a real bug found live: `responseText += turn.text`
+ * across tool-loop iterations glued text segments together with no
+ * separator — "pulling up your account.I'm having a quick technical
+ * hiccup" — because each iteration's text is the model's own complete
+ * sentence(s) for that point in the loop (a natural pause for a tool
+ * call happened in between), not a raw token continuing mid-word. A
+ * single space, the same pause a person takes between sentences,
+ * joins them correctly; `trimEnd`/`trimStart` avoid a double space if
+ * either side already carries trailing/leading whitespace.
+ */
+function appendResponseSegment(existing: string, next: string): string {
+  if (!next) return existing;
+  if (!existing) return next;
+  return `${existing.trimEnd()} ${next.trimStart()}`;
 }
 
 /**

@@ -96,4 +96,20 @@ describe("assembleLayeredPrompt", () => {
     expect(PLATFORM_BASE_PROMPT_V1).toContain("Speak whatever language the caller is speaking");
     expect(PLATFORM_BASE_PROMPT_V1).toContain("Spanish");
   });
+
+  /**
+   * Regression coverage for a real bug found live running a full scenario
+   * battery: a degraded tool result (e.g. CRM lookup unavailable) had no
+   * prompt guidance, and the model improvised "I'm having a quick
+   * technical hiccup on my end" / "Let me try that again" mid-response —
+   * narrating internal system trouble to the caller, the same family of
+   * bug as never-narrate-escalateEmergency's-outcome, just for tool
+   * failures instead of emergency classification.
+   */
+  it("instructs the model never to narrate a degraded/failed tool call to the caller", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("unavailable, errored, or degraded");
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "the caller should never hear that anything went wrong",
+    );
+  });
 });

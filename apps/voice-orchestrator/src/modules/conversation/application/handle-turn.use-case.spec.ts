@@ -221,6 +221,48 @@ describe("HandleTurnUseCase", () => {
     expect(eventBus.eventsOfType("tool.completed")).toHaveLength(1);
   });
 
+  /**
+   * Regression coverage for a real bug found live running a full scenario
+   * battery: `responseText += turn.text` across tool-loop iterations glued
+   * text segments together with no separator whenever BOTH the pre-tool
+   * and post-tool segments carried real text — "pulling up your
+   * account.I'm having a quick technical hiccup," "your phone
+   * number?Let me check if this is truly an emergency." The prior test
+   * above doesn't catch this because its pre-tool segment is empty; this
+   * one exercises the case that actually broke.
+   */
+  it("joins text segments from different tool-loop iterations with a space, not a raw concatenation", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "Let me pull up your account." },
+        {
+          type: "tool_call",
+          toolCall: { id: "call-1", name: "searchCustomer", arguments: { phone: "+15551234567" } },
+        },
+        { type: "done", stopReason: "tool_use" },
+      ],
+      [
+        { type: "text_delta", text: "What's your name?" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const toolExecuted = jest.fn().mockResolvedValue({ found: false });
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "searchCustomer", handler: { execute: toolExecuted } }],
+    });
+
+    const result = await useCase.execute(
+      baseCommand({ transcript: "I need a plumber", allowedTools: ["searchCustomer"] }),
+    );
+
+    expect(result.responseText).toBe("Let me pull up your account. What's your name?");
+  });
+
   it("publishes a lead.created event and records leadId on the conversation when createLead succeeds", async () => {
     const repository = new FakeConversationRepository();
     repository.seed(baseConversation());
