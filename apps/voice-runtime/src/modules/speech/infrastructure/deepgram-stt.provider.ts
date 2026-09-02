@@ -224,6 +224,15 @@ class DeepgramSttSession implements SpeechToTextSession {
         // empty transcript (HandleTurnDto requires @Length(1, 8000)).
         return;
       }
+      // Temporary, targeted addition (not the general Results log above,
+      // which deliberately omits transcript text) — actively diagnosing
+      // a real live report that a name given in one utterance ("Akash
+      // Lakwhan") only registered as a first name, with the AI still
+      // asking for a last name. The constant noise-triggered empty
+      // speech_final cycling seen in Results logs is a real candidate
+      // for fragmenting one utterance into pieces; only the actual
+      // finalized text proves it either way.
+      this.logger.info("Deepgram finalized transcript", { transcript, confidence });
       this.finalHandler?.({ transcript, confidence });
       return;
     }

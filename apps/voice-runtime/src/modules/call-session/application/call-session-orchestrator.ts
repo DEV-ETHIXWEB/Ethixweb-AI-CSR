@@ -239,6 +239,17 @@ export class CallSessionOrchestrator {
     const log = this.logger.child({ tenantId: params.tenantId, callId: params.callId });
     const idempotencyKey = randomUUID();
     const conversationId = this.conversationId;
+    // Temporary, targeted timing/content visibility — actively diagnosing
+    // a real live report of 30-40s+ perceived response latency and a
+    // caller-given name only partially captured. Neither this turn's
+    // actual /turns round-trip duration nor its transcript text had any
+    // visibility anywhere before this; DeepgramSttSession's own finalized-
+    // transcript log (this same diagnostic pass) is the other half.
+    const turnStartedAt = Date.now();
+    log.info("finalized transcript received, starting turn", {
+      transcript: result.transcript,
+      confidence: result.confidence,
+    });
 
     let turnResult: TurnResult | null = null;
     let capacityAttempts = 0;
@@ -316,6 +327,11 @@ export class CallSessionOrchestrator {
     }
 
     this.activeTurnAbort = null;
+    log.info("turn HTTP round-trip completed", {
+      durationMs: Date.now() - turnStartedAt,
+      toolCallsExecuted: turnResult.toolCallsExecuted,
+      responseText: turnResult.responseText,
+    });
 
     if (turnResult.escalation?.action === "forward_call") {
       log.info("emergency escalation signaled — executing call transfer (docs/28 §M)", {
@@ -486,11 +502,22 @@ export class CallSessionOrchestrator {
     const abortController = new AbortController();
     this.ttsAbort = abortController;
     this.ttsPlaying = true;
+    // Temporary timing visibility (same diagnostic pass as the turn
+    // round-trip log above) — this had zero timing anywhere before,
+    // splitting a real "feels slow" report into "was it the turn's HTTP
+    // round-trip or was it TTS?" was previously impossible from logs.
+    const startedAt = Date.now();
+    let firstChunkAt: number | null = null;
+    let chunkCount = 0;
     try {
       for await (const chunk of this.tts.synthesize(text, abortController.signal)) {
         if (abortController.signal.aborted) {
           break;
         }
+        if (firstChunkAt === null) {
+          firstChunkAt = Date.now();
+        }
+        chunkCount += 1;
         sink.sendAudio(chunk);
       }
     } catch (error) {
@@ -502,6 +529,12 @@ export class CallSessionOrchestrator {
       if (this.ttsAbort === abortController) {
         this.ttsAbort = null;
       }
+      this.logger.info("TTS synthesis finished", {
+        timeToFirstChunkMs: firstChunkAt === null ? null : firstChunkAt - startedAt,
+        totalMs: Date.now() - startedAt,
+        chunkCount,
+        aborted: abortController.signal.aborted,
+      });
     }
   }
 
