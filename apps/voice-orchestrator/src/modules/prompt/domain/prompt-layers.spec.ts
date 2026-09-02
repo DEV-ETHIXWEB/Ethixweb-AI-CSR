@@ -148,4 +148,40 @@ describe("assembleLayeredPrompt", () => {
     );
     expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("even when it seems obviously urgent");
   });
+
+  /**
+   * Regression coverage for a real bug found live testing scenarios
+   * beyond the original 8: asked directly "can I talk to a real
+   * person," the model said "I'm a real person on the line with you" —
+   * a direct misrepresentation, and exactly the gatekeeping docs/03 §6's
+   * "Can I speak to someone?" row already says never to do.
+   */
+  it("instructs the model to never claim to be human, and to never gatekeep a transfer request", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("doesn't mean claiming to be human");
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "say plainly that you're an automated assistant",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "never gatekeep a transfer request with more qualifying questions",
+    );
+  });
+
+  /**
+   * Regression coverage for a real bug found live in a full
+   * qualify-to-lead scenario: createCustomer never actually succeeded
+   * (no CRM configured for the test business), so createLead was never
+   * even reached, but the model still told the caller "let me get that
+   * over to our team right now... they'll confirm timing" — a false
+   * success claim. v6's "never narrate a failure" instruction closed off
+   * honest failure language without saying what to say instead, and the
+   * model filled the gap with false success, which is worse.
+   */
+  it("instructs the model to never claim createLead succeeded unless it actually did this call", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "the same honesty rule applies to submitting the request itself",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "after createlead has actually succeeded this call",
+    );
+  });
 });
