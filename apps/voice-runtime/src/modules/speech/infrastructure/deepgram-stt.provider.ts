@@ -25,7 +25,26 @@ const DEEPGRAM_LISTEN_URL = "wss://api.deepgram.com/v1/listen";
  * `speech_final` is documented as "the end of speech has been detected",
  * matching docs/28 §B.2's requirement that only genuinely finalized
  * utterances reach voice-orchestrator's /turns endpoint.
+ *
+ * LANGUAGE: `DEEPGRAM_LANGUAGE` (default `"multi"`) is Deepgram's own
+ * multilingual code-switching mode — verified against Deepgram's current
+ * docs, not guessed: it transcribes English and Spanish (the documented
+ * pair) within the SAME call with no separate detection step, exactly
+ * what a caller switching languages mid-sentence needs. This is a real
+ * constraint, not a free choice: Deepgram's domain-tuned model variants
+ * (`nova-2-phonecall` included) only support English and explicitly do
+ * NOT support `language=multi` — only the base `nova-2`/`nova-2-general`
+ * models do. So the model default below is coupled to the language
+ * default: `multi` language pairs with base `nova-2` (small phone-audio
+ * tuning tradeoff, in exchange for Spanish support), an explicit
+ * non-multi `DEEPGRAM_LANGUAGE` keeps the phone-tuned model. An operator
+ * who sets `DEEPGRAM_MODEL` explicitly always gets exactly that model,
+ * verbatim — this default coupling only fills the gap when they haven't.
  */
+const MULTILINGUAL_MODEL = "nova-2";
+const PHONE_TUNED_MODEL = "nova-2-phonecall";
+const DEFAULT_LANGUAGE = "multi";
+
 @Injectable()
 export class DeepgramSttProvider implements SpeechToTextProvider {
   async openSession(options: {
@@ -36,12 +55,16 @@ export class DeepgramSttProvider implements SpeechToTextProvider {
     if (!apiKey) {
       throw new Error("DEEPGRAM_API_KEY is not configured");
     }
-    const model = process.env["DEEPGRAM_MODEL"] ?? "nova-2-phonecall";
+    const language = process.env["DEEPGRAM_LANGUAGE"] ?? DEFAULT_LANGUAGE;
+    const model =
+      process.env["DEEPGRAM_MODEL"] ??
+      (language === "multi" ? MULTILINGUAL_MODEL : PHONE_TUNED_MODEL);
 
     const encoding = options.encoding === "mulaw" ? "mulaw" : "linear16";
     const url =
       `${DEEPGRAM_LISTEN_URL}?encoding=${encoding}&sample_rate=${options.sampleRateHz}` +
-      `&channels=1&interim_results=true&vad_events=true&endpointing=300&model=${model}`;
+      `&channels=1&interim_results=true&vad_events=true&endpointing=300` +
+      `&model=${model}&language=${language}`;
 
     const socket = new WebSocket(url, { headers: { Authorization: `token ${apiKey}` } });
 

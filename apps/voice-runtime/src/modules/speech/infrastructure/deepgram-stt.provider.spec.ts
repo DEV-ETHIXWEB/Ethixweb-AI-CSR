@@ -89,24 +89,54 @@ describe("DeepgramSttProvider", () => {
     );
   });
 
-  it("opens the WebSocket against Deepgram's documented URL/query params and Authorization header", async () => {
+  it("opens the WebSocket against Deepgram's documented URL/query params and Authorization header, defaulting to multilingual (nova-2 + language=multi)", async () => {
     const provider = new DeepgramSttProvider();
     await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
 
     expect(lastSocket).toBeDefined();
     expect(lastSocket!.url).toBe(
-      "wss://api.deepgram.com/v1/listen?encoding=mulaw&sample_rate=8000&channels=1&interim_results=true&vad_events=true&endpointing=300&model=nova-2-phonecall",
+      "wss://api.deepgram.com/v1/listen?encoding=mulaw&sample_rate=8000&channels=1&interim_results=true&vad_events=true&endpointing=300&model=nova-2&language=multi",
     );
     expect(lastSocket!.options).toEqual({ headers: { Authorization: "token test-deepgram-key" } });
   });
 
-  it("uses DEEPGRAM_MODEL when set, instead of the nova-2-phonecall default", async () => {
+  it("uses DEEPGRAM_MODEL when set, instead of any default", async () => {
     process.env["DEEPGRAM_MODEL"] = "nova-3";
     const provider = new DeepgramSttProvider();
     await provider.openSession({ sampleRateHz: 16000, encoding: "linear16" });
 
     expect(lastSocket!.url).toContain("model=nova-3");
     expect(lastSocket!.url).toContain("encoding=linear16&sample_rate=16000");
+  });
+
+  /**
+   * Regression coverage for a real constraint verified against Deepgram's
+   * own current docs (not guessed): `language=multi` code-switching is
+   * only supported on the base `nova-2`/`nova-2-general` models — the
+   * domain-tuned variants (`nova-2-phonecall` included) only support
+   * English and do not support `multi`. The model default is coupled to
+   * the language default so the OUT-OF-THE-BOX combination always works;
+   * an operator who explicitly sets DEEPGRAM_MODEL always gets exactly
+   * that model, this coupling only fills the gap when they haven't.
+   */
+  describe("language/model coupling (Spanish/English code-switching)", () => {
+    it("falls back to the phone-tuned model when DEEPGRAM_LANGUAGE is explicitly set to a single language, not multi", async () => {
+      process.env["DEEPGRAM_LANGUAGE"] = "en";
+      const provider = new DeepgramSttProvider();
+      await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
+
+      expect(lastSocket!.url).toContain("model=nova-2-phonecall");
+      expect(lastSocket!.url).toContain("language=en");
+    });
+
+    it("respects an explicit DEEPGRAM_MODEL even when it's paired with the multilingual default language, rather than silently overriding the operator's choice", async () => {
+      process.env["DEEPGRAM_MODEL"] = "nova-3";
+      const provider = new DeepgramSttProvider();
+      await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
+
+      expect(lastSocket!.url).toContain("model=nova-3");
+      expect(lastSocket!.url).toContain("language=multi");
+    });
   });
 
   it("buffers audio frames sent before the socket opens, then flushes them in order once it does", async () => {
