@@ -42,4 +42,58 @@ describe("assembleLayeredPrompt", () => {
     expect(PLATFORM_BASE_PROMPT_V1).toContain("forward_call");
     expect(PLATFORM_BASE_PROMPT_V1).toContain("priority_notify");
   });
+
+  /**
+   * Regression coverage for a real bug found live against an actual
+   * transcript: v2 of this prompt said "Always confirm spelled names ...
+   * back to the caller" — an ordinary name got spelled back twice in one
+   * response, exactly the "robotic, current HCP behavior this platform
+   * must not repeat" docs/03 §5 itself already names as the anti-pattern.
+   * v3 makes name-spelling conditional (uncommon/foreign/low-confidence
+   * only) and explicitly bans repeating a confirmation already given.
+   */
+  it("makes name-spelling CONDITIONAL (uncommon/foreign/low-confidence), not an unconditional rule — the found-live HCP anti-pattern docs/03 §5 names", () => {
+    expect(PLATFORM_BASE_PROMPT_V1).toContain("Only spell a name back");
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("uncommon");
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("low-confidence");
+    expect(PLATFORM_BASE_PROMPT_V1).not.toContain("Always confirm spelled names");
+  });
+
+  it("instructs the model never to repeat an already-answered confirmation in the same response", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "never ask for the same confirmation twice",
+    );
+  });
+
+  it("instructs a brief human acknowledgment of real distress/active damage before moving to questions", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("upset, scared");
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("briefly");
+  });
+
+  /**
+   * Regression coverage for a second real bug found live in the same
+   * transcript: even with a correct (or incorrect) escalateEmergency
+   * classification, the model told a caller mid-flood "this doesn't quite
+   * meet our criteria for an immediate emergency dispatch" — announcing
+   * the AI's own risk determination to a distressed caller is a real
+   * liability/UX problem independent of whether the classification itself
+   * was right.
+   */
+  it("instructs the model to never narrate escalateEmergency's own outcome/determination back to the caller", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "never tell the caller your own read on how serious",
+    );
+  });
+
+  /**
+   * Regression coverage for a real capability gap closed alongside
+   * DeepgramSttProvider's switch to multilingual code-switching mode
+   * (language=multi) — Deepgram now transcribes the caller's actual
+   * spoken language, but nothing in the prompt told the model it was
+   * allowed to answer in anything but English.
+   */
+  it("instructs the model to speak whatever language the caller is speaking, not default to English", () => {
+    expect(PLATFORM_BASE_PROMPT_V1).toContain("Speak whatever language the caller is speaking");
+    expect(PLATFORM_BASE_PROMPT_V1).toContain("Spanish");
+  });
 });

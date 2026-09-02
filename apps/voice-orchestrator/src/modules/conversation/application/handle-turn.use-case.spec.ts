@@ -116,6 +116,58 @@ describe("HandleTurnUseCase", () => {
     expect(saved?.transcript[0]?.text).toBe("Hi, my water heater is broken");
   });
 
+  /**
+   * Regression coverage for a real gap found live: docs/03 §5 already
+   * claims STT confidence is "available to the LLM as part of the
+   * transcript metadata" — it wasn't. `sttConfidence` was captured on the
+   * durable transcript record and then simply discarded; the model never
+   * saw it, so the platform prompt's own conditional spelling rule had no
+   * signal to act on. This proves the model-visible message now carries a
+   * low-confidence flag, while the durable transcript record (asserted
+   * above) stays the exact raw text — the flag never pollutes the actual
+   * call record, only what the model reads.
+   */
+  describe("STT confidence signal (docs/03 §5)", () => {
+    it("flags a low-confidence transcript to the model, without touching the durable transcript record", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      const { useCase } = buildUseCase({ repository, aiProvider });
+
+      await useCase.execute(
+        baseCommand({ transcript: "It's Smith, S-M-I-T-H", sttConfidence: 0.4 }),
+      );
+
+      const sentMessage = aiProvider.requests[0]?.messages[0];
+      expect(sentMessage?.content).toContain("speech-to-text confidence was low");
+      expect(sentMessage?.content).toContain("It's Smith, S-M-I-T-H");
+      const saved = await repository.findById("tenant-1", "conv-1");
+      expect(saved?.transcript[0]?.text).toBe("It's Smith, S-M-I-T-H");
+    });
+
+    it("does NOT flag a normal-confidence transcript", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      const { useCase } = buildUseCase({ repository, aiProvider });
+
+      await useCase.execute(baseCommand({ transcript: "hi there", sttConfidence: 0.95 }));
+
+      expect(aiProvider.requests[0]?.messages[0]?.content).toBe("hi there");
+    });
+
+    it("does NOT flag a transcript with no confidence score reported at all — silence isn't evidence of low confidence", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      const { useCase } = buildUseCase({ repository, aiProvider });
+
+      await useCase.execute(baseCommand({ transcript: "hi there", sttConfidence: undefined }));
+
+      expect(aiProvider.requests[0]?.messages[0]?.content).toBe("hi there");
+    });
+  });
+
   it("throws ConversationNotFoundError for an unknown conversation", async () => {
     const { useCase } = buildUseCase();
 

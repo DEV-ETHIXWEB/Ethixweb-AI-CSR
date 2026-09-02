@@ -71,6 +71,20 @@ export interface HandleTurnResult {
 const MAX_TOOL_ITERATIONS = 5;
 
 /**
+ * Below this Deepgram confidence score, the transcript is flagged to the
+ * model as possibly-misheard (see `annotateLowConfidenceTranscript`).
+ * INFERRED, not a documented constant — 0.8 is a commonly used STT
+ * low-confidence cutoff, not a value this codebase measured. Found live:
+ * docs/03 §5 already claims "STT confidence score is available to the LLM
+ * as part of the transcript metadata" as if it were already true — it
+ * wasn't; `sttConfidence` was captured on the durable transcript record
+ * but never once appeared in the actual message sent to the model, so the
+ * platform prompt's own conditional spelling rule ("only ... when the
+ * transcript is flagged as low-confidence") had no signal to act on.
+ */
+const LOW_STT_CONFIDENCE_THRESHOLD = 0.8;
+
+/**
  * The Turn Manager (docs/03 §2's "the LLM reasons within a state"): takes
  * one finalized caller utterance, runs the LLM/tool loop until the model
  * produces a final spoken response, and returns that text for the Voice
@@ -159,7 +173,13 @@ export class HandleTurnUseCase {
       offsetMs: command.offsetMs ?? 0,
       at: new Date().toISOString(),
     });
-    conversation.messages.push({ role: "user", content: command.transcript });
+    // The DURABLE transcript record above stores the raw, verbatim text —
+    // this is a SEPARATE, annotated copy for the model's own eyes only, so
+    // the confidence flag never pollutes the actual call record.
+    conversation.messages.push({
+      role: "user",
+      content: annotateLowConfidenceTranscript(command.transcript, command.sttConfidence),
+    });
 
     const tools = this.toolRegistry
       .list()
@@ -513,4 +533,26 @@ export class HandleTurnUseCase {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+/**
+ * Translated into a plain-language note, not a raw float — an LLM reasons
+ * about "this may have been misheard" far more reliably than about
+ * whether 0.62 clears an arbitrary numeric threshold it has to infer the
+ * meaning of. `undefined` (STT provider didn't report a score) is treated
+ * as normal-confidence, not low — silence about confidence is not
+ * evidence of low confidence, and flagging every unscored turn would
+ * blunt the signal into noise the model learns to ignore.
+ */
+function annotateLowConfidenceTranscript(
+  transcript: string,
+  sttConfidence: number | undefined,
+): string {
+  if (sttConfidence === undefined || sttConfidence >= LOW_STT_CONFIDENCE_THRESHOLD) {
+    return transcript;
+  }
+  return (
+    "[speech-to-text confidence was low for this — some words, especially " +
+    `names, may be misheard] ${transcript}`
+  );
 }
