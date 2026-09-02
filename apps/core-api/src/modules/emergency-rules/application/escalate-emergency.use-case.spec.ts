@@ -60,7 +60,7 @@ describe("EscalateEmergencyUseCase", () => {
     });
   });
 
-  it("prefers the business's OWN configured rules over the platform defaults once any exist", async () => {
+  it("checks the business's OWN configured rules FIRST, but still falls back to platform defaults when nothing configured matches", async () => {
     const repository = new FakeEmergencyRuleRepository();
     repository.seed({
       id: "rule-1",
@@ -73,8 +73,15 @@ describe("EscalateEmergencyUseCase", () => {
     });
     const useCase = buildUseCase(repository);
 
-    // A default-list phrase ("burst pipe") must NOT match once the
-    // business has its own rule set — only "ac out" should.
+    // Regression coverage for a real production risk found live: this
+    // used to return isEmergency: false for "burst pipe everywhere" here,
+    // because the OLD code treated "the business has ANY configured
+    // rules" as a reason to stop checking defaults entirely — meaning a
+    // business with even one narrow custom rule silently lost every
+    // other default emergency pattern (gas leak, flooding, sewage
+    // backup, ...) the moment that one rule was added. Defaults are now
+    // always checked as a floor, never silently disabled by unrelated
+    // custom rules.
     const burstPipeResult = await useCase.execute({
       tenantId: "tenant-1",
       businessId: "business-1",
@@ -88,7 +95,13 @@ describe("EscalateEmergencyUseCase", () => {
       description: "the ac out again",
     });
 
-    expect(burstPipeResult.isEmergency).toBe(false);
+    expect(burstPipeResult).toEqual({
+      isEmergency: true,
+      severity: "critical",
+      action: "forward_call",
+      matchedPattern: "burst pipe",
+      transferDestination: null,
+    });
     expect(acResult).toEqual({
       isEmergency: true,
       severity: "critical",
@@ -96,6 +109,81 @@ describe("EscalateEmergencyUseCase", () => {
       matchedPattern: "ac out",
       transferDestination: null,
     });
+  });
+
+  it("a configured rule's severity/action wins over a default's when BOTH match the same description", async () => {
+    const repository = new FakeEmergencyRuleRepository();
+    repository.seed({
+      id: "rule-1",
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      // Same phrase as a real default pattern, but this business has
+      // decided it's only worth a priority_notify, not a full transfer.
+      keywordOrPattern: "burst pipe",
+      severity: "medium",
+      escalationAction: "priority_notify",
+      isActive: true,
+    });
+    const useCase = buildUseCase(repository);
+
+    const result = await useCase.execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      callId: "call-1",
+      description: "there's a burst pipe in the hallway",
+    });
+
+    expect(result).toEqual({
+      isEmergency: true,
+      severity: "medium",
+      action: "priority_notify",
+      matchedPattern: "burst pipe",
+      transferDestination: null,
+    });
+  });
+
+  it("matches regardless of word order — a caller's own phrasing, not the exact configured string", async () => {
+    const repository = new FakeEmergencyRuleRepository();
+    repository.seed({
+      id: "rule-1",
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      keywordOrPattern: "burst pipe",
+      severity: "critical",
+      escalationAction: "forward_call",
+      isActive: true,
+    });
+    const useCase = buildUseCase(repository);
+
+    // Regression coverage for a real production incident found live: a
+    // caller saying "a pipe burst in my basement and it's flooding fast"
+    // (word order reversed from the configured "burst pipe" pattern)
+    // returned isEmergency: false under the old plain-substring matcher.
+    const result = await useCase.execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      callId: "call-1",
+      description: "there's water everywhere, a pipe burst in my basement and it's flooding fast",
+    });
+
+    expect(result.isEmergency).toBe(true);
+    expect(result.action).toBe("forward_call");
+  });
+
+  it("does NOT false-positive on a short pattern appearing inside an unrelated word (whole-word matching)", async () => {
+    const useCase = buildUseCase();
+
+    // "gas" is a real default keyword fragment (via "gas leak"/"smell
+    // gas") — a caller mentioning an unrelated word containing "gas" as a
+    // substring must not trigger it.
+    const result = await useCase.execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      callId: "call-1",
+      description: "I need a new gasket for my kitchen faucet, it's dripping a little",
+    });
+
+    expect(result.isEmergency).toBe(false);
   });
 
   it("also checks detectedKeywords, not just the free-text description", async () => {

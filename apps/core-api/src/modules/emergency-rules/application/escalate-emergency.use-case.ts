@@ -47,9 +47,33 @@ export interface EscalateEmergencyResult {
 
 /**
  * docs/07 §5.1's rule-matching engine: keyword/pattern match against the
- * business's own `EmergencyRule` rows, falling back to
- * `DEFAULT_EMERGENCY_KEYWORDS` only when the business hasn't configured
- * any of its own — never a hardcoded decision the business can't override.
+ * business's own `EmergencyRule` rows FIRST — a configured rule's severity
+ * and action always win when it matches, so a business can still fully
+ * customize its own emergency vocabulary.
+ *
+ * `DEFAULT_EMERGENCY_KEYWORDS` is then ALWAYS checked too, as a floor, not
+ * only when a business has configured zero rules of its own. Found live,
+ * a real production risk: the previous version returned "not an
+ * emergency" the instant a business had ANY configured rules and none of
+ * them matched — meaning a business with even one narrow custom rule
+ * (e.g. just "burst pipe") silently lost every other default pattern
+ * (gas leak, flooding, sewage backup, no hot water, ...) the moment that
+ * one rule was added, with nothing anywhere surfacing that the safety net
+ * had quietly disappeared. docs/07 §5.2's own fail-safe principle — "the
+ * system defaults toward escalation, not away from it" — applies here
+ * exactly as much as it does to the catch-all below: a business's own
+ * rules should be able to ADD coverage or override severity/action for
+ * patterns they've thought about, never silently REMOVE the platform's
+ * baseline coverage for patterns they haven't.
+ *
+ * Matching is word-set-based, not a raw substring test — also found live:
+ * a caller saying "a pipe burst in my basement" never matched a
+ * configured/default "burst pipe" pattern, because a plain substring
+ * check is sensitive to word order. `matchesPattern` instead checks that
+ * every word of the pattern appears somewhere in the caller's own words,
+ * in any order — which also fixes a real false-positive the substring
+ * version had (a pattern like "gas" matching inside an unrelated word
+ * like "gasket").
  *
  * docs/07 §5.2's fail-safe default is structural here, not an afterthought:
  * any unexpected error inside the matching step itself is caught and
@@ -94,28 +118,20 @@ export class EscalateEmergencyUseCase {
         this.emergencyRuleRepository.listActiveByBusiness(db, command.tenantId, command.businessId),
       );
 
-      if (configuredRules.length > 0) {
-        const matched = configuredRules.find((rule) =>
-          haystack.includes(rule.keywordOrPattern.toLowerCase()),
-        );
-        if (matched) {
-          return {
-            isEmergency: true,
-            severity: matched.severity as EmergencySeverity,
-            action: matched.escalationAction as EmergencyAction,
-            matchedPattern: matched.keywordOrPattern,
-          };
-        }
+      const configuredMatch = configuredRules.find((rule) =>
+        matchesPattern(haystack, rule.keywordOrPattern),
+      );
+      if (configuredMatch) {
         return {
-          isEmergency: false,
-          severity: "medium",
-          action: "standard_lead",
-          matchedPattern: null,
+          isEmergency: true,
+          severity: configuredMatch.severity as EmergencySeverity,
+          action: configuredMatch.escalationAction as EmergencyAction,
+          matchedPattern: configuredMatch.keywordOrPattern,
         };
       }
 
       const defaultMatch = DEFAULT_EMERGENCY_KEYWORDS.find((entry) =>
-        haystack.includes(entry.pattern),
+        matchesPattern(haystack, entry.pattern),
       );
       if (defaultMatch) {
         return {
@@ -175,4 +191,23 @@ export class EscalateEmergencyUseCase {
       return null;
     }
   }
+}
+
+/**
+ * Word-set containment, not a substring test — see this class's own
+ * comment for why. Splits `pattern` into words and requires every one of
+ * them to appear somewhere in `haystack`'s own words, in any order, so
+ * "burst pipe" matches a caller saying "a pipe burst in my basement" just
+ * as readily as one saying "my burst pipe is flooding the kitchen".
+ * Whole-word matching (not `String.includes`) also closes a real
+ * false-positive the old substring check had — a short pattern like "gas"
+ * no longer matches inside an unrelated word like "gasket".
+ */
+function matchesPattern(haystack: string, pattern: string): boolean {
+  const patternWords = pattern.toLowerCase().match(/\w+/g) ?? [];
+  if (patternWords.length === 0) {
+    return false;
+  }
+  const haystackWords = new Set(haystack.toLowerCase().match(/\w+/g) ?? []);
+  return patternWords.every((word) => haystackWords.has(word));
 }
