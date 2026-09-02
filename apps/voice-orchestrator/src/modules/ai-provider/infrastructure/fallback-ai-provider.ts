@@ -51,6 +51,13 @@ export class FallbackAiProvider implements AiProviderPort {
     signal?: AbortSignal,
   ): AsyncIterable<AiCompletionChunk> {
     const attempted: string[] = [];
+    // Why each provider was skipped, not just that it was. Previously the
+    // `catch { continue; }` below discarded the reason entirely, so a total
+    // outage surfaced as "All AI providers failed or are unavailable: gemini"
+    // with no cause anywhere — an operator (or anyone debugging a dead call)
+    // had nothing to act on. Cost a real debugging session to a Gemini 400
+    // that was fully described in an error this loop threw away.
+    const failures: string[] = [];
     const boundedSignal = combineWithTimeout(signal);
 
     for (const provider of this.providers) {
@@ -63,7 +70,10 @@ export class FallbackAiProvider implements AiProviderPort {
       };
       try {
         probe = await breaker.execute(() => probeFirstChunk(provider, request, boundedSignal));
-      } catch {
+      } catch (error) {
+        failures.push(
+          `${provider.providerName}: ${error instanceof Error ? error.message : String(error)}`,
+        );
         continue;
       }
 
@@ -90,7 +100,9 @@ export class FallbackAiProvider implements AiProviderPort {
 
     yield {
       type: "error",
-      message: `All AI providers failed or are unavailable: ${attempted.join(", ")}`,
+      message:
+        `All AI providers failed or are unavailable: ${attempted.join(", ")}` +
+        (failures.length > 0 ? ` (${failures.join("; ")})` : ""),
       retryable: false,
     };
   }
