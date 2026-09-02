@@ -29,6 +29,10 @@ apps/*/prisma/migrations/dev-shadow/
 !.vscode/extensions.json
 *.swp
 
+# local Redis persistence snapshot — created by running `redis-server`
+# from the repo root during local dev, never real data worth keeping
+dump.rdb
+
 # terraform
 infra/terraform/**/.terraform/
 infra/terraform/**/*.tfstate

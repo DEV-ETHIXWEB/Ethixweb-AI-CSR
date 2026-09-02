@@ -28,6 +28,25 @@ interface ActiveBlock {
  * `content_block_stop`/`message_delta`), materially different in shape
  * from OpenAI's, mapped here to the same provider-agnostic
  * {@link AiCompletionChunk} union so callers never see the difference.
+ *
+ * PROMPT CACHING: found live during a cost-optimization pass — docs/03 §1
+ * itself already names why this call assembles the system prompt ONCE per
+ * call ("what makes provider-side prompt caching effective"), but nothing
+ * ever actually set a `cache_control` breakpoint, so that design intent was
+ * never realized; every turn re-billed the full system+tools+history prefix
+ * at full price. A real multi-turn phone call is exactly the agent-loop
+ * shape prompt caching exists for (docs/03 §2: turn N resends turns 1..N-1
+ * in full) — Anthropic's own measurements put this lever at a 2.5-3.7x cost
+ * reduction on that shape, the largest single lever available, with zero
+ * effect on response quality (a cache hit returns byte-identical output to
+ * a miss). Two breakpoints, the documented "agent loop" shape: one on the
+ * system prompt (tools render before system in Anthropic's request order,
+ * so this one marker covers both — allowedTools is fixed for the whole
+ * call, per HandleTurnUseCase), one on the last message (so THIS turn's
+ * full history is cached for the NEXT turn to hit). Default 5-minute TTL,
+ * deliberately not the pricier 1-hour tier — a live call's turn gaps are
+ * caller-speech-length, essentially always well under 5 minutes, so the
+ * cheaper TTL already stays warm for the whole call.
  */
 export class AnthropicAdapter implements AiProviderPort {
   readonly providerName = "anthropic";
@@ -41,6 +60,9 @@ export class AnthropicAdapter implements AiProviderPort {
     request: AiCompletionRequest,
     signal?: AbortSignal,
   ): AsyncIterable<AiCompletionChunk> {
+    const messages = request.messages.map(toAnthropicMessage);
+    markLastMessageCacheable(messages);
+
     const response = await fetch(`${this.baseUrl}/messages`, {
       method: "POST",
       headers: {
@@ -53,8 +75,10 @@ export class AnthropicAdapter implements AiProviderPort {
         stream: true,
         max_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
         temperature: request.temperature,
-        system: request.systemPrompt,
-        messages: request.messages.map(toAnthropicMessage),
+        system: [
+          { type: "text", text: request.systemPrompt, cache_control: { type: "ephemeral" } },
+        ],
+        messages,
         ...(request.tools && request.tools.length > 0
           ? { tools: request.tools.map(toAnthropicTool) }
           : {}),
@@ -170,7 +194,30 @@ function toAnthropicMessage(message: AiMessage): Record<string, unknown> {
     }
     return { role: "assistant", content };
   }
-  return { role: message.role, content: message.content };
+  // Content-block array, not a plain string — `cache_control` (see
+  // markLastMessageCacheable) can only attach to a block, never to a bare
+  // string `content` field, and every message must already be shaped this
+  // way in case IT ends up being the last one this turn.
+  return { role: message.role, content: [{ type: "text", text: message.content }] };
+}
+
+/**
+ * Marks the last content block of the last message with a cache breakpoint
+ * — see this file's class-level comment for why. A no-op on an empty array
+ * (the very first turn of a call has no prior messages yet). Mutates the
+ * already-mapped messages array in place; safe because `toAnthropicMessage`
+ * just built it fresh for this one request.
+ */
+function markLastMessageCacheable(messages: Record<string, unknown>[]): void {
+  const lastMessage = messages.at(-1);
+  if (!lastMessage) {
+    return;
+  }
+  const content = lastMessage["content"] as Record<string, unknown>[];
+  const lastBlock = content.at(-1);
+  if (lastBlock) {
+    lastBlock["cache_control"] = { type: "ephemeral" };
+  }
 }
 
 function toAnthropicTool(tool: AiToolDefinition): Record<string, unknown> {
