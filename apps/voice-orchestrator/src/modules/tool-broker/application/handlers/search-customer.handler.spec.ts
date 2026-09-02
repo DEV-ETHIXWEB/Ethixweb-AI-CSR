@@ -9,15 +9,26 @@ describe("SearchCustomerHandler", () => {
     client.postResponses.set("/internal/customers/resolve", null);
     const handler = new SearchCustomerHandler(client);
 
-    const result = await handler.execute(
-      { phone: "+15551234567", business_id: "business-1" },
-      context,
-    );
+    const result = await handler.execute({ phone: "+15551234567" }, context);
 
     expect(result).toEqual({ found: false });
     expect(client.postCalls[0]).toEqual({
       path: "/internal/customers/resolve",
       body: { businessId: "business-1", phoneE164: "+15551234567" },
+    });
+  });
+
+  it("sources businessId from context, not from model input (docs/04 §3.1)", async () => {
+    const client = new FakeCoreApiClient();
+    client.postResponses.set("/internal/customers/resolve", null);
+    const handler = new SearchCustomerHandler(client);
+    const differentContext = { tenantId: "t", businessId: "business-2", callId: "call-1" };
+
+    await handler.execute({ phone: "+15551234567" }, differentContext);
+
+    expect(client.postCalls[0]).toEqual({
+      path: "/internal/customers/resolve",
+      body: { businessId: "business-2", phoneE164: "+15551234567" },
     });
   });
 
@@ -30,10 +41,7 @@ describe("SearchCustomerHandler", () => {
     });
     const handler = new SearchCustomerHandler(client);
 
-    const result = await handler.execute(
-      { phone: "+15551234567", business_id: "business-1" },
-      context,
-    );
+    const result = await handler.execute({ phone: "+15551234567" }, context);
 
     expect(result).toEqual({
       found: true,

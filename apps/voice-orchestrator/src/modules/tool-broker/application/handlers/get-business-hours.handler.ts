@@ -28,11 +28,11 @@ export class GetBusinessHoursHandler implements ToolHandler<
   constructor(@Inject(CORE_API_CLIENT) private readonly coreApiClient: CoreApiClientPort) {}
 
   async execute(
-    input: GetBusinessHoursInput,
-    _context: ToolHandlerContext,
+    _input: GetBusinessHoursInput,
+    context: ToolHandlerContext,
   ): Promise<GetBusinessHoursOutput> {
     return this.coreApiClient.get<GetBusinessHoursOutput>(
-      `/internal/emergency-rules/business-hours?businessId=${encodeURIComponent(input.business_id)}`,
+      `/internal/emergency-rules/business-hours?businessId=${encodeURIComponent(context.businessId)}`,
     );
   }
 }

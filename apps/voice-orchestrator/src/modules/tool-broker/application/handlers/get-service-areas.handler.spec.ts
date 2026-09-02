@@ -5,7 +5,7 @@ describe("GetServiceAreasHandler", () => {
     const handler = new GetServiceAreasHandler();
 
     const result = await handler.execute(
-      { business_id: "business-1", zip: "60601" },
+      { zip: "60601" },
       { tenantId: "t", businessId: "business-1", callId: "c" },
     );
 

@@ -17,11 +17,11 @@ export interface CreateLeadOutput {
 export class CreateLeadHandler implements ToolHandler<CreateLeadInput, CreateLeadOutput> {
   constructor(@Inject(CORE_API_CLIENT) private readonly coreApiClient: CoreApiClientPort) {}
 
-  async execute(input: CreateLeadInput, _context: ToolHandlerContext): Promise<CreateLeadOutput> {
+  async execute(input: CreateLeadInput, context: ToolHandlerContext): Promise<CreateLeadOutput> {
     const result = await this.coreApiClient.post<LeadResponse>("/internal/leads", {
-      businessId: input.business_id,
+      businessId: context.businessId,
       customerId: input.customer_id,
-      callId: input.call_id,
+      callId: context.callId,
       problemSummary: input.problem_summary,
       priority: input.priority,
       leadType: input.lead_type,

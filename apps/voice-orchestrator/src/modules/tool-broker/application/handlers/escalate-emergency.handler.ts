@@ -32,11 +32,11 @@ export class EscalateEmergencyHandler implements ToolHandler<
 
   async execute(
     input: EscalateEmergencyInput,
-    _context: ToolHandlerContext,
+    context: ToolHandlerContext,
   ): Promise<EscalateEmergencyOutput> {
     return this.coreApiClient.post<EscalateEmergencyOutput>("/internal/emergency-rules/escalate", {
-      businessId: input.business_id,
-      callId: input.call_id,
+      businessId: context.businessId,
+      callId: context.callId,
       description: input.description,
       detectedKeywords: input.detected_keywords,
     });

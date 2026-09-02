@@ -22,10 +22,10 @@ export class CreateCustomerHandler implements ToolHandler<
 
   async execute(
     input: CreateCustomerInput,
-    _context: ToolHandlerContext,
+    context: ToolHandlerContext,
   ): Promise<CreateCustomerOutput> {
     const result = await this.coreApiClient.post<CustomerResponse>("/internal/customers", {
-      businessId: input.business_id,
+      businessId: context.businessId,
       name: `${input.name.first} ${input.name.last}`,
       phoneE164: input.phone,
       email: input.email,

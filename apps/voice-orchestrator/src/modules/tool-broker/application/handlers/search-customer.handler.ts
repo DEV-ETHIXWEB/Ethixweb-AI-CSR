@@ -24,12 +24,12 @@ export class SearchCustomerHandler implements ToolHandler<
 
   async execute(
     input: SearchCustomerInput,
-    _context: ToolHandlerContext,
+    context: ToolHandlerContext,
   ): Promise<SearchCustomerOutput> {
     const result = await this.coreApiClient.post<CustomerResponse | null>(
       "/internal/customers/resolve",
       {
-        businessId: input.business_id,
+        businessId: context.businessId,
         phoneE164: input.phone,
       },
     );

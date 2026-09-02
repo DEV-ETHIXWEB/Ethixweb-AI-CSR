@@ -15,6 +15,21 @@ import type { ToolDefinition } from "./tool-definition";
  * (matching the fast-fail posture of its sibling read-only tools §3.6/3.9),
  * not a verbatim requirement, flagged the same way lead-lifecycle.ts flags
  * its own inferred `abandoned` transitions.
+ *
+ * `business_id`/`call_id` are DELIBERATELY absent from every schema below
+ * — found live, not hypothetical: 6 of these 8 tools previously declared
+ * them as model-fillable parameters, and a real transcript showed the
+ * model doing exactly what an undocumented, un-contextualized UUID
+ * parameter forces it to do: asking the caller "which business am I
+ * helping you with today?" (or, worse, inventing a plausible-looking but
+ * wrong UUID). `ExecuteToolUseCase` already threads the real, trusted
+ * `businessId`/`callId` into every handler via `ToolHandlerContext` — the
+ * SAME values `UpdateLeadHandler` already correctly used, the pattern
+ * every other handler now follows too. This isn't just a confusing-caller-
+ * experience fix: a model-supplied business_id is also a real
+ * cross-business data-integrity risk for any tenant with more than one
+ * business, since nothing server-side was verifying the model's own
+ * invented value against the call it was actually running on.
  */
 
 const e164 = z.string().regex(/^\+[1-9]\d{1,14}$/, "must be E.164");
@@ -22,12 +37,10 @@ const uuid = z.string().uuid();
 
 export const SearchCustomerInputSchema = z.object({
   phone: e164,
-  business_id: uuid,
 });
 export type SearchCustomerInput = z.infer<typeof SearchCustomerInputSchema>;
 
 export const CreateCustomerInputSchema = z.object({
-  business_id: uuid,
   name: z.object({ first: z.string().min(1), last: z.string().min(1) }),
   phone: e164,
   email: z.string().email().optional(),
@@ -43,8 +56,6 @@ export type CreateCustomerInput = z.infer<typeof CreateCustomerInputSchema>;
 
 export const CreateLeadInputSchema = z.object({
   customer_id: uuid,
-  business_id: uuid,
-  call_id: uuid,
   problem_summary: z.string().min(1).max(4000),
   priority: z.enum(["emergency", "urgent", "routine", "estimate"]),
   lead_type: z.enum(["residential", "commercial"]),
@@ -66,20 +77,16 @@ export const UpdateLeadInputSchema = z.object({
 export type UpdateLeadInput = z.infer<typeof UpdateLeadInputSchema>;
 
 export const GetBusinessHoursInputSchema = z.object({
-  business_id: uuid,
   at: z.string().datetime().optional(),
 });
 export type GetBusinessHoursInput = z.infer<typeof GetBusinessHoursInputSchema>;
 
 export const GetServiceAreasInputSchema = z.object({
-  business_id: uuid,
   zip: z.string().min(1),
 });
 export type GetServiceAreasInput = z.infer<typeof GetServiceAreasInputSchema>;
 
 export const EscalateEmergencyInputSchema = z.object({
-  business_id: uuid,
-  call_id: uuid,
   description: z.string().min(1),
   detected_keywords: z.array(z.string()).optional(),
 });
@@ -87,7 +94,6 @@ export type EscalateEmergencyInput = z.infer<typeof EscalateEmergencyInputSchema
 
 export const LookupPreviousCallsInputSchema = z.object({
   customer_id: uuid,
-  business_id: uuid,
   limit: z.number().int().positive().max(50).default(5),
 });
 export type LookupPreviousCallsInput = z.infer<typeof LookupPreviousCallsInputSchema>;
@@ -101,8 +107,8 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
     inputSchema: SearchCustomerInputSchema,
     jsonSchema: {
       type: "object",
-      properties: { phone: { type: "string" }, business_id: { type: "string" } },
-      required: ["phone", "business_id"],
+      properties: { phone: { type: "string" } },
+      required: ["phone"],
     },
     timeoutMs: 2000,
     retryPolicy: { maxAttempts: 3 },
@@ -116,7 +122,6 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
     jsonSchema: {
       type: "object",
       properties: {
-        business_id: { type: "string" },
         name: {
           type: "object",
           properties: { first: { type: "string" }, last: { type: "string" } },
@@ -136,7 +141,7 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
         },
         source: { type: "string", const: "ai_csr" },
       },
-      required: ["business_id", "name", "phone", "address", "source"],
+      required: ["name", "phone", "address", "source"],
     },
     timeoutMs: 3000,
     retryPolicy: { maxAttempts: 4 },
@@ -151,22 +156,13 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
       type: "object",
       properties: {
         customer_id: { type: "string" },
-        business_id: { type: "string" },
-        call_id: { type: "string" },
         problem_summary: { type: "string" },
         priority: { type: "string", enum: ["emergency", "urgent", "routine", "estimate"] },
         lead_type: { type: "string", enum: ["residential", "commercial"] },
         preferred_contact_method: { type: "string" },
         transcript_ref: { type: "string" },
       },
-      required: [
-        "customer_id",
-        "business_id",
-        "call_id",
-        "problem_summary",
-        "priority",
-        "lead_type",
-      ],
+      required: ["customer_id", "problem_summary", "priority", "lead_type"],
     },
     timeoutMs: 3000,
     retryPolicy: { maxAttempts: 5 },
@@ -201,8 +197,8 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
     inputSchema: GetBusinessHoursInputSchema,
     jsonSchema: {
       type: "object",
-      properties: { business_id: { type: "string" }, at: { type: "string" } },
-      required: ["business_id"],
+      properties: { at: { type: "string" } },
+      required: [],
     },
     timeoutMs: 1000,
     retryPolicy: { maxAttempts: 1 },
@@ -214,8 +210,8 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
     inputSchema: GetServiceAreasInputSchema,
     jsonSchema: {
       type: "object",
-      properties: { business_id: { type: "string" }, zip: { type: "string" } },
-      required: ["business_id", "zip"],
+      properties: { zip: { type: "string" } },
+      required: ["zip"],
     },
     timeoutMs: 1500,
     retryPolicy: { maxAttempts: 1 },
@@ -228,12 +224,10 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
     jsonSchema: {
       type: "object",
       properties: {
-        business_id: { type: "string" },
-        call_id: { type: "string" },
         description: { type: "string" },
         detected_keywords: { type: "array", items: { type: "string" } },
       },
-      required: ["business_id", "call_id", "description"],
+      required: ["description"],
     },
     timeoutMs: 1500,
     retryPolicy: { maxAttempts: 1 },
@@ -248,10 +242,9 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
       type: "object",
       properties: {
         customer_id: { type: "string" },
-        business_id: { type: "string" },
         limit: { type: "number" },
       },
-      required: ["customer_id", "business_id"],
+      required: ["customer_id"],
     },
     timeoutMs: 1500,
     retryPolicy: { maxAttempts: 1 },

@@ -14,10 +14,7 @@ describe("EscalateEmergencyHandler", () => {
     });
     const handler = new EscalateEmergencyHandler(client);
 
-    const result = await handler.execute(
-      { business_id: "business-1", call_id: "call-1", description: "gas leak" },
-      context,
-    );
+    const result = await handler.execute({ description: "gas leak" }, context);
 
     expect(result).toEqual({
       isEmergency: true,
@@ -34,5 +31,21 @@ describe("EscalateEmergencyHandler", () => {
         detectedKeywords: undefined,
       },
     });
+  });
+
+  it("sources businessId/callId from context, not from model input (docs/04 §3.8)", async () => {
+    const client = new FakeCoreApiClient();
+    client.postResponses.set("/internal/emergency-rules/escalate", {
+      isEmergency: false,
+      severity: "medium",
+      action: "standard_lead",
+      transferTargets: [],
+    });
+    const handler = new EscalateEmergencyHandler(client);
+    const differentContext = { tenantId: "t", businessId: "business-2", callId: "call-2" };
+
+    await handler.execute({ description: "dripping faucet" }, differentContext);
+
+    expect(client.postCalls[0]?.body).toMatchObject({ businessId: "business-2", callId: "call-2" });
   });
 });
