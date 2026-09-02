@@ -388,6 +388,84 @@ describe("HandleTurnUseCase", () => {
     });
   });
 
+  /**
+   * Regression coverage for the most serious live finding of the whole
+   * scenario battery: running the SAME unambiguous "pipe burst ...
+   * flooding fast" description 10 times against the real model, with the
+   * prompt already saying to ALWAYS call escalateEmergency, still missed
+   * the call entirely once — LLM sampling variance has a ceiling no
+   * prompt wording alone closes. This proves the code-level backstop:
+   * when the model ends its turn with no tool calls and escalateEmergency
+   * has never been called this conversation, the loop substitutes a
+   * synthetic escalateEmergency call for that iteration and runs one
+   * more completion round, so the model still reacts/narrates naturally
+   * — the SAME mechanism as if the model had called the tool itself.
+   */
+  it("force-calls escalateEmergency when the model ends its turn without ever having called it (deterministic safety net)", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "Let's get you help right away." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+      [
+        { type: "text_delta", text: "Connecting you now." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const escalateHandler = {
+      execute: jest.fn().mockResolvedValue({
+        isEmergency: true,
+        severity: "critical",
+        action: "forward_call",
+        transferDestination: "+15559876543",
+      }),
+    };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "escalateEmergency", handler: escalateHandler }],
+    });
+
+    const result = await useCase.execute(
+      baseCommand({
+        transcript: "a pipe burst in my basement and it's flooding fast",
+        allowedTools: ["escalateEmergency"],
+      }),
+    );
+
+    expect(escalateHandler.execute).toHaveBeenCalledTimes(1);
+    expect(escalateHandler.execute.mock.calls[0]?.[0]).toEqual({
+      description: "a pipe burst in my basement and it's flooding fast",
+    });
+    expect(result.toolCallsExecuted).toEqual(["escalateEmergency"]);
+    expect(result.escalation).toEqual({
+      severity: "critical",
+      action: "forward_call",
+      transferDestination: "+15559876543",
+    });
+    expect(result.responseText).toBe("Let's get you help right away. Connecting you now.");
+  });
+
+  it("does NOT force-call escalateEmergency when it isn't in this call's allowedTools", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const escalateHandler = { execute: jest.fn() };
+    const { useCase } = buildUseCase({
+      repository,
+      registeredTools: [{ name: "escalateEmergency", handler: escalateHandler }],
+    });
+
+    const result = await useCase.execute(
+      baseCommand({ transcript: "just checking on my appointment", allowedTools: [] }),
+    );
+
+    expect(escalateHandler.execute).not.toHaveBeenCalled();
+    expect(result.toolCallsExecuted).toEqual([]);
+  });
+
   it("omits escalation from the result when no tool call escalates", async () => {
     const repository = new FakeConversationRepository();
     repository.seed(baseConversation());

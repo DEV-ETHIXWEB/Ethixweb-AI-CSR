@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import type { IdempotencyStore, StructuredLogger } from "@ethixweb/shared-kernel";
 import { APP_LOGGER } from "../../../shared/observability/app-logger.module";
@@ -203,19 +204,46 @@ export class HandleTurnUseCase {
       responseText = appendResponseSegment(responseText, turn.text);
       interrupted = turn.interrupted;
 
-      if (turn.text || turn.toolCalls.length > 0) {
+      // Deterministic safety net, docs/07 §5.2's "fail-safe toward
+      // escalation" now enforced in code, not only prompted. Found live:
+      // running the SAME unambiguous emergency description 10 times
+      // against the real model, with the prompt already telling it to
+      // ALWAYS call escalateEmergency (never conditionally), still missed
+      // the call entirely on 1 run — LLM sampling variance has a ceiling
+      // no prompt wording alone can close. If the model is about to end
+      // its turn with no tool calls and this call has never checked even
+      // once, substitute a synthetic escalateEmergency call for this
+      // iteration — the SAME tool, SAME classification, SAME
+      // orchestrator-executed transfer a real model call would produce,
+      // just guaranteed. The loop then runs one more completion exactly
+      // as it would for any other tool call, so the model still reacts
+      // and narrates naturally rather than the call going silent.
+      // Fires at most once per conversation (message history is the
+      // source of truth, so a real model call short-circuits this on any
+      // later turn) — this targets the observed failure (the model
+      // finishes a turn having never checked at all), not every
+      // conceivable multi-turn shape.
+      const toolCalls =
+        !turn.interrupted &&
+        turn.toolCalls.length === 0 &&
+        command.allowedTools.includes("escalateEmergency") &&
+        !hasCalledEscalateEmergency(conversation)
+          ? [buildEscalationBackstopCall(command.transcript)]
+          : turn.toolCalls;
+
+      if (turn.text || toolCalls.length > 0) {
         conversation.messages.push({
           role: "assistant",
           content: turn.text,
-          ...(turn.toolCalls.length > 0 ? { toolCalls: turn.toolCalls } : {}),
+          ...(toolCalls.length > 0 ? { toolCalls } : {}),
         });
       }
 
-      if (turn.interrupted || turn.toolCalls.length === 0) {
+      if (turn.interrupted || toolCalls.length === 0) {
         break;
       }
 
-      for (const toolCall of turn.toolCalls) {
+      for (const toolCall of toolCalls) {
         toolCallsExecuted.push(toolCall.name);
         const { output, escalation: toolEscalation } = await this.runTool(
           conversation,
@@ -550,6 +578,21 @@ function appendResponseSegment(existing: string, next: string): string {
   if (!next) return existing;
   if (!existing) return next;
   return `${existing.trimEnd()} ${next.trimStart()}`;
+}
+
+/** Source of truth for "has this call ever checked" is the message history itself, not a separate flag — a real model-issued call and the backstop call below are indistinguishable here, both short-circuit the same way. */
+function hasCalledEscalateEmergency(conversation: Conversation): boolean {
+  return conversation.messages.some((message) =>
+    message.toolCalls?.some((toolCall) => toolCall.name === "escalateEmergency"),
+  );
+}
+
+function buildEscalationBackstopCall(transcript: string): AiToolCallRequest {
+  return {
+    id: randomUUID(),
+    name: "escalateEmergency",
+    arguments: { description: transcript },
+  };
 }
 
 /**
