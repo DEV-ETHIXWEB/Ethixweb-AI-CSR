@@ -16,6 +16,20 @@ export class FakeAiProvider implements AiProviderPort {
   public readonly requests: AiCompletionRequest[] = [];
   private callIndex = 0;
 
+  /**
+   * Clears recorded request/index bookkeeping without touching `responses`
+   * — for a test that wants to isolate call-start's own opening-greeting
+   * completion (StartConversationUseCase.generateGreeting) from whatever
+   * it's actually testing about the turns that follow, so `responses[0]`
+   * still means "the first turn I'm testing," not "whatever the greeting
+   * happened to consume." Never called automatically; a test (or a shared
+   * helper like an e2e spec's `startConversation()`) opts into it.
+   */
+  reset(): void {
+    this.requests.length = 0;
+    this.callIndex = 0;
+  }
+
   async *streamCompletion(
     request: AiCompletionRequest,
     _signal?: AbortSignal,

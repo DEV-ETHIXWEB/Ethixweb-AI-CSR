@@ -3,6 +3,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import type { StructuredLogger } from "@ethixweb/shared-kernel";
 import { APP_LOGGER } from "../../../shared/observability/app-logger.module";
 import { setSpanAttributes } from "../../../shared/observability/tracing";
+import { AI_PROVIDER_ROUTER, type AiProviderPort } from "../../ai-provider/domain/ai-provider.port";
 import { AssembleSystemPromptUseCase } from "../../prompt/application/assemble-system-prompt.use-case";
 import type { RuntimeContext } from "../../prompt/domain/runtime-context";
 import { EVENT_BUS, type EventBusPort } from "../../events/domain/orchestrator-event";
@@ -31,6 +32,23 @@ import {
 } from "../domain/ports/conversation-repository.port";
 
 const UNKNOWN_TO_NUMBER = "unknown";
+
+/**
+ * Not spoken to the caller, not visible to them in any way — a priming
+ * message so the model has a "user" turn to respond to (every provider's
+ * Messages-style API requires the transcript to start with one), whose
+ * actual job is to make the model open the call. Found live: docs/28 §J's
+ * documented call-start sequence never included a greeting step at all,
+ * and docs/03 §2's "Greeting" state existed only as a label nothing ever
+ * produced — every real call connected, then both sides waited in
+ * silence for the other to speak first, forever. None of this session's
+ * scripted scenario tests caught it because every one of them posted the
+ * caller's opening line as the conversation's first turn, skipping over
+ * whether the AI ever spoke unprompted — exactly the gap a real phone
+ * call, and only a real phone call, exposed.
+ */
+const GREETING_KICKOFF_MESSAGE =
+  "[The call has just connected. Greet the caller now, following your instructions.]";
 
 export interface StartConversationCommand {
   tenantId: string;
@@ -88,6 +106,7 @@ export interface StartConversationCommand {
 export class StartConversationUseCase {
   constructor(
     @Inject(CONVERSATION_REPOSITORY) private readonly repository: ConversationRepository,
+    @Inject(AI_PROVIDER_ROUTER) private readonly aiProvider: AiProviderPort,
     private readonly assembleSystemPrompt: AssembleSystemPromptUseCase,
     @Inject(EVENT_BUS) private readonly eventBus: EventBusPort,
     @Inject(CORE_API_CLIENT) private readonly coreApiClient: CoreApiClientPort,
@@ -97,7 +116,9 @@ export class StartConversationUseCase {
     @Inject(APP_LOGGER) private readonly logger: StructuredLogger,
   ) {}
 
-  async execute(command: StartConversationCommand): Promise<Conversation> {
+  async execute(
+    command: StartConversationCommand,
+  ): Promise<{ conversation: Conversation; greeting: string }> {
     setSpanAttributes({
       "ethixweb.tenant_id": command.tenantId,
       "ethixweb.business_id": command.businessId,
@@ -185,7 +206,7 @@ export class StartConversationUseCase {
         runtimeContext,
       );
 
-      const conversation = await this.repository.create({
+      const created = await this.repository.create({
         id: randomUUID(),
         tenantId: command.tenantId,
         businessId: command.businessId,
@@ -203,7 +224,27 @@ export class StartConversationUseCase {
         version: 1,
       });
 
-      return this.publishStarted(conversation, now);
+      const greeting = await this.generateGreeting(created);
+      created.messages.push(
+        { role: "user", content: GREETING_KICKOFF_MESSAGE },
+        { role: "assistant", content: greeting },
+      );
+      const saved = await this.repository.save(created);
+      if (!saved) {
+        // Nothing else can legitimately be writing to a conversation this
+        // use case only just created and hasn't returned to any caller
+        // yet — a lost CAS race here means something is genuinely wrong,
+        // not a real concurrent-writer scenario this method should try to
+        // resolve by re-reading and retrying (the pattern every OTHER
+        // caller of `save()` uses, because for them a concurrent writer is
+        // an expected, valid scenario).
+        throw new Error(
+          `Lost an impossible CAS race saving the opening greeting for a just-created conversation: ${created.id}`,
+        );
+      }
+
+      const conversation = await this.publishStarted(saved, now);
+      return { conversation, greeting };
     } catch (error) {
       await this.callAdmission
         .release(command.tenantId, reservationId)
@@ -236,5 +277,52 @@ export class StartConversationUseCase {
     });
 
     return conversation;
+  }
+
+  /**
+   * One non-tool completion, run synchronously inside call-start so the
+   * Voice Runtime has something to speak before it ever opens the mic for
+   * real — see GREETING_KICKOFF_MESSAGE's own comment for why this exists
+   * at all. Tools are deliberately omitted from the request entirely (not
+   * just an empty allowlist): nothing has been qualified yet, so there is
+   * nothing legitimate for the model to call this turn.
+   *
+   * Throws (rather than returning a placeholder) if the provider layer
+   * produced nothing usable — the same "never silently succeed with
+   * nothing to say" rule HandleTurnUseCase.streamOneCompletion already
+   * enforces for every later turn, applied here to the one turn that
+   * can't fall back on "the caller will just talk again" if it's empty,
+   * because the caller hasn't heard anything from this call yet at all.
+   * The existing call-start failure path (apology TwiML, capacity
+   * released) already handles this correctly without any changes.
+   */
+  private async generateGreeting(conversation: Conversation): Promise<string> {
+    let text = "";
+    let providerErrorMessage: string | null = null;
+
+    const stream = this.aiProvider.streamCompletion({
+      model: conversation.llmModel,
+      systemPrompt: conversation.systemPrompt,
+      messages: [{ role: "user", content: GREETING_KICKOFF_MESSAGE }],
+    });
+
+    for await (const chunk of stream) {
+      if (chunk.type === "text_delta") {
+        text += chunk.text;
+      } else if (chunk.type === "error") {
+        providerErrorMessage = chunk.message;
+        break;
+      } else if (chunk.type === "done") {
+        break;
+      }
+    }
+
+    if (!text) {
+      throw new Error(
+        `AI provider produced no opening greeting for conversation ${conversation.id}` +
+          (providerErrorMessage ? `: ${providerErrorMessage}` : ""),
+      );
+    }
+    return text;
   }
 }

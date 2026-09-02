@@ -37,7 +37,13 @@ describe("Voice Runtime local call simulator — scripted scenarios", () => {
 
     expect(orchestratorClient.startCalls).toHaveLength(1);
     expect(orchestratorClient.turnCalls).toHaveLength(1);
-    expect(tts.synthesizeCalls).toEqual(["Got it, what's the issue?"]);
+    // The opening greeting (docs/28 §J, previously missing entirely — see
+    // call-session-orchestrator.spec.ts's own regression test) is spoken
+    // first, then the real turn response.
+    expect(tts.synthesizeCalls).toEqual([
+      "Thanks for calling, how can I help?",
+      "Got it, what's the issue?",
+    ]);
     expect(sink.audioSent.length).toBeGreaterThan(0);
   });
 
@@ -52,7 +58,9 @@ describe("Voice Runtime local call simulator — scripted scenarios", () => {
     await flush();
 
     expect(orchestratorClient.turnCalls).toHaveLength(1);
-    expect(tts.synthesizeCalls).toHaveLength(0); // aborted turn never produced a response to speak
+    // Only the opening greeting was spoken — the aborted turn never
+    // produced a response to speak.
+    expect(tts.synthesizeCalls).toEqual(["Thanks for calling, how can I help?"]);
   });
 
   it("SCENARIO: duplicate turn — a retried 5xx reuses the SAME idempotencyKey (docs/28 §G)", async () => {

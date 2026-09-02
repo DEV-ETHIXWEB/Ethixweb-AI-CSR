@@ -61,7 +61,7 @@ export class ConversationsController {
   @ApiResponse({ status: 201, description: "Conversation started", type: ConversationResponseDto })
   @ApiResponse({ status: 409, description: "A conversation already exists for this callId" })
   async start(@Body() dto: StartConversationDto): Promise<ConversationResponseDto> {
-    const conversation = await this.startConversation.execute({
+    const { conversation, greeting } = await this.startConversation.execute({
       tenantId: dto.tenantId,
       businessId: dto.businessId,
       callId: dto.callId,
@@ -70,7 +70,7 @@ export class ConversationsController {
       timezone: dto.timezone,
       isEmergencyPriority: dto.isEmergencyPriority,
     });
-    return ConversationResponseDto.fromDomain(conversation);
+    return ConversationResponseDto.fromDomain(conversation, greeting);
   }
 
   @Post(":id/turns")

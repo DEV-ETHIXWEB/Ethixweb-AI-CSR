@@ -67,6 +67,13 @@ describe("CallSessionOrchestrator", () => {
         callId: "call-1",
         callerAni: "+15551234567",
       });
+      // The most serious bug found this whole build, live: every real call
+      // connected successfully and then NOTHING ever spoke, because
+      // nothing anywhere produced an opening line — both sides waited in
+      // silence for the other to speak first, forever. This asserts the
+      // fix directly: the greeting from startConversation's response must
+      // be spoken before the caller ever says anything.
+      expect(tts.synthesizeCalls).toEqual(["Thanks for calling, how can I help?"]);
 
       const session = stt.sessions[0]!;
       session.emitFinalTranscript("my sink is leaking", 0.9);
@@ -77,8 +84,36 @@ describe("CallSessionOrchestrator", () => {
       expect(orchestratorClient.turnCalls[0]?.req.allowedTools).toEqual(
         expect.arrayContaining(["escalateEmergency", "createLead", "searchCustomer"]),
       );
-      expect(tts.synthesizeCalls).toEqual(["Got it, what's the issue?"]);
+      expect(tts.synthesizeCalls).toEqual([
+        "Thanks for calling, how can I help?",
+        "Got it, what's the issue?",
+      ]);
       expect(sink.audioSent.length).toBeGreaterThan(0);
+    });
+
+    it("does not speak anything at call start, and logs a warning instead, when startConversation returns no greeting (defends against an older voice-orchestrator deployment)", async () => {
+      const { orchestrator, orchestratorClient, tts } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      orchestratorClient.startResponses = [
+        {
+          id: "conv-1",
+          tenantId: "tenant-1",
+          businessId: "business-1",
+          callId: "call-1",
+          state: "greeting",
+          llmModel: "gpt-4o",
+          leadId: null,
+          turnCount: 0,
+          startedAt: new Date().toISOString(),
+          endedAt: null,
+          endReason: null,
+          // greeting deliberately omitted
+        },
+      ];
+
+      await orchestrator.onCallStart(baseParams(), sink);
+
+      expect(tts.synthesizeCalls).toEqual([]);
     });
   });
 
@@ -200,7 +235,7 @@ describe("CallSessionOrchestrator", () => {
       await flushMicrotasks();
 
       expect(orchestratorClient.turnCalls).toHaveLength(1); // non-retryable — no retry attempted
-      expect(tts.synthesizeCalls[0]).toMatch(/trouble/i);
+      expect(tts.synthesizeCalls.at(-1)).toMatch(/trouble/i);
     });
 
     it("degrades gracefully (apology + close) when the STT provider fails to open a session", async () => {

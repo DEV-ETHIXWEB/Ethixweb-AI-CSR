@@ -15,8 +15,14 @@ export class ConversationResponseDto {
   @ApiProperty() startedAt: string;
   @ApiProperty({ nullable: true }) endedAt: string | null;
   @ApiProperty({ nullable: true }) endReason: string | null;
+  @ApiProperty({
+    required: false,
+    description:
+      "Present only on the response from POST /conversations (start) — the AI's opening line, generated once at call start, which the Voice Runtime must speak before it ever opens the mic for real. Docs/28 §J previously had no greeting step at all, so this field didn't exist on ANY response: every call connected and then both sides waited in silence for the other to speak first. Absent (not null/empty) on get/interrupt/end, which have no greeting to report.",
+  })
+  greeting?: string;
 
-  private constructor(conversation: Conversation) {
+  private constructor(conversation: Conversation, greeting?: string) {
     this.id = conversation.id;
     this.tenantId = conversation.tenantId;
     this.businessId = conversation.businessId;
@@ -28,10 +34,13 @@ export class ConversationResponseDto {
     this.startedAt = conversation.startedAt;
     this.endedAt = conversation.endedAt;
     this.endReason = conversation.endReason;
+    if (greeting !== undefined) {
+      this.greeting = greeting;
+    }
   }
 
-  static fromDomain(conversation: Conversation): ConversationResponseDto {
-    return new ConversationResponseDto(conversation);
+  static fromDomain(conversation: Conversation, greeting?: string): ConversationResponseDto {
+    return new ConversationResponseDto(conversation, greeting);
   }
 }
 

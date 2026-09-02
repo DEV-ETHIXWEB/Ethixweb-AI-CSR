@@ -35,6 +35,16 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
     };
   }
 
+  /**
+   * Call-start now also runs one non-tool completion for the opening
+   * greeting (StartConversationUseCase.generateGreeting) — real,
+   * necessary infrastructure to get a valid conversation into existence,
+   * but not what any test in this file is actually testing about the
+   * turns that follow. Resetting the fake right after a successful start
+   * keeps every existing test's assumption intact: `responses[0]` is
+   * still "the first turn I'm testing," and N turns made still means N
+   * requests recorded, exactly as before this feature existed.
+   */
   async function startConversation(overrides: Record<string, unknown> = {}) {
     const res = await sim.inject({
       method: "POST",
@@ -42,6 +52,9 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       headers: authHeader(sim.serviceToken),
       payload: startPayload(overrides),
     });
+    if (res.statusCode === 201) {
+      sim.aiProvider.reset();
+    }
     return res;
   }
 
@@ -482,7 +495,7 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
         isEmergency: true,
         severity: "critical",
         action: "forward_call",
-        transferTargets: ["+15551234567"],
+        transferDestination: "+15551234567",
       });
       sim.aiProvider.responses = [
         [
@@ -492,8 +505,6 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
               id: "call_1",
               name: "escalateEmergency",
               arguments: {
-                business_id: conversation.businessId,
-                call_id: conversation.callId,
                 description: "I smell gas in the house",
               },
             },
@@ -520,7 +531,11 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.json().toolCallsExecuted).toEqual(["escalateEmergency"]);
-      expect(res.json().transferTargets).toEqual(["+15551234567"]);
+      expect(res.json().escalation).toEqual({
+        severity: "critical",
+        action: "forward_call",
+        transferDestination: "+15551234567",
+      });
     });
   });
 

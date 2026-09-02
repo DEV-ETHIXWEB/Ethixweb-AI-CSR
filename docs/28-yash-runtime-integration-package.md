@@ -111,11 +111,14 @@ Call this when your own VAD detects the caller speaking while TTS is still playi
   "turnCount": 0,
   "startedAt": "2026-08-07T12:00:00.000Z",
   "endedAt": null,
-  "endReason": null
+  "endReason": null,
+  "greeting": "Thanks for calling All Phase Plumbing, how can I help?"
 }
 ```
 
 `state` is one of: `greeting`, `identifying`, `qualifying`, `emergency_check`, `emergency_transfer`, `confirming`, `closing`, `human_requested`, `voicemail`, `silence`, `ended`. This is informational for your own logging/dashboards — you never need to branch your own logic on it; state transitions are entirely internal to the orchestrator.
+
+**`greeting` (present ONLY on the response from `POST /conversations`, absent on interrupt/end/get — check with `if (response.greeting)`, not a null check):** the AI's opening line, generated once at call start. **Your runtime MUST speak this before opening the mic for real.** This closes the single most serious gap found in this whole build, live: every real call connected successfully through this entire contract — webhook answered, Media Stream opened, `POST /conversations` returned 201 — and then NOTHING ever spoke, because no version of this document before now ever specified a greeting step at all. Both sides waited in silence for the other to speak first, forever; a caller hearing dead air on connect reasonably assumes the call itself failed to go through. If your runtime does not speak `greeting` immediately after call-start succeeds, your integration has this exact bug regardless of anything else in this contract being correctly implemented.
 
 Deliberately **excluded** from this response: the system prompt and raw message history. Never expect them, never build anything that depends on receiving them.
 
@@ -194,8 +197,9 @@ If your runtime's process crashes and restarts mid-call, it currently has no way
 ## J. Call-start behavior — exact sequence
 
 1. Your runtime detects a connected call, generates `callId`.
-2. `POST /conversations` with `callId` + caller info. **This call is synchronous and must succeed before you do anything else** — internally it creates a `Call` row in core-api's database first (blocking), then the conversation itself. If this call fails, the call cannot proceed through this platform; handle that failure explicitly (fallback routing, an apology message via a static TTS clip, etc. — this is a real production decision your runtime owns, not something voice-orchestrator can decide for you).
+2. `POST /conversations` with `callId` + caller info. **This call is synchronous and must succeed before you do anything else** — internally it creates a `Call` row in core-api's database first (blocking), then the conversation itself, THEN runs one non-tool LLM completion to produce the opening greeting (see §C.1's own note — this is new, and closes the most serious bug found in this whole build). If this call fails, the call cannot proceed through this platform; handle that failure explicitly (fallback routing, an apology message via a static TTS clip, etc. — this is a real production decision your runtime owns, not something voice-orchestrator can decide for you).
 3. Save the returned `conversationId`.
+4. **Speak `greeting` from the response.** Do this AFTER your STT session is open and its handlers are registered, not before — a caller barging in before the greeting finishes needs your existing barge-in mechanism to fire correctly, the same as it would mid-turn later in the call, not a special case only this one utterance needs.
 
 ## K. Finalized-turn behavior — exact sequence
 
@@ -263,7 +267,9 @@ curl -X POST https://voice-orchestrator.internal/v1/conversations \
     "toNumber": "+15559876543",
     "timezone": "America/Chicago"
   }'
-# -> 201, save response.id as CONV_ID
+# -> 201, save response.id as CONV_ID, speak response.greeting BEFORE
+#    doing anything else — see §C.1/§J, this step didn't exist before
+#    and its absence was this build's single most serious found-live bug
 
 # 2. Caller speaks, STT finalizes "Hi, my water heater is leaking"
 curl -X POST https://voice-orchestrator.internal/v1/conversations/$CONV_ID/turns \

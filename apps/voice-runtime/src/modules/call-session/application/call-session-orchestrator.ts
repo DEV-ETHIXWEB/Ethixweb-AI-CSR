@@ -89,6 +89,7 @@ export class CallSessionOrchestrator {
     const log = this.logger.child({ tenantId: params.tenantId, callId: params.callId });
 
     let conversationId: string;
+    let greeting: string | undefined;
     let capacityAttempts = 0;
     for (;;) {
       try {
@@ -101,6 +102,7 @@ export class CallSessionOrchestrator {
           timezone: params.timezone,
         });
         conversationId = conversation.id;
+        greeting = conversation.greeting;
         log.info("conversation started", { conversationId: conversation.id });
         break;
       } catch (error) {
@@ -190,6 +192,28 @@ export class CallSessionOrchestrator {
         });
       });
     });
+
+    // The most serious bug found this whole build, live: every call
+    // connected successfully — Twilio routed, TwiML answered, the Media
+    // Stream opened, the conversation started — and then NOTHING ever
+    // spoke, because nothing in this class, or anywhere in docs/28 §J's
+    // documented call-start sequence, ever produced an opening line. Both
+    // sides waited in silence for the other to speak first, forever; a
+    // caller hearing dead air on connect reasonably assumes the call
+    // itself failed. Spoken AFTER the STT handlers above are already
+    // registered (not before) so barge-in works correctly if the caller
+    // starts talking before the greeting finishes — the same
+    // ttsPlaying/onSpeechStarted mechanism `speak()` already uses for
+    // every later turn, not a special case for this one.
+    if (greeting) {
+      await this.speak(greeting, sink);
+    } else {
+      // Only reachable against an older voice-orchestrator deployment
+      // that predates this fix (rolling deploy, or a stale build) — a
+      // missing greeting is a real regression back to the silent-call bug
+      // above, not a scenario to crash the call over.
+      log.warn("startConversation returned no greeting — call will open silently");
+    }
   }
 
   /** Forwards one inbound Twilio Media Stream audio frame into the live STT session. No-op if the session never opened (start already failed and the call is being torn down). */

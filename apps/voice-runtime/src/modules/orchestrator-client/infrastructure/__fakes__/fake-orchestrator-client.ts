@@ -52,6 +52,7 @@ export class FakeOrchestratorClient implements OrchestratorClientPort {
         startedAt: new Date().toISOString(),
         endedAt: null,
         endReason: null,
+        greeting: "Thanks for calling, how can I help?",
       }
     );
   }

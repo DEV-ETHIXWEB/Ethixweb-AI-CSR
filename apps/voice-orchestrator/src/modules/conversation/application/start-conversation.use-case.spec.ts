@@ -2,6 +2,7 @@ import { AssembleSystemPromptUseCase } from "../../prompt/application/assemble-s
 import type { AgentProfile, AgentProfileProvider } from "../../prompt/domain/agent-profile";
 import { FakeCoreApiClient } from "../../tool-broker/application/__fakes__/fake-core-api-client";
 import { ConversationAlreadyExistsError } from "../domain/errors";
+import { FakeAiProvider } from "./__fakes__/fake-ai-provider";
 import { FakeCallAdmissionPort } from "./__fakes__/fake-call-admission";
 import { FakeCapacityConfigProvider } from "./__fakes__/fake-capacity-config";
 import { FakeConversationRepository } from "./__fakes__/fake-conversation-repository";
@@ -26,6 +27,7 @@ function fakeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
 
 function buildUseCase(profile: AgentProfile = fakeProfile()) {
   const repository = new FakeConversationRepository();
+  const aiProvider = new FakeAiProvider();
   const eventBus = new FakeEventBus();
   const coreApiClient = new FakeCoreApiClient();
   const callAdmission = new FakeCallAdmissionPort();
@@ -34,6 +36,7 @@ function buildUseCase(profile: AgentProfile = fakeProfile()) {
   const provider: AgentProfileProvider = { getActiveProfile: async () => profile };
   const useCase = new StartConversationUseCase(
     repository,
+    aiProvider,
     new AssembleSystemPromptUseCase(provider),
     eventBus,
     coreApiClient,
@@ -45,6 +48,7 @@ function buildUseCase(profile: AgentProfile = fakeProfile()) {
   return {
     useCase,
     repository,
+    aiProvider,
     eventBus,
     coreApiClient,
     callAdmission,
@@ -57,7 +61,7 @@ describe("StartConversationUseCase", () => {
   it("creates a conversation in the greeting state with an assembled system prompt and the profile's model", async () => {
     const { useCase, eventBus } = buildUseCase();
 
-    const conversation = await useCase.execute({
+    const { conversation } = await useCase.execute({
       tenantId: "tenant-1",
       businessId: "business-1",
       callId: "call-1",
@@ -67,8 +71,59 @@ describe("StartConversationUseCase", () => {
     expect(conversation.state).toBe("greeting");
     expect(conversation.systemPrompt).toContain("Brand voice: warm.");
     expect(conversation.llmModel).toBe("gpt-4o");
-    expect(conversation.messages).toEqual([]);
     expect(eventBus.eventsOfType("conversation.started")).toHaveLength(1);
+  });
+
+  /**
+   * Regression coverage for the most serious bug found this session: a
+   * real live call connected successfully every single time but the AI
+   * never spoke — docs/28 §J's documented call-start sequence never
+   * included a greeting step at all, and every scripted scenario test
+   * this session posted the caller's opening line as the first turn,
+   * never exercising whether the AI spoke unprompted. Only a real phone
+   * call exposed it. This proves the fix: call-start now runs one
+   * non-tool completion and returns it as `greeting`, and the exchange
+   * is durably saved into the conversation's own message history so the
+   * caller's first real reply has continuity with what the AI already said.
+   */
+  it("generates an opening greeting at call start and saves it into the conversation's message history", async () => {
+    const { useCase, aiProvider } = buildUseCase();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "Thanks for calling All Phase Plumbing, how can I help?" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+
+    const { conversation, greeting } = await useCase.execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      callId: "call-1",
+      callerAni: "+15551234567",
+    });
+
+    expect(greeting).toBe("Thanks for calling All Phase Plumbing, how can I help?");
+    expect(conversation.messages).toEqual([
+      { role: "user", content: expect.stringContaining("just connected") },
+      { role: "assistant", content: greeting },
+    ]);
+    // No tools reachable for the opening greeting — nothing has been
+    // qualified yet, so there's nothing legitimate to call.
+    expect(aiProvider.requests[0]?.tools).toBeUndefined();
+  });
+
+  it("throws (rather than silently succeeding with an empty greeting) when the AI provider produces no usable opening line", async () => {
+    const { useCase, aiProvider } = buildUseCase();
+    aiProvider.responses = [[{ type: "error", message: "provider unavailable", retryable: false }]];
+
+    await expect(
+      useCase.execute({
+        tenantId: "tenant-1",
+        businessId: "business-1",
+        callId: "call-1",
+        callerAni: "+15551234567",
+      }),
+    ).rejects.toThrow(/no opening greeting/);
   });
 
   it("throws ConversationAlreadyExistsError for a second conversation on the same call_id", async () => {
@@ -203,7 +258,7 @@ describe("StartConversationUseCase", () => {
     it("reserves capacity BEFORE calling POST /internal/calls, and stores the reservationId on the conversation", async () => {
       const { useCase, coreApiClient } = buildUseCase();
 
-      const conversation = await useCase.execute({
+      const { conversation } = await useCase.execute({
         tenantId: "tenant-1",
         businessId: "business-1",
         callId: "call-1",

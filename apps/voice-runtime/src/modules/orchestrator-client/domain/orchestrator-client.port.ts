@@ -39,6 +39,17 @@ export interface ConversationResponse {
   startedAt: string;
   endedAt: string | null;
   endReason: string | null;
+  /**
+   * Present only on the response from `startConversation` — the AI's
+   * opening line, which this runtime MUST speak before it ever opens the
+   * mic for real. Found live, not hypothetical: docs/28 §J previously had
+   * no greeting step at all, so every real call connected successfully
+   * and then both sides waited in silence for the other to speak first,
+   * forever — no scripted scenario test caught it because every one of
+   * them posted the caller's opening line as the conversation's first
+   * turn, never exercising whether the AI spoke unprompted.
+   */
+  greeting?: string;
 }
 
 export interface HandleTurnRequest {
