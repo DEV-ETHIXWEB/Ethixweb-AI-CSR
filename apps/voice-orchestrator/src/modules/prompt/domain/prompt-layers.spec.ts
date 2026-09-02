@@ -130,4 +130,22 @@ describe("assembleLayeredPrompt", () => {
     );
     expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain('never say "let me try that again');
   });
+
+  /**
+   * Regression coverage for the most serious live finding of the whole
+   * scenario battery: the same unambiguous "pipe burst ... flooding
+   * fast" description, run 5 times against the real model, missed
+   * calling escalateEmergency entirely on 1 of 5 runs — "If unsure ...
+   * call escalateEmergency" gave the model an implicit excuse to skip
+   * the tool whenever it already felt confident the case was obviously
+   * urgent, exactly the case that was missed. The call has to be
+   * unconditional, not gated on the model's own uncertainty.
+   */
+  it("instructs the model to ALWAYS call escalateEmergency before further questions, not only when unsure", () => {
+    expect(PLATFORM_BASE_PROMPT_V1).not.toContain("If unsure whether something is an emergency");
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "call escalateemergency before asking any further qualifying questions",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("even when it seems obviously urgent");
+  });
 });
