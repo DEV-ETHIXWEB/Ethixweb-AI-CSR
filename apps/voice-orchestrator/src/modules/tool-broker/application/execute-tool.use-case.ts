@@ -62,7 +62,11 @@ export class ExecuteToolUseCase {
     const { definition, handler } = registered;
 
     // Stage 2: schema validation — strict, no passthrough (docs/04 §2 stage 1).
-    const parsed = definition.inputSchema.safeParse(command.arguments);
+    // Identity arguments are supplied by THIS use case, never by the model:
+    // see withAuthoritativeIdentity below.
+    const parsed = definition.inputSchema.safeParse(
+      withAuthoritativeIdentity(command, definition.jsonSchema),
+    );
     if (!parsed.success) {
       throw new ToolInputValidationError(command.toolName, formatZodIssues(parsed.error));
     }
@@ -147,6 +151,49 @@ export class ExecuteToolUseCase {
       return { status: "degraded", reason, durationMs };
     }
   }
+}
+
+/**
+ * `business_id` and `call_id` are facts about the call, not decisions the
+ * model gets to make — but every tool schema requires them and nothing in
+ * the prompt ever told the model what they are (RUNTIME CONTEXT carries the
+ * time, business hours and caller ANI, and stops there). So the model had
+ * no option but to invent a value, schema validation rejected it as a
+ * malformed uuid, and EVERY tool call failed — createLead, searchCustomer,
+ * escalateEmergency alike. Found by running a real conversation against a
+ * live LLM: the model reached for `escalateEmergency` correctly and was
+ * refused on `business_id: Invalid uuid; call_id: Invalid uuid`.
+ *
+ * Overwriting rather than defaulting is deliberate, and it is the security
+ * property as much as the fix: these values scope tenant isolation, so a
+ * model that could set them — whether by mistake or because a caller talked
+ * it into doing so — could aim a tool at another tenant's business. The
+ * caller-supplied command is the only trustworthy source, so it always
+ * wins.
+ *
+ * Only keys the tool actually declares are injected, so a tool that takes
+ * neither is left untouched and still fails closed on a genuinely bad
+ * argument.
+ */
+function withAuthoritativeIdentity(
+  command: ExecuteToolCommand,
+  jsonSchema: Record<string, unknown>,
+): unknown {
+  const properties = (jsonSchema as { properties?: Record<string, unknown> }).properties;
+  if (!properties) {
+    return command.arguments;
+  }
+  const args =
+    typeof command.arguments === "object" && command.arguments !== null
+      ? { ...(command.arguments as Record<string, unknown>) }
+      : {};
+  if ("business_id" in properties) {
+    args["business_id"] = command.businessId;
+  }
+  if ("call_id" in properties) {
+    args["call_id"] = command.callId;
+  }
+  return args;
 }
 
 function formatZodIssues(error: {

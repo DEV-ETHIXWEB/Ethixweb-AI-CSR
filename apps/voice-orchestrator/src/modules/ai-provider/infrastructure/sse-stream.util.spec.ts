@@ -85,4 +85,38 @@ describe("readSseEvents", () => {
     const response = fakeResponse(["data: only\n\n"]);
     await expect(collect(response)).resolves.toEqual(["only"]);
   });
+
+  it("frames CRLF-separated events, the form live Gemini actually sends", async () => {
+    // Regression: the framer searched only for LFLF, so a CRLF stream never
+    // produced a boundary — every event accumulated and was flushed as one
+    // concatenated blob, and each adapter's JSON.parse then failed with
+    // "Unexpected non-whitespace character after JSON". Reproduced against
+    // live Gemini before this test was written.
+    const response = fakeResponse([
+      'data: {"n":1}\r\n\r\n',
+      'data: {"n":2}\r\n\r\n',
+      'data: {"n":3}\r\n\r\n',
+    ]);
+
+    const events = await collect(response);
+
+    expect(events).toEqual(['{"n":1}', '{"n":2}', '{"n":3}']);
+    events.forEach((event) => expect(() => JSON.parse(event)).not.toThrow());
+  });
+
+  it("frames bare-CR events, the third line ending the SSE spec permits", async () => {
+    const response = fakeResponse(['data: {"n":1}\r\rdata: {"n":2}\r\r']);
+
+    await expect(collect(response)).resolves.toEqual(['{"n":1}', '{"n":2}']);
+  });
+
+  it("leaves no stray CRLF at the head of the event after a CRLF boundary", async () => {
+    // CRLFCRLF is four characters; consuming a fixed two left "\r\n" on the
+    // next event, whose data line then no longer started with "data:".
+    const response = fakeResponse([
+      'data: {"first":true}\r\n\r\ndata: {"second":true}\r\n\r\n',
+    ]);
+
+    await expect(collect(response)).resolves.toEqual(['{"first":true}', '{"second":true}']);
+  });
 });
