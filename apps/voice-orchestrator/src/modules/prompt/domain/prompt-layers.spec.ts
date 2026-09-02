@@ -107,9 +107,27 @@ describe("assembleLayeredPrompt", () => {
    * failures instead of emergency classification.
    */
   it("instructs the model never to narrate a degraded/failed tool call to the caller", () => {
-    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("unavailable, errored, or degraded");
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "unavailable, errored, rejected, or degraded",
+    );
     expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
       "the caller should never hear that anything went wrong",
     );
+  });
+
+  /**
+   * Regression coverage for a narrower live bug the v5 wording still let
+   * through on a re-run of the same battery: a caller-given phone number
+   * in the wrong format got rejected by tool-schema validation (a
+   * different code path than a "degraded" execution), and the model
+   * correctly self-corrected and retried — but said "Let me try that
+   * again" out loud first. The instruction has to name the model's own
+   * rejected arguments, not just external unavailability.
+   */
+  it("instructs the model to silently retry rejected arguments (e.g. bad phone format) rather than narrating the retry", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "a tool rejecting arguments you supplied yourself",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain('never say "let me try that again');
   });
 });
