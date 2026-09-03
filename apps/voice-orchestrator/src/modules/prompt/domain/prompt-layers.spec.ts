@@ -184,4 +184,24 @@ describe("assembleLayeredPrompt", () => {
       "after createlead has actually succeeded this call",
     );
   });
+
+  /**
+   * Regression coverage for a real live report: a caller said their full
+   * name in one breath ("Akash Lakwhan") and the model still asked for a
+   * last name — asking again for information already given is exactly
+   * the over-confirming pattern this platform is built to avoid (§5's
+   * own anti-pattern, previously only encoded for spelling, not for
+   * whether a name was already complete).
+   */
+  it("instructs the model to treat a multi-word name as first+last together, and only ask again when just one word was given", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "if they say two or more words in one breath",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "don't ask for a last name separately, you already have it",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "only ask for their last name specifically if they gave just one word",
+    );
+  });
 });
