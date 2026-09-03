@@ -14,8 +14,8 @@ import { EndConversationUseCase } from "../application/end-conversation.use-case
 import { GetConversationByCallIdUseCase } from "../application/get-conversation-by-call-id.use-case";
 import { GetConversationUseCase } from "../application/get-conversation.use-case";
 import { HandleTurnUseCase } from "../application/handle-turn.use-case";
+import { InterruptConversationUseCase } from "../application/interrupt-conversation.use-case";
 import { StartConversationUseCase } from "../application/start-conversation.use-case";
-import { TransitionConversationStateUseCase } from "../application/transition-conversation-state.use-case";
 import {
   ConversationResponseDto,
   TranscriptTurnResponseDto,
@@ -50,7 +50,7 @@ export class ConversationsController {
     private readonly endConversation: EndConversationUseCase,
     private readonly getConversation: GetConversationUseCase,
     private readonly getConversationByCallId: GetConversationByCallIdUseCase,
-    private readonly transitionState: TransitionConversationStateUseCase,
+    private readonly interruptConversation: InterruptConversationUseCase,
   ) {}
 
   @Post()
@@ -131,7 +131,16 @@ export class ConversationsController {
     // comment) — it's the only state shaped like an interrupted call
     // needs: reachable from greeting/identifying/qualifying, recovers back
     // to qualifying.
-    const conversation = await this.transitionState.execute(dto.tenantId, id, "silence");
+    //
+    // InterruptConversationUseCase (not the generic
+    // TransitionConversationStateUseCase) specifically because Voice
+    // Runtime only ever calls this endpoint when TTS was actively playing
+    // an already-fully-generated response — the FULL response was already
+    // durably saved into conversation.messages before playback even
+    // started, so without this, the model's own memory of "what I just
+    // said" would be silently wrong on every barge-in that lands mid-
+    // playback. See that use case's own comment for the full finding.
+    const conversation = await this.interruptConversation.execute(dto.tenantId, id);
     return ConversationResponseDto.fromDomain(conversation);
   }
 

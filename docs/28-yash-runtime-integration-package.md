@@ -87,6 +87,8 @@ If anything here disagrees with the actual running service, the service is corre
 
 Call this when your own VAD detects the caller speaking while TTS is still playing and there is **no turn HTTP request currently in flight**. If a turn request IS in flight when barge-in is detected, the correct action is different: **abort that in-flight HTTP request directly** (or the underlying signal, if you're calling in-process rather than over HTTP) — this endpoint is the lighter-weight, between-turns signal only. Both mechanisms are real and both matter; using only one is an incomplete barge-in implementation.
 
+Because this endpoint is ONLY ever the right call when TTS was already playing an already-fully-generated response, this also does something the state transition alone doesn't: it annotates that response in the model's own working message history as possibly cut off before the caller heard all of it. Found live: the full response text is durably saved into conversation history the moment `POST /turns` returns — before your runtime has spoken a single word of it — so without this, a caller interrupting mid-playback (the common barge-in case) left the model's own memory of "what I just said" silently wrong. This never touches the durable transcript record (still exactly what was generated, for accurate call review) or your own `responseText`/`interrupted` handling — it's internal to how the NEXT turn's LLM call sees its own prior turn.
+
 ### B.4 End — `POST /conversations/:id/end`
 
 ```json

@@ -7,6 +7,7 @@ import { EndConversationUseCase } from "./application/end-conversation.use-case"
 import { GetConversationByCallIdUseCase } from "./application/get-conversation-by-call-id.use-case";
 import { GetConversationUseCase } from "./application/get-conversation.use-case";
 import { HandleTurnUseCase } from "./application/handle-turn.use-case";
+import { InterruptConversationUseCase } from "./application/interrupt-conversation.use-case";
 import { StartConversationUseCase } from "./application/start-conversation.use-case";
 import { TransitionConversationStateUseCase } from "./application/transition-conversation-state.use-case";
 import { CONVERSATION_REPOSITORY } from "./domain/ports/conversation-repository.port";
@@ -24,6 +25,7 @@ import { ConversationsController } from "./interfaces/conversations.controller";
     GetConversationUseCase,
     GetConversationByCallIdUseCase,
     TransitionConversationStateUseCase,
+    InterruptConversationUseCase,
   ],
   exports: [StartConversationUseCase, HandleTurnUseCase, EndConversationUseCase],
 })
