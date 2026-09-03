@@ -133,3 +133,44 @@ export async function bootVoiceRuntimeSimulator(): Promise<VoiceRuntimeSimulator
 export function authHeader(serviceToken: string): { authorization: string } {
   return { authorization: `Bearer ${serviceToken}` };
 }
+
+/**
+ * `POST /conversations/:id/turns` streams newline-delimited JSON (docs/28
+ * §C.3) rather than a single JSON object — a real Voice Runtime reads the
+ * response body incrementally and speaks each `{type:"chunk"}` line as it
+ * arrives (see HttpOrchestratorClient), but a test that only cares about
+ * the FINAL result (the overwhelming majority of this suite, unconcerned
+ * with streaming itself) just needs that final `{type:"done", ...}` line
+ * — this is the direct `res.json()` replacement for exactly that case.
+ * Throws with the actual NDJSON body in the error message on anything
+ * unexpected (no "done" line at all, or an `{type:"error"}` line instead)
+ * rather than a bare "undefined" from a missing field, so a genuine
+ * streaming regression fails loudly and specifically, not as an obscure
+ * downstream assertion failure.
+ */
+export function parseTurnResult(res: { payload: string }): Record<string, unknown> {
+  const lines = res.payload
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const done = lines.find((line) => line["type"] === "done");
+  if (done) {
+    return done;
+  }
+  const errorLine = lines.find((line) => line["type"] === "error");
+  throw new Error(
+    errorLine
+      ? `Expected a "done" NDJSON line but got an "error" line instead: ${JSON.stringify(errorLine)}`
+      : `Expected a "done" NDJSON line, found none. Raw body: ${res.payload}`,
+  );
+}
+
+/** Every chunk's `text`, in the order they were streamed — for a test that specifically cares about the incremental streaming behavior itself, not just the final result. */
+export function parseTurnChunks(res: { payload: string }): string[] {
+  return res.payload
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .filter((line) => line["type"] === "chunk")
+    .map((line) => line["text"] as string);
+}

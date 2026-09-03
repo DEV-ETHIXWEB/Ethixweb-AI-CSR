@@ -8,8 +8,10 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  Res,
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
+import type { FastifyReply } from "fastify";
 import { EndConversationUseCase } from "../application/end-conversation.use-case";
 import { GetConversationByCallIdUseCase } from "../application/get-conversation-by-call-id.use-case";
 import { GetConversationUseCase } from "../application/get-conversation.use-case";
@@ -73,13 +75,45 @@ export class ConversationsController {
     return ConversationResponseDto.fromDomain(conversation, greeting);
   }
 
+  /**
+   * Streamed as newline-delimited JSON (docs/28 §C.3), NOT a single JSON
+   * response — the voice-conversation-latency optimization's headline
+   * fix, built on real measurement: a real call's first LLM completion
+   * produced real acknowledgment text alongside its tool calls, and that
+   * text sat unused for the full duration of the tool round-trip and a
+   * second completion (over a second of dead air) purely because the
+   * OLD contract only ever returned text once the entire turn — every
+   * completion, every tool call — had finished. Each `{"type":"chunk"}`
+   * line is exactly one LLM iteration's new text (see
+   * HandleTurnUseCase's own `onChunk` comment), so a caller can start
+   * speaking the model's opening acknowledgment while a tool call is
+   * still resolving in the background, the same pause a human takes
+   * before continuing a sentence.
+   *
+   * `admitTurn()` runs FIRST and is allowed to throw normally (404/409,
+   * unchanged from before this existed) — critically, BEFORE this
+   * writes any response headers. HTTP cannot change a status code once
+   * headers are sent, so the 404/409 error paths have to fully resolve
+   * strictly before any streaming commitment; only a successful
+   * admission ever reaches the `writeHead(200, ...)` line below. A
+   * genuine failure AFTER that point (the AI provider erroring mid-turn)
+   * can no longer become a different HTTP status — it becomes a
+   * `{"type":"error"}` line instead, `retryable: true` matching exactly
+   * what an uncaught error here would have produced as a 500 before
+   * (docs/28 §G: 5xx is always retryable), so Voice Runtime's existing
+   * retry-with-the-same-idempotencyKey logic needs no new case, only a
+   * new place to read the same signal from.
+   */
   @Post(":id/turns")
-  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      "Submit one finalized caller utterance; runs the LLM/tool loop and returns the text for the runtime to speak",
+      "Submit one finalized caller utterance; streams the LLM/tool loop's text as newline-delimited JSON (docs/28 §C.3) as it becomes available, ending with one 'done' line carrying the same shape as the old single-response contract",
   })
-  @ApiResponse({ status: 200, description: "The agent's response", type: TurnResultResponseDto })
+  @ApiResponse({
+    status: 200,
+    description:
+      "application/x-ndjson: zero or more {type:'chunk', text} lines, then exactly one {type:'done', ...TurnResultResponseDto} or {type:'error', message, retryable} line",
+  })
   @ApiResponse({ status: 404, description: "No such conversation for this tenant" })
   @ApiResponse({
     status: 409,
@@ -89,8 +123,9 @@ export class ConversationsController {
   async turn(
     @Param("id", ParseUUIDPipe) id: string,
     @Body() dto: HandleTurnDto,
-  ): Promise<TurnResultResponseDto> {
-    const result = await this.handleTurn.execute({
+    @Res({ passthrough: false }) reply: FastifyReply,
+  ): Promise<void> {
+    const command = {
       tenantId: dto.tenantId,
       conversationId: id,
       idempotencyKey: dto.idempotencyKey,
@@ -98,8 +133,35 @@ export class ConversationsController {
       sttConfidence: dto.sttConfidence,
       offsetMs: dto.offsetMs,
       allowedTools: dto.allowedTools,
-    });
-    return new TurnResultResponseDto(result);
+    };
+
+    // Pre-flight checks — throws normally here, no response committed
+    // yet, exactly the same 404/409 behavior as before streaming existed.
+    const admission = await this.handleTurn.admitTurn(command);
+
+    reply.raw.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8" });
+    const writeLine = (event: Record<string, unknown>): void => {
+      reply.raw.write(`${JSON.stringify(event)}\n`);
+    };
+
+    try {
+      const result =
+        admission.kind === "cached"
+          ? admission.result
+          : await admission.run((text) => writeLine({ type: "chunk", text }));
+      if (admission.kind === "cached" && result.responseText) {
+        writeLine({ type: "chunk", text: result.responseText });
+      }
+      writeLine({ type: "done", ...new TurnResultResponseDto(result) });
+    } catch (error) {
+      writeLine({
+        type: "error",
+        message: error instanceof Error ? error.message : String(error),
+        retryable: true,
+      });
+    } finally {
+      reply.raw.end();
+    }
   }
 
   @Post(":id/interrupt")

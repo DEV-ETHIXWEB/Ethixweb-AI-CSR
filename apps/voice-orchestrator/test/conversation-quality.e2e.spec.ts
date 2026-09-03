@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   authHeader,
   bootVoiceRuntimeSimulator,
+  parseTurnResult,
   type VoiceRuntimeSimulator,
 } from "./voice-runtime-simulator";
 
@@ -224,7 +225,7 @@ describe("Conversation quality — orchestration-layer correctness across turns"
       );
 
       expect(res.statusCode).toBe(200);
-      expect(res.json().toolCallsExecuted).toContain("escalateEmergency");
+      expect(parseTurnResult(res)["toolCallsExecuted"]).toContain("escalateEmergency");
       // Exactly 2 LLM completions for this turn: the model's own first
       // response (which skips the tool), then one more so the model can
       // react to the backstop's forced escalateEmergency result — not a

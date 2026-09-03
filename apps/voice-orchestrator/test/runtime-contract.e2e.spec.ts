@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   authHeader,
   bootVoiceRuntimeSimulator,
+  parseTurnResult,
   type VoiceRuntimeSimulator,
 } from "./voice-runtime-simulator";
 
@@ -129,7 +130,7 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
         },
       });
       expect(firstTurn.statusCode).toBe(200);
-      expect(firstTurn.json().responseText).toContain("Thanks for calling");
+      expect(parseTurnResult(firstTurn)["responseText"]).toContain("Thanks for calling");
 
       const interrupted = await sim.inject({
         method: "POST",
@@ -340,7 +341,7 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
         payload: turnPayload,
       });
       expect(retry.statusCode).toBe(200);
-      expect(retry.json()).toEqual(first.json());
+      expect(parseTurnResult(retry)).toEqual(parseTurnResult(first));
       expect(sim.aiProvider.requests).toHaveLength(1); // NOT re-invoked
     });
 
@@ -381,8 +382,8 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
         },
       });
 
-      expect(first.json().responseText).toContain("response one");
-      expect(second.json().responseText).toContain("response two");
+      expect(parseTurnResult(first)["responseText"]).toContain("response one");
+      expect(parseTurnResult(second)["responseText"]).toContain("response two");
       expect(sim.aiProvider.requests).toHaveLength(2);
     });
   });
@@ -432,7 +433,7 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(res.json().toolCallsExecuted).toEqual(["createLead"]);
+      expect(parseTurnResult(res)["toolCallsExecuted"]).toEqual(["createLead"]);
       // postCalls[0] is StartConversationUseCase's own POST /internal/calls
       // (the production-blocker fix's ordering guarantee, fired during the
       // shared startConversation() helper above) — the createLead tool
@@ -484,7 +485,7 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       // itself never reached the handler, so no SECOND post call happens.
       expect(sim.coreApiClient.postCalls).toHaveLength(1);
       expect(sim.coreApiClient.postCalls[0]?.path).toBe("/internal/calls");
-      expect(res.json().responseText).toContain("recovered gracefully");
+      expect(parseTurnResult(res)["responseText"]).toContain("recovered gracefully");
     });
 
     it("escalateEmergency success publishes through to the conversation without crashing the turn even when core-api is unreachable for OTHER calls in the same turn", async () => {
@@ -530,8 +531,9 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(res.json().toolCallsExecuted).toEqual(["escalateEmergency"]);
-      expect(res.json().escalation).toEqual({
+      const escalationResult = parseTurnResult(res);
+      expect(escalationResult["toolCallsExecuted"]).toEqual(["escalateEmergency"]);
+      expect(escalationResult["escalation"]).toEqual({
         severity: "critical",
         action: "forward_call",
         transferDestination: "+15551234567",
@@ -600,7 +602,7 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       const statuses = [first.statusCode, second.statusCode];
       expect(statuses.every((s) => s === 200 || s === 409)).toBe(true);
       if (first.statusCode === 200 && second.statusCode === 200) {
-        expect(first.json()).toEqual(second.json());
+        expect(parseTurnResult(first)).toEqual(parseTurnResult(second));
       }
       expect(sim.aiProvider.requests).toHaveLength(1);
     });
@@ -644,7 +646,7 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       // The call never crashes — the runtime still gets a 200 with SOME
       // spoken response, even though the tool call itself degraded.
       expect(res.statusCode).toBe(200);
-      expect(typeof res.json().responseText).toBe("string");
+      expect(typeof parseTurnResult(res)["responseText"]).toBe("string");
     });
 
     it("core-api being unreachable at call-start correctly FAILS conversation start (the FK ordering guarantee cannot be silently skipped)", async () => {
@@ -794,7 +796,7 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(res.json().responseText).toContain("no scheduling tool exists");
+      expect(parseTurnResult(res)["responseText"]).toContain("no scheduling tool exists");
       // The real proof of no-scheduling-capability: exactly one core-api
       // call happened this whole turn (StartConversationUseCase's own
       // POST /internal/calls from startConversation() above) — the
