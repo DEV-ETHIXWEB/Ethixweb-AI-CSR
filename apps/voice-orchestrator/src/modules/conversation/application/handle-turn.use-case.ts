@@ -197,10 +197,24 @@ export class HandleTurnUseCase {
     let escalation:
       { severity: string; action: string; transferDestination: string | null } | undefined;
 
+    // Voice-pipeline latency investigation (real live reports of 30-40s+
+    // perceived response time): this loop can run the LLM completion
+    // MULTIPLE sequential times per single caller turn (a tool call, or
+    // the escalateEmergency backstop, each forces one more full
+    // round-trip before responseText is complete) — and NONE of that was
+    // previously visible anywhere. voice-runtime only ever sees this
+    // method's SINGLE final HTTP response; nothing here recorded how many
+    // completions ran or how long each took. `iterationCount` is
+    // deliberately tracked here (not just inferred from log line count)
+    // so the "turn HTTP round-trip completed" log below states the exact
+    // number regardless of how the loop exits.
+    let iterationCount = 0;
+
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+      iterationCount += 1;
       conversation.messages = compressMessages(conversation.messages);
 
-      const turn = await this.streamOneCompletion(conversation, tools, command.signal);
+      const turn = await this.streamOneCompletion(conversation, tools, command.signal, iteration);
       responseText = appendResponseSegment(responseText, turn.text);
       interrupted = turn.interrupted;
 
@@ -278,6 +292,19 @@ export class HandleTurnUseCase {
     await this.saveTurnResult(conversation);
 
     const durationMs = Date.now() - startedAt;
+    // Voice-pipeline latency investigation — the ONE number that tells
+    // voice-runtime's own "turn HTTP round-trip completed" log (which
+    // measures the SAME turn from the outside, across the network hop)
+    // whether time was spent HERE (LLM completions + tool calls) or lost
+    // somewhere between the two processes. Correlate by conversationId.
+    this.logger.info("turn processing completed", {
+      tenantId: conversation.tenantId,
+      conversationId: conversation.id,
+      durationMs,
+      llmCompletions: iterationCount,
+      toolCallsExecuted,
+      responseLength: responseText.length,
+    });
     await this.eventBus.publish({
       type: "turn.finished",
       tenantId: conversation.tenantId,
@@ -356,11 +383,19 @@ export class HandleTurnUseCase {
     conversation: Conversation,
     tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>,
     signal: AbortSignal | undefined,
+    iteration: number,
   ): Promise<{ text: string; toolCalls: AiToolCallRequest[]; interrupted: boolean }> {
     let text = "";
     const toolCalls: AiToolCallRequest[] = [];
     let interrupted = false;
     let providerErrorMessage: string | null = null;
+    // Voice-pipeline latency investigation — isolates provider-network
+    // latency (time to the FIRST chunk, unavoidable no matter how this
+    // codebase's own code changes) from total generation time (grows
+    // with response length, and IS something prompt/response-length
+    // choices affect).
+    const startedAt = Date.now();
+    let firstChunkAt: number | null = null;
 
     const stream = this.aiProvider.streamCompletion(
       {
@@ -374,6 +409,9 @@ export class HandleTurnUseCase {
 
     try {
       for await (const chunk of stream) {
+        if (firstChunkAt === null) {
+          firstChunkAt = Date.now();
+        }
         if (signal?.aborted) {
           interrupted = true;
           break;
@@ -425,6 +463,18 @@ export class HandleTurnUseCase {
     if (providerErrorMessage !== null && !interrupted && !text && toolCalls.length === 0) {
       throw new Error(`AI provider completion failed: ${providerErrorMessage}`);
     }
+
+    this.logger.info("LLM completion finished", {
+      tenantId: conversation.tenantId,
+      conversationId: conversation.id,
+      iteration,
+      timeToFirstChunkMs: firstChunkAt === null ? null : firstChunkAt - startedAt,
+      totalMs: Date.now() - startedAt,
+      textLength: text.length,
+      toolCallCount: toolCalls.length,
+      toolCallNames: toolCalls.map((call) => call.name),
+      interrupted,
+    });
 
     return { text, toolCalls, interrupted };
   }
@@ -482,6 +532,17 @@ export class HandleTurnUseCase {
         status: result.status,
         durationMs: result.durationMs,
         at: new Date().toISOString(),
+      });
+      // Voice-pipeline latency investigation — the event above has no
+      // subscriber that logs it anywhere (InProcessEventBus only logs a
+      // handler THROWING, never the event itself), so tool-call duration
+      // was invisible in practice despite being computed.
+      this.logger.info("tool call finished", {
+        tenantId: conversation.tenantId,
+        conversationId: conversation.id,
+        toolName: toolCall.name,
+        status: result.status,
+        durationMs: result.durationMs,
       });
 
       if (result.status === "success") {
