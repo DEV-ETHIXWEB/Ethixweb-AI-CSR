@@ -21,6 +21,35 @@ function ndjsonResponse(lines: Array<Record<string, unknown>>) {
   });
 }
 
+/**
+ * Regression fixture for a real live-call failure: `new Response(string)`
+ * (what `ndjsonResponse` above builds) always has its whole body already
+ * buffered, so its reader reaches EOF essentially instantly regardless of
+ * whether the CLIENT code correctly stops reading after the "done" line
+ * or incorrectly keeps waiting for the stream to close — that bug was
+ * invisible to every other test in this file. This constructs a
+ * `ReadableStream` that enqueues the NDJSON bytes once and then
+ * deliberately NEVER calls `controller.close()` — exactly what a
+ * keep-alive HTTP connection that doesn't promptly signal EOF back to
+ * this specific reader looks like from `fetch`'s perspective. A client
+ * that (incorrectly) waits for the stream to close after "done" hangs
+ * forever here; the fix (stop reading once the "done"/"error" line is
+ * parsed) resolves immediately regardless.
+ */
+function ndjsonResponseThatNeverCloses(lines: Array<Record<string, unknown>>): Response {
+  const body = lines.map((line) => JSON.stringify(line)).join("\n") + "\n";
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(body));
+      // Deliberately no controller.close() — see this function's own comment.
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: { "Content-Type": "application/x-ndjson; charset=utf-8" },
+  });
+}
+
 describe("HttpOrchestratorClient", () => {
   const originalFetch = global.fetch;
 
@@ -238,6 +267,55 @@ describe("HttpOrchestratorClient", () => {
       // The done line's own "type" field must not leak into the returned
       // TurnResult — it isn't part of that shape.
       expect(result).not.toHaveProperty("type");
+    });
+
+    /**
+     * Regression test for a REAL live-call failure, not a hypothetical
+     * one: a caller's 4th turn on a real call produced total silence —
+     * voice-orchestrator's own logs showed the turn completing
+     * normally server-side, but voice-runtime never logged a
+     * completed round-trip for it at all, and no chunk was ever
+     * spoken. Root cause: this client's stream-reading loop kept
+     * calling `reader.read()` waiting for the underlying byte stream
+     * to ALSO signal EOF even after it already had the `{type:"done"}`
+     * line — turns 1-3 of that same call happened to complete because
+     * the connection closed promptly; turn 4, reusing the same
+     * keep-alive connection, didn't, and the caller said "hello, are
+     * you still there?" into genuine silence. `ndjsonResponseThatNeverCloses`
+     * reproduces exactly that: a stream that delivers the done line but
+     * never closes. Bounded by Jest's own test timeout — if this
+     * regresses, the test hangs and times out rather than failing fast,
+     * which is itself the correct signal (that IS the bug's real-world
+     * shape: silence, not an error).
+     */
+    it("resolves as soon as the {type:'done'} line arrives — does not wait for the connection to also close", async () => {
+      global.fetch = jest.fn().mockResolvedValue(
+        ndjsonResponseThatNeverCloses([
+          { type: "chunk", text: "Got it, one moment." },
+          {
+            type: "done",
+            conversationId: "conv-1",
+            responseText: "Got it, one moment.",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+        ]),
+      );
+      const client = buildClient();
+      const received: string[] = [];
+
+      const result = await client.handleTurn(
+        "conv-1",
+        { tenantId: "t1", idempotencyKey: "k1", transcript: "hi", allowedTools: [] },
+        undefined,
+        (text) => {
+          received.push(text);
+        },
+      );
+
+      expect(received).toEqual(["Got it, one moment."]);
+      expect(result.responseText).toBe("Got it, one moment.");
     });
 
     it("resolves correctly with no onChunk callback at all (streaming stays purely additive)", async () => {

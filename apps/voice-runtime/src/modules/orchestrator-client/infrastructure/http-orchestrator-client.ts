@@ -133,6 +133,28 @@ export class HttpOrchestratorClient implements OrchestratorClientPort {
     let buffer = "";
     let result: TurnResult | null = null;
 
+    // FOUND LIVE, not hypothetical: a real call's 4th turn produced a
+    // caller-audible "no response at all" — voice-orchestrator's own
+    // logs showed the turn completing normally server-side (LLM
+    // finished, "turn processing completed" logged), but voice-runtime
+    // never logged "turn HTTP round-trip completed" for it at all, and
+    // NO onChunk ever fired (no "TTS synthesis finished" either) — the
+    // caller said "hello, are you still there?" into genuine silence.
+    // Root cause: this loop kept calling `reader.read()` waiting for
+    // the underlying byte stream to ALSO signal EOF, even after it
+    // already had everything it needs from the `{type:"done"}` line —
+    // the wire contract (docs/28 §C.3) guarantees "done"/"error" is
+    // always the LAST line the server ever sends (the controller calls
+    // `reply.raw.end()` immediately after writing it), so waiting for
+    // the CONNECTION to also close on top of that is pure liability:
+    // on a keep-alive connection that doesn't promptly signal close to
+    // this specific reader (turns 1-3 of that same real call happened
+    // to complete fine; turn 4, reusing the same connection, didn't),
+    // this hangs forever with no error, no timeout short of the full
+    // 20s AbortSignal.timeout — and the caller had already hung up in
+    // frustration before that could even fire. Breaking as soon as
+    // `result` is set removes the dependency on the connection ever
+    // closing at all.
     try {
       for (;;) {
         const chunk = (await reader.read()) as { done: boolean; value: Uint8Array | undefined };
@@ -148,6 +170,19 @@ export class HttpOrchestratorClient implements OrchestratorClientPort {
             result = await this.handleTurnStreamLine(path, line, onChunk, result);
           }
           newlineIndex = buffer.indexOf("\n");
+        }
+        if (result) {
+          // Explicitly cancel rather than merely releasing the lock —
+          // there's no guarantee the response is fully drained (the
+          // whole reason this branch exists), and leaving a
+          // partially-read body behind risks the underlying connection
+          // being reused for the NEXT request with stale bytes still
+          // buffered. `cancel()` tells fetch's implementation this
+          // response is being deliberately abandoned, so it can decide
+          // whether the connection is safe to keep alive or must be
+          // closed — not something this code should guess at itself.
+          await reader.cancel();
+          return result;
         }
       }
     } finally {
