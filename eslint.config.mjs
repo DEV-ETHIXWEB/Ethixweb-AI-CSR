@@ -94,8 +94,21 @@ export default tseslint.config(
               from: "infrastructure",
               allow: ["domain", "application", "infrastructure", "shared", "kernel-package"],
             },
-            { from: "interfaces", allow: ["application", "interfaces", "shared", "kernel-package", "module-root"] },
-            { from: "module-root", allow: ["domain", "application", "infrastructure", "interfaces", "shared", "kernel-package"] },
+            {
+              from: "interfaces",
+              allow: ["application", "interfaces", "shared", "kernel-package", "module-root"],
+            },
+            {
+              from: "module-root",
+              allow: [
+                "domain",
+                "application",
+                "infrastructure",
+                "interfaces",
+                "shared",
+                "kernel-package",
+              ],
+            },
             { from: "shared", allow: ["shared", "kernel-package"] },
             { from: "kernel-package", allow: ["kernel-package"] },
           ],
@@ -117,6 +130,19 @@ export default tseslint.config(
       "@typescript-eslint/no-unsafe-call": "off",
       "@typescript-eslint/no-unsafe-argument": "off",
       "@typescript-eslint/no-unsafe-return": "off",
+    },
+  },
+  {
+    // Standalone CLI dev tools (real-provider latency measurement
+    // scripts, etc.) run via `ts-node`, never imported by the running
+    // application — the `no-console` rule's whole rationale (production
+    // code must use the structured logger) doesn't apply: there is no
+    // logger/DI container here, only a human reading stdout, exactly
+    // like main.ts's own documented bootstrap-time exception above.
+    files: ["apps/*/scripts/**/*.ts"],
+    rules: {
+      "no-console": "off",
+      "boundaries/element-types": "off",
     },
   },
 );

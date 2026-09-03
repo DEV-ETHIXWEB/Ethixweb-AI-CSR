@@ -13,10 +13,15 @@ import type { TextToSpeechProvider } from "../domain/text-to-speech.port";
  * format natively avoids adding a resampling/codec dependency to this
  * service entirely (the "no dependency beyond what's needed" boundary from
  * this build's own scope). Single-shot synthesis (whole `text` sent as one
- * message, then flush) rather than incremental multi-chunk sends: a turn's
- * `responseText` already arrives as one complete string from
- * voice-orchestrator (docs/28 §K: "speak responseText from the response"),
- * so there is no incremental text source to stream INTO this adapter.
+ * message, then flush) rather than an incrementally-fed WebSocket session:
+ * each call here already synthesizes exactly one already-complete unit of
+ * text — CallSessionOrchestrator now calls `synthesize()` once per
+ * streamed chunk (docs/28 §C.3), not once per whole turn, but each of
+ * those chunks is itself a complete natural speech segment
+ * (findSpeechSegmentBoundary, voice-orchestrator) by the time it reaches
+ * here, not a partial/growing string — so there is still no benefit to
+ * feeding THIS adapter incrementally, only to calling it more than once
+ * per turn, which the caller already does.
  */
 @Injectable()
 export class ElevenLabsTtsProvider implements TextToSpeechProvider {
