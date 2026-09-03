@@ -204,4 +204,23 @@ describe("assembleLayeredPrompt", () => {
       "only ask for their last name specifically if they gave just one word",
     );
   });
+
+  /**
+   * v10, found by running real multi-turn conversations against the live
+   * model (scripts/measure-conversation-quality.ts): given only a first
+   * name, the model correctly understood a last name was still needed
+   * but never actually asked for it when a more urgent-feeling
+   * qualifying question came up instead — v9's rule only ever stated
+   * the CONDITION for asking (one word vs. two-plus), never that
+   * following through on the ask mattered. This is the priority
+   * clarification that closes that gap.
+   */
+  it("instructs the model that an incomplete (first-name-only) name must still get followed up before the call ends, even if other questions come first", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "make sure you actually circle back and get it before the call ends",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "a lead with only a first name is an incomplete record",
+    );
+  });
 });

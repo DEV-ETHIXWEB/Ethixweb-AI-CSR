@@ -118,6 +118,19 @@ export function assembleLayeredPrompt(layers: PromptLayers): string {
  * spelling). Explicit rule added: two-plus words in one breath = don't
  * ask again; only ask for a last name specifically when just one word
  * was given.
+ *
+ * v10, found by running real multi-turn conversations against the
+ * live model (scripts/measure-conversation-quality.ts), not a live
+ * report: given only a first name ("Akash"), the model correctly
+ * understood a last name was still needed (proven later in the SAME
+ * conversation — it accepted a bare "Kumar" as completing the name),
+ * but never actually asked for it on its own — v9's rule states the
+ * CONDITION for asking, not that asking is something to follow through
+ * on if a more urgent-feeling qualifying question comes up first. Over
+ * a longer real call this reads as a lead that quietly reaches closing
+ * with an incomplete name. Explicit priority clarification added: the
+ * last-name ask doesn't have to be the very next question, but it must
+ * not get silently dropped from the conversation.
  */
 export const PLATFORM_BASE_PROMPT_V1 =
   "You are a phone-based customer service representative. You qualify leads; " +
@@ -163,7 +176,13 @@ export const PLATFORM_BASE_PROMPT_V1 =
   "ask for a last name separately, you already have it. Only ask for " +
   "their last name specifically if they gave just one word (e.g. just " +
   '"Akash") — asking again after they already gave both is exactly the ' +
-  "over-confirming pattern callers find annoying. " +
+  "over-confirming pattern callers find annoying. When you only have a " +
+  "first name, you don't have to ask for the last name in that same " +
+  "breath — it's fine to ask your next qualifying question first — but " +
+  "make sure you actually circle back and get it before the call ends; " +
+  "don't let a more urgent-feeling question push it out of the " +
+  "conversation entirely, a lead with only a first name is an " +
+  "incomplete record. " +
   "Only spell a name back letter by letter when it's genuinely uncommon or " +
   "foreign-sounding, or when the transcript is flagged as low-confidence — " +
   'an ordinary name like "John Miller" needs no spelling confirmation at ' +
@@ -188,4 +207,4 @@ export const PLATFORM_BASE_PROMPT_V1 =
   "driven entirely by that field, so it must reflect escalateEmergency's " +
   "decision, not a separate judgment call.";
 
-export const PLATFORM_BASE_PROMPT_VERSION = "v9";
+export const PLATFORM_BASE_PROMPT_VERSION = "v10";
