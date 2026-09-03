@@ -365,6 +365,99 @@ describe("HandleTurnUseCase", () => {
 
       expect(chunks).toEqual([replayed.responseText]);
     });
+
+    /**
+     * The actual "does the caller hear speech before the ENTIRE LLM turn
+     * finishes" proof for the overwhelmingly common case: a turn with NO
+     * tool call at all (a single completion/iteration). Before
+     * `findSpeechSegmentBoundary` existed, `onChunk` only ever flushed
+     * once per LOOP ITERATION — for exactly this single-iteration case,
+     * that meant one flush AFTER the provider had already finished
+     * streaming its entire response server-side, no earlier than the
+     * pre-streaming contract ever was. Scripting several small
+     * `text_delta` chunks (mirroring how a real provider actually
+     * streams — a handful of tokens per delta, not the whole sentence at
+     * once) is what makes this test meaningfully different from the
+     * "fires once per iteration" test above, where each iteration's text
+     * arrives as a single delta already short enough to never hit a
+     * boundary before the end.
+     */
+    it("fires MULTIPLE times within a single LLM completion, at natural sentence boundaries, not only once at the very end", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          { type: "text_delta", text: "Okay, I completely understand" },
+          { type: "text_delta", text: " how frustrating that must be for you. " },
+          { type: "text_delta", text: "Let me ask you one quick question: " },
+          { type: "text_delta", text: "is the unit blowing warm air, " },
+          { type: "text_delta", text: "or barely any air at all?" },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const { useCase } = buildUseCase({ aiProvider, repository });
+      const chunks: string[] = [];
+
+      const result = await useCase.execute(
+        baseCommand({ transcript: "My AC stopped cooling" }),
+        (text) => chunks.push(text),
+      );
+
+      // MORE than one chunk from this single completion — the actual
+      // proof that speech starts before the whole turn finished
+      // generating, not just before the whole TOOL LOOP finished. The
+      // first sentence alone is 67 characters (well past
+      // MIN_SPEECH_SEGMENT_CHARS), so it flushes as its own segment
+      // instead of waiting for the second sentence too.
+      expect(chunks.length).toBeGreaterThan(1);
+      expect(chunks[0]).toBe("Okay, I completely understand how frustrating that must be for you.");
+      // Every chunk is a real sentence/clause, not a lone word or a
+      // ragged one-character fragment — Step 3's own "bad" example.
+      for (const chunk of chunks) {
+        expect(chunk.trim().length).toBeGreaterThanOrEqual(10);
+      }
+      // Nothing lost, nothing duplicated, nothing reordered — joining
+      // every chunk back together reproduces the exact full response.
+      const fullText =
+        "Okay, I completely understand how frustrating that must be for you. Let me ask you one quick question: is the unit blowing warm air, or barely any air at all?";
+      expect(chunks.join("")).toBe(fullText);
+      expect(result.responseText).toBe(fullText);
+    });
+
+    it("never splits a decimal number or a time-of-day abbreviation across two spoken chunks", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          {
+            type: "text_delta",
+            text:
+              "That service call is typically around $3.50 per mile, and we're open 9 a.m. to 5 p.m. " +
+              "on weekdays, so someone can definitely get out to you today if you'd like.",
+          },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const { useCase } = buildUseCase({ aiProvider, repository });
+      const chunks: string[] = [];
+
+      await useCase.execute(baseCommand({ transcript: "How much does a visit cost" }), (text) =>
+        chunks.push(text),
+      );
+
+      // The actual failure mode this guards against: without it, the
+      // period in "a.m." that's followed by whitespace (the one right
+      // before "to") looks exactly like a sentence end to the base
+      // regex, splitting the coherent time-range phrase into "...9
+      // a.m." as one chunk and "to 5 p.m. on weekdays..." as the next —
+      // two disconnected, confusing fragments when spoken. Neither
+      // "$3.50" nor "9 a.m. to 5 p.m." should ever be broken across a
+      // chunk boundary — each must appear intact within a single chunk.
+      expect(chunks.some((chunk) => chunk.includes("$3.50"))).toBe(true);
+      expect(chunks.some((chunk) => chunk.includes("9 a.m. to 5 p.m."))).toBe(true);
+    });
   });
 
   /**

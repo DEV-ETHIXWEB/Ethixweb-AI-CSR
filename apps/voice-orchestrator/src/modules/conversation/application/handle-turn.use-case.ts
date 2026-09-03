@@ -125,13 +125,16 @@ export class HandleTurnUseCase {
   ) {}
 
   /**
-   * `onChunk`, when supplied, fires once per LLM completion iteration
-   * with exactly the NEW text that iteration produced (never the
-   * cumulative total — the caller decides how to join what it's already
-   * spoken with what's new). Purely additive: every existing caller that
-   * omits it gets byte-for-byte the same behavior as before this
-   * existed — the return value is always the complete aggregate result
-   * regardless of whether a callback was given.
+   * `onChunk`, when supplied, fires once per natural speech segment
+   * (see `findSpeechSegmentBoundary`) as text streams in from the
+   * provider — potentially several times within a single LLM
+   * completion, not just once per tool-loop iteration — with exactly
+   * the NEW text that segment contains (never the cumulative total —
+   * the caller decides how to join what it's already spoken with
+   * what's new). Purely additive: every existing caller that omits it
+   * gets byte-for-byte the same behavior as before this existed — the
+   * return value is always the complete aggregate result regardless of
+   * whether a callback was given.
    *
    * This exists because of a real, MEASURED finding, not a guess: a real
    * call's first LLM completion produced real acknowledgment text
@@ -139,11 +142,14 @@ export class HandleTurnUseCase {
    * duration of the tool round-trip and the second completion (over a
    * second of dead air) purely because the old contract only ever
    * returned text once the ENTIRE turn — every completion, every tool
-   * call — had finished. `runTurn`'s own loop already pushes one
-   * message to `conversation.messages` per iteration; this only exposes
-   * that same, already-iteration-shaped text to the caller as it's
-   * produced, it does not change the loop's structure, ordering, or any
-   * of its tool-call/escalation/idempotency semantics.
+   * call — had finished. The FIRST version of this fix only flushed once
+   * per tool-loop iteration, which closed that specific gap but did
+   * nothing for the far more common case of a turn with NO tool call at
+   * all (a single iteration) — there, one flush per iteration means one
+   * flush after the ENTIRE completion already finished generating
+   * server-side, no earlier than before streaming existed.
+   * `streamOneCompletion`'s own sentence-boundary flushing is what
+   * actually fixes that common case too.
    *
    * On an idempotent REPLAY (a Voice Runtime retry of an already-
    * completed turn), `onChunk` still fires exactly once, with the full
@@ -298,17 +304,20 @@ export class HandleTurnUseCase {
       iterationCount += 1;
       conversation.messages = compressMessages(conversation.messages);
 
-      const turn = await this.streamOneCompletion(conversation, tools, command.signal, iteration);
+      const turn = await this.streamOneCompletion(
+        conversation,
+        tools,
+        command.signal,
+        iteration,
+        onChunk,
+      );
       responseText = appendResponseSegment(responseText, turn.text);
       interrupted = turn.interrupted;
-      // Streamed to the caller as soon as it exists — see execute()'s own
-      // comment for why. Deliberately `turn.text` (this iteration's NEW
-      // text only), never `responseText` (the running total) — the
-      // caller is responsible for its own join, exactly like
-      // appendResponseSegment does here, not for re-speaking anything.
-      if (turn.text) {
-        onChunk?.(turn.text);
-      }
+      // Sub-segment flushing (natural sentence/clause boundaries) already
+      // happened INSIDE streamOneCompletion as this iteration's own text
+      // streamed in — see that method's own comment. Nothing left to
+      // flush here; calling onChunk again with `turn.text` would re-speak
+      // this whole iteration's text a second time.
 
       // Deterministic safety net, docs/07 §5.2's "fail-safe toward
       // escalation" now enforced in code, not only prompted. Found live:
@@ -471,13 +480,38 @@ export class HandleTurnUseCase {
     }
   }
 
+  /**
+   * `onChunk`, when supplied, fires potentially SEVERAL times during this
+   * one completion — at natural speech boundaries (see
+   * `findSpeechSegmentBoundary`) as text streams in from the provider,
+   * not just once at the end. This is the actual "does the caller hear
+   * the first safe chunk before the entire LLM turn finishes" fix: the
+   * `onChunk` plumbing added earlier (see `execute()`'s own comment)
+   * only ever flushed once per LOOP ITERATION in `runTurn` — for the
+   * overwhelmingly common case of a turn with no tool call (a single
+   * iteration), that meant `onChunk` fired exactly once, AFTER the
+   * provider had already finished streaming its ENTIRE response
+   * server-side, which is no earlier than the old non-streaming
+   * contract ever was. Flushing at sentence/clause boundaries as this
+   * SINGLE completion's own token stream arrives is what actually lets
+   * a caller start hearing speech while the model is still generating
+   * the rest of it — the latency win the tool-call-loop case already
+   * had, extended to the plain-Q&A case, which is the majority of real
+   * turns.
+   */
   private async streamOneCompletion(
     conversation: Conversation,
     tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>,
     signal: AbortSignal | undefined,
     iteration: number,
+    onChunk?: (text: string) => void,
   ): Promise<{ text: string; toolCalls: AiToolCallRequest[]; interrupted: boolean }> {
     let text = "";
+    // Text accumulated since the last onChunk flush — NOT yet spoken.
+    // Deliberately separate from `text` (the full running total this
+    // method returns): a natural speech boundary is found relative to
+    // "what hasn't been sent yet," not the whole completion so far.
+    let pendingSegment = "";
     const toolCalls: AiToolCallRequest[] = [];
     let interrupted = false;
     let providerErrorMessage: string | null = null;
@@ -513,6 +547,17 @@ export class HandleTurnUseCase {
         }
         const handled = this.applyChunk(chunk, toolCalls);
         text += handled.text;
+        pendingSegment += handled.text;
+        if (handled.text) {
+          const boundary = findSpeechSegmentBoundary(pendingSegment);
+          if (boundary !== null) {
+            const segment = pendingSegment.slice(0, boundary);
+            pendingSegment = pendingSegment.slice(boundary);
+            if (segment.trim()) {
+              onChunk?.(segment);
+            }
+          }
+        }
         if (handled.stop) {
           break;
         }
@@ -531,6 +576,16 @@ export class HandleTurnUseCase {
           reason: error instanceof Error ? error.message : String(error),
         });
       }
+    }
+
+    // Whatever's left never hit a natural boundary on its own (a short
+    // complete reply like "Got it." — the common case — or the tail end
+    // of a longer one) — flush it now rather than losing it. Matches
+    // the pre-existing contract of "whatever was captured gets returned/
+    // spoken," interrupted or not (see this class's own top-level
+    // comment on barge-in).
+    if (pendingSegment.trim()) {
+      onChunk?.(pendingSegment);
     }
 
     // Found live, not hypothetical: with every LLM provider unavailable
@@ -731,6 +786,103 @@ function appendResponseSegment(existing: string, next: string): string {
   if (!next) return existing;
   if (!existing) return next;
   return `${existing.trimEnd()} ${next.trimStart()}`;
+}
+
+/**
+ * Below this length, `streamOneCompletion` never proactively flushes a
+ * segment even at a real sentence boundary — bundles a short "Okay."
+ * with whatever comes right after it into one spoken unit instead of a
+ * standalone one-word TTS call, matching Step 3's own "Okay, I
+ * understand. Let me ask you one quick question." example (two short
+ * sentences spoken together, not each on its own). INFERRED, not a
+ * documented/measured constant — chosen as roughly "a short complete
+ * clause," not derived from a benchmark.
+ */
+const MIN_SPEECH_SEGMENT_CHARS = 40;
+/**
+ * Above this length with no sentence boundary at all (a long
+ * comma-separated clause), flush anyway rather than let latency grow
+ * unbounded waiting for punctuation that may never come soon enough —
+ * roughly 1-2 natural sentences of CSR dialogue (docs/03 §5's own
+ * "1-3 sentences" turn-length guidance), not a measured ceiling.
+ */
+const MAX_SPEECH_SEGMENT_CHARS = 220;
+
+/**
+ * Finds where in `buffer` (text streamed so far but not yet flushed to
+ * `onChunk`) a natural speech pause exists, so `streamOneCompletion` can
+ * start the caller hearing a real sentence/clause instead of either (a)
+ * word-by-word fragments (flushing on every provider delta) or (b)
+ * waiting for the entire completion to finish generating (the old
+ * per-iteration-only flush). Returns the exclusive end index to flush up
+ * to, or `null` if no safe boundary exists yet — the caller should keep
+ * accumulating.
+ *
+ * Sentence-ending punctuation (`.`/`!`/`?`) followed by whitespace or
+ * end-of-buffer is the primary boundary, but ONLY once the segment is
+ * at least `MIN_SPEECH_SEGMENT_CHARS` long, and never when it looks like
+ * a decimal number or a similar digit-adjacent period (`$3.50`, `9 a.m.
+ * to 5 p.m.`) — splitting THOSE mid-token would speak two disconnected,
+ * confusing fragments instead of the number/time as one unit. Past
+ * `MAX_SPEECH_SEGMENT_CHARS` with no sentence boundary at all, falls
+ * back to the last comma/semicolon clause break, or the raw ceiling
+ * itself if there isn't even one of those — better to speak an
+ * unpunctuated run than let latency grow unbounded.
+ */
+function findSpeechSegmentBoundary(buffer: string): number | null {
+  if (buffer.length >= MAX_SPEECH_SEGMENT_CHARS) {
+    const window = buffer.slice(0, MAX_SPEECH_SEGMENT_CHARS);
+    const lastClause = Math.max(window.lastIndexOf(", "), window.lastIndexOf("; "));
+    return lastClause > MIN_SPEECH_SEGMENT_CHARS ? lastClause + 2 : MAX_SPEECH_SEGMENT_CHARS;
+  }
+
+  const sentenceEnd = /[.!?]+(?=\s|$)/g;
+  let match: RegExpExecArray | null;
+  while ((match = sentenceEnd.exec(buffer)) !== null) {
+    const endIndex = match.index + match[0].length;
+    if (endIndex < MIN_SPEECH_SEGMENT_CHARS) {
+      continue;
+    }
+    const precedingChar = buffer[match.index - 1];
+    const followingChar = buffer[endIndex];
+    const looksLikeDecimal =
+      precedingChar !== undefined &&
+      /\d/.test(precedingChar) &&
+      followingChar !== undefined &&
+      /\d/.test(followingChar);
+    if (looksLikeDecimal || looksLikeAbbreviation(buffer, endIndex)) {
+      continue;
+    }
+    return endIndex;
+  }
+  return null;
+}
+
+/**
+ * Catches the abbreviation cases a bare "digit before AND after the
+ * period" check misses — real ones for a home-service CSR, not
+ * hypothetical: "9 a.m. to 5 p.m." is a completely ordinary thing for
+ * this domain's own model to say about business hours, and the SECOND
+ * period in "a.m." (the one right before "to") IS followed by
+ * whitespace, so the base regex alone would treat it as a sentence end
+ * and split "9 a.m." from "to 5 p.m." into two disconnected, confusing
+ * spoken fragments.
+ */
+function looksLikeAbbreviation(buffer: string, periodEndIndex: number): boolean {
+  // "a.m." / "p.m." / "e.g." / "i.e." / "U.S." — a lone letter, period,
+  // lone letter, period pattern ending exactly at this boundary.
+  const precedingWindow = buffer.slice(Math.max(0, periodEndIndex - 6), periodEndIndex);
+  if (/\b[a-zA-Z]\.[a-zA-Z]\.$/.test(precedingWindow)) {
+    return true;
+  }
+  // A short, common title/abbreviation immediately before a single
+  // trailing period ("Dr.", "Mr.", "etc.", ...).
+  const wordBeforePeriod = /([a-zA-Z]{1,10})\.$/.exec(buffer.slice(0, periodEndIndex));
+  if (!wordBeforePeriod) {
+    return false;
+  }
+  const word = wordBeforePeriod[1]!.toLowerCase();
+  return ["mr", "mrs", "ms", "dr", "st", "vs", "etc", "approx", "jr", "sr"].includes(word);
 }
 
 /** Source of truth for "has this call ever checked" is the message history itself, not a separate flag — a real model-issued call and the backstop call below are indistinguishable here, both short-circuit the same way. */
