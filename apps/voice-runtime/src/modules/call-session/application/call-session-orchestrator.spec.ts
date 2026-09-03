@@ -209,6 +209,62 @@ describe("CallSessionOrchestrator", () => {
       expect(tts.synthesizeCalls).toContain("First chunk text.");
       expect(tts.synthesizeCalls).not.toContain("Second chunk text.");
     });
+
+    /**
+     * Scenario G from the barge-in hardening pass: the caller doesn't
+     * pause after interrupting — they keep talking immediately, so a
+     * NEW finalized transcript can arrive right on the heels of the
+     * barge-in, before anything from the old turn could meaningfully
+     * "settle." This proves the new turn is processed on its own
+     * merits (its own idempotencyKey, its own abortController, its own
+     * speakQueue — see handleFinalTranscript's own comment on why none
+     * of that state is shared across separate finalized-transcript
+     * events) and that the aborted turn's response — which was never
+     * produced, since it was hung/interrupted before the fake ever
+     * resolved — never leaks through as stale or duplicate speech.
+     */
+    it("processes the caller's new speech correctly when it arrives immediately after a barge-in, with no stale or duplicate response", async () => {
+      const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      orchestratorClient.hangTurnUntilAborted = true;
+
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+
+      session.emitFinalTranscript("first thing customer said", 0.9);
+      await flushMicrotasks();
+
+      // Barge-in fires while turn 1 is still hung (mechanism 1) — abort it.
+      session.emitSpeechStarted();
+      await flushMicrotasks();
+
+      // The caller keeps talking immediately — script the SECOND
+      // attempt to actually resolve normally, the same as a real retry
+      // of a genuinely different HTTP call would.
+      orchestratorClient.hangTurnUntilAborted = false;
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "Got it, tell me more about that.",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+      session.emitFinalTranscript("second thing customer said, right after interrupting", 0.9);
+      await flushMicrotasks();
+
+      expect(orchestratorClient.turnCalls).toHaveLength(2);
+      expect(orchestratorClient.turnCalls[1]?.req.transcript).toBe(
+        "second thing customer said, right after interrupting",
+      );
+      // The old (aborted, hung) turn never produced a response to
+      // speak — the new turn's response is the ONLY one spoken, proving
+      // no stale/duplicate speech leaked through from the interrupted turn.
+      expect(
+        tts.synthesizeCalls.filter((call) => call === "Got it, tell me more about that."),
+      ).toHaveLength(1);
+    });
   });
 
   describe("duplicate turn (idempotency)", () => {
