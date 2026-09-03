@@ -112,7 +112,37 @@ export class HandleTurnUseCase {
     @Inject(APP_LOGGER) private readonly logger: StructuredLogger,
   ) {}
 
-  async execute(command: HandleTurnCommand): Promise<HandleTurnResult> {
+  /**
+   * `onChunk`, when supplied, fires once per LLM completion iteration
+   * with exactly the NEW text that iteration produced (never the
+   * cumulative total — the caller decides how to join what it's already
+   * spoken with what's new). Purely additive: every existing caller that
+   * omits it gets byte-for-byte the same behavior as before this
+   * existed — the return value is always the complete aggregate result
+   * regardless of whether a callback was given.
+   *
+   * This exists because of a real, MEASURED finding, not a guess: a real
+   * call's first LLM completion produced real acknowledgment text
+   * alongside its tool calls, and that text sat unused for the full
+   * duration of the tool round-trip and the second completion (over a
+   * second of dead air) purely because the old contract only ever
+   * returned text once the ENTIRE turn — every completion, every tool
+   * call — had finished. `runTurn`'s own loop already pushes one
+   * message to `conversation.messages` per iteration; this only exposes
+   * that same, already-iteration-shaped text to the caller as it's
+   * produced, it does not change the loop's structure, ordering, or any
+   * of its tool-call/escalation/idempotency semantics.
+   *
+   * On an idempotent REPLAY (a Voice Runtime retry of an already-
+   * completed turn), `onChunk` still fires exactly once, with the full
+   * cached `responseText` — the caller's contract ("I get chunks, then
+   * a final result") stays identical whether this attempt actually ran
+   * the LLM or not.
+   */
+  async execute(
+    command: HandleTurnCommand,
+    onChunk?: (text: string) => void,
+  ): Promise<HandleTurnResult> {
     setSpanAttributes({
       "ethixweb.tenant_id": command.tenantId,
       "ethixweb.conversation_id": command.conversationId,
@@ -134,6 +164,9 @@ export class HandleTurnUseCase {
       ttlSeconds: 3600,
     });
     if (outcome.status === "completed") {
+      if (outcome.result.responseText) {
+        onChunk?.(outcome.result.responseText);
+      }
       return outcome.result;
     }
     if (outcome.status === "in_flight") {
@@ -141,7 +174,7 @@ export class HandleTurnUseCase {
     }
 
     try {
-      const result = await this.runTurn(command, conversation);
+      const result = await this.runTurn(command, conversation, onChunk);
       await this.idempotencyStore.complete(idempotencyKey, result, { ttlSeconds: 3600 });
       return result;
     } catch (error) {
@@ -155,6 +188,7 @@ export class HandleTurnUseCase {
   private async runTurn(
     command: HandleTurnCommand,
     conversation: Conversation,
+    onChunk?: (text: string) => void,
   ): Promise<HandleTurnResult> {
     const startedAt = Date.now();
     const turnIndex = conversation.transcript.length;
@@ -217,6 +251,14 @@ export class HandleTurnUseCase {
       const turn = await this.streamOneCompletion(conversation, tools, command.signal, iteration);
       responseText = appendResponseSegment(responseText, turn.text);
       interrupted = turn.interrupted;
+      // Streamed to the caller as soon as it exists — see execute()'s own
+      // comment for why. Deliberately `turn.text` (this iteration's NEW
+      // text only), never `responseText` (the running total) — the
+      // caller is responsible for its own join, exactly like
+      // appendResponseSegment does here, not for re-speaking anything.
+      if (turn.text) {
+        onChunk?.(turn.text);
+      }
 
       // Deterministic safety net, docs/07 §5.2's "fail-safe toward
       // escalation" now enforced in code, not only prompted. Found live:

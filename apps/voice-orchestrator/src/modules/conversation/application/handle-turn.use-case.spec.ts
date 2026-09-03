@@ -263,6 +263,110 @@ describe("HandleTurnUseCase", () => {
     expect(result.responseText).toBe("Let me pull up your account. What's your name?");
   });
 
+  /**
+   * Regression coverage for the voice-conversation-latency optimization's
+   * headline finding: a real call's first LLM completion produced real
+   * text alongside its tool calls, and that text sat unused for the
+   * full duration of the tool round-trip and the second completion,
+   * because the old contract only ever returned text once the ENTIRE
+   * turn had finished. `onChunk` is the fix — purely additive (every
+   * caller that omits it, the entire rest of this file, is unaffected)
+   * and fires once per iteration with exactly that iteration's NEW
+   * text, never the running total.
+   */
+  describe("onChunk streaming callback (additive — omitting it changes nothing)", () => {
+    it("fires once per LLM completion iteration, with only that iteration's NEW text, not the cumulative total", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          { type: "text_delta", text: "Let me pull up your account." },
+          {
+            type: "tool_call",
+            toolCall: {
+              id: "call-1",
+              name: "searchCustomer",
+              arguments: { phone: "+15551234567" },
+            },
+          },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [
+          { type: "text_delta", text: "What's your name?" },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const toolExecuted = jest.fn().mockResolvedValue({ found: false });
+      const { useCase } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "searchCustomer", handler: { execute: toolExecuted } }],
+      });
+      const chunks: string[] = [];
+
+      const result = await useCase.execute(
+        baseCommand({ transcript: "I need a plumber", allowedTools: ["searchCustomer"] }),
+        (text) => chunks.push(text),
+      );
+
+      expect(chunks).toEqual(["Let me pull up your account.", "What's your name?"]);
+      // The final return value is unaffected by streaming — still the
+      // full joined result, exactly as every non-streaming caller gets.
+      expect(result.responseText).toBe("Let me pull up your account. What's your name?");
+    });
+
+    it("never fires with an empty string (an iteration whose only output was a tool call, no text)", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          {
+            type: "tool_call",
+            toolCall: {
+              id: "call-1",
+              name: "searchCustomer",
+              arguments: { phone: "+15551234567" },
+            },
+          },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [
+          { type: "text_delta", text: "Found you!" },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const toolExecuted = jest.fn().mockResolvedValue({ found: true });
+      const { useCase } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "searchCustomer", handler: { execute: toolExecuted } }],
+      });
+      const chunks: string[] = [];
+
+      await useCase.execute(
+        baseCommand({ transcript: "It's Jane", allowedTools: ["searchCustomer"] }),
+        (text) => chunks.push(text),
+      );
+
+      expect(chunks).toEqual(["Found you!"]);
+    });
+
+    it("fires once with the full cached responseText on an idempotent replay — the callback contract stays the same whether or not the LLM actually ran", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const { useCase } = buildUseCase({ repository });
+      const command = baseCommand({ transcript: "Hi, my water heater is broken" });
+
+      await useCase.execute(command); // first attempt, no callback
+      const chunks: string[] = [];
+      const replayed = await useCase.execute(command, (text) => chunks.push(text));
+
+      expect(chunks).toEqual([replayed.responseText]);
+    });
+  });
+
   it("publishes a lead.created event and records leadId on the conversation when createLead succeeds", async () => {
     const repository = new FakeConversationRepository();
     repository.seed(baseConversation());
