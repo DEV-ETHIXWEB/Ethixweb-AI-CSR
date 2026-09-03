@@ -12,6 +12,15 @@ function jsonResponse(status: number, body: unknown, headers: Record<string, str
   return new Response(JSON.stringify(body), { status, headers });
 }
 
+/** `POST /turns` (docs/28 §C.3) — one JSON object per line, NOT a JSON array. */
+function ndjsonResponse(lines: Array<Record<string, unknown>>) {
+  const body = lines.map((line) => JSON.stringify(line)).join("\n") + "\n";
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": "application/x-ndjson; charset=utf-8" },
+  });
+}
+
 describe("HttpOrchestratorClient", () => {
   const originalFetch = global.fetch;
 
@@ -183,5 +192,119 @@ describe("HttpOrchestratorClient", () => {
     await expect(
       client.endConversation("conv-1", { tenantId: "t1", endReason: "caller_hangup" }),
     ).rejects.toMatchObject({ name: "OrchestratorHttpError", retryable: true });
+  });
+
+  /**
+   * `/turns` (docs/28 §C.3) streams NDJSON rather than one blocking JSON
+   * body — this is the actual "does this client correctly consume the
+   * new contract" proof, distinct from the status-code-mapping tests
+   * above (which never touch a real streamed body since they all fail
+   * before the streaming path is ever reached).
+   */
+  describe("streaming /turns (docs/28 §C.3)", () => {
+    it("dispatches each {type:'chunk'} line to onChunk, in order, before resolving with the final {type:'done'} line's TurnResult", async () => {
+      global.fetch = jest.fn().mockResolvedValue(
+        ndjsonResponse([
+          { type: "chunk", text: "Let me check on that " },
+          { type: "chunk", text: "for you." },
+          {
+            type: "done",
+            conversationId: "conv-1",
+            responseText: "Let me check on that for you.",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+        ]),
+      );
+      const client = buildClient();
+      const received: string[] = [];
+
+      const result = await client.handleTurn(
+        "conv-1",
+        { tenantId: "t1", idempotencyKey: "k1", transcript: "hi", allowedTools: [] },
+        undefined,
+        (text) => {
+          received.push(text);
+        },
+      );
+
+      expect(received).toEqual(["Let me check on that ", "for you."]);
+      expect(result).toMatchObject({
+        conversationId: "conv-1",
+        responseText: "Let me check on that for you.",
+        state: "qualifying",
+      });
+      // The done line's own "type" field must not leak into the returned
+      // TurnResult — it isn't part of that shape.
+      expect(result).not.toHaveProperty("type");
+    });
+
+    it("resolves correctly with no onChunk callback at all (streaming stays purely additive)", async () => {
+      global.fetch = jest.fn().mockResolvedValue(
+        ndjsonResponse([
+          { type: "chunk", text: "hi there" },
+          {
+            type: "done",
+            conversationId: "conv-1",
+            responseText: "hi there",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+        ]),
+      );
+      const client = buildClient();
+
+      const result = await client.handleTurn("conv-1", {
+        tenantId: "t1",
+        idempotencyKey: "k1",
+        transcript: "hi",
+        allowedTools: [],
+      });
+
+      expect(result.responseText).toBe("hi there");
+    });
+
+    it("throws an OrchestratorHttpError carrying the stream event's own retryable flag when a mid-stream {type:'error'} line arrives", async () => {
+      global.fetch = jest.fn().mockResolvedValue(
+        ndjsonResponse([
+          { type: "chunk", text: "Let me check on that." },
+          { type: "error", message: "AI provider completion failed: boom", retryable: true },
+        ]),
+      );
+      const client = buildClient();
+      const received: string[] = [];
+
+      await expect(
+        client.handleTurn(
+          "conv-1",
+          { tenantId: "t1", idempotencyKey: "k1", transcript: "hi", allowedTools: [] },
+          undefined,
+          (text) => {
+            received.push(text);
+          },
+        ),
+      ).rejects.toMatchObject({ name: "OrchestratorHttpError", retryable: true });
+      // The chunk that streamed BEFORE the error must still have reached
+      // the caller — a real caller may already be speaking it.
+      expect(received).toEqual(["Let me check on that."]);
+    });
+
+    it("throws a retryable OrchestratorHttpError when the stream ends with no 'done' line at all", async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValue(ndjsonResponse([{ type: "chunk", text: "partial" }]));
+      const client = buildClient();
+
+      await expect(
+        client.handleTurn("conv-1", {
+          tenantId: "t1",
+          idempotencyKey: "k1",
+          transcript: "hi",
+          allowedTools: [],
+        }),
+      ).rejects.toMatchObject({ name: "OrchestratorHttpError", retryable: true });
+    });
   });
 });

@@ -162,6 +162,53 @@ describe("CallSessionOrchestrator", () => {
       expect(orchestratorClient.interruptCalls).toHaveLength(1);
       expect(orchestratorClient.interruptCalls[0]?.req.tenantId).toBe("tenant-1");
     });
+
+    /**
+     * The streaming redesign's own new safety mechanism, not covered by
+     * either mechanism-1 or mechanism-2 test above: a turn's response
+     * can now arrive as MULTIPLE chunks (one per LLM completion
+     * iteration, docs/28 §C.3), spoken as they arrive rather than all
+     * at once. A barge-in landing after chunk 1 has already started
+     * playing but before chunk 2 has been spoken must cancel chunk 2
+     * entirely — otherwise chunk 2 would start NEW audio playing after
+     * the caller already interrupted, which is exactly the "AI talks
+     * over the customer" failure mode this whole barge-in mechanism
+     * exists to prevent. Chunk 1, already mid-flight when the barge-in
+     * lands, is handled by the EXISTING ttsAbort/clearQueuedAudio path
+     * (proven by the mechanism-2 test above) — this test's job is
+     * specifically the QUEUED-but-not-yet-started second chunk.
+     */
+    it("cancels a NOT-YET-SPOKEN queued chunk when a barge-in lands between two streamed chunks of the same turn", async () => {
+      const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      tts.chunkDelayMs = 30;
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "First chunk text. Second chunk text.",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+      orchestratorClient.turnResponseChunks = [["First chunk text.", "Second chunk text."]];
+
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+      session.emitFinalTranscript("hello", 0.9);
+      // Give chunk 1's speak() call time to actually start (and begin
+      // its own chunkDelayMs-paced playback) but not to finish.
+      await new Promise((r) => setTimeout(r, 10));
+
+      session.emitSpeechStarted();
+      await flushMicrotasks();
+      // Let anything still in flight settle — long enough that a
+      // wrongly-spoken second chunk would have had time to start.
+      await new Promise((r) => setTimeout(r, 150));
+
+      expect(tts.synthesizeCalls).toContain("First chunk text.");
+      expect(tts.synthesizeCalls).not.toContain("Second chunk text.");
+    });
   });
 
   describe("duplicate turn (idempotency)", () => {

@@ -129,11 +129,23 @@ export class OrchestratorHttpError extends Error {
 
 export interface OrchestratorClientPort {
   startConversation(req: StartConversationRequest): Promise<ConversationResponse>;
-  /** `signal` aborts the in-flight HTTP call directly — docs/28 §B.3's mid-turn barge-in mechanism (mechanism 1 of 2). */
+  /**
+   * `signal` aborts the in-flight HTTP call directly — docs/28 §B.3's
+   * mid-turn barge-in mechanism (mechanism 1 of 2).
+   *
+   * `onChunk`, when supplied, fires once per NDJSON `{type:"chunk"}`
+   * line as voice-orchestrator streams them (docs/28 §C.3) — the SAME
+   * text a caller would eventually see concatenated into the resolved
+   * `TurnResult.responseText`, just delivered progressively instead of
+   * only once the whole turn finishes. Purely additive: omitting it
+   * changes nothing observable — the returned `TurnResult` is always
+   * the full aggregate result either way.
+   */
   handleTurn(
     conversationId: string,
     req: HandleTurnRequest,
     signal?: AbortSignal,
+    onChunk?: (text: string) => void | Promise<void>,
   ): Promise<TurnResult>;
   interrupt(conversationId: string, req: InterruptRequest): Promise<ConversationResponse>;
   endConversation(

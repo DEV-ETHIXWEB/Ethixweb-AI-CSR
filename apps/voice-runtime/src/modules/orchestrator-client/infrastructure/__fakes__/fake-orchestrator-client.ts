@@ -34,6 +34,19 @@ export class FakeOrchestratorClient implements OrchestratorClientPort {
   endResponses: Array<ConversationResponse | Error> = [];
   /** When set, handleTurn hangs until the signal aborts, then rejects with an AbortError — simulates an in-flight turn a caller barges into. */
   hangTurnUntilAborted = false;
+  /**
+   * Consumed FIFO in lockstep with `turnResponses` — when the entry at
+   * the same index is defined, `onChunk` fires once per string here, IN
+   * ORDER, instead of the default single call with the whole
+   * `responseText`. Mirrors the real server emitting one
+   * `{type:"chunk"}` line per LLM completion iteration (docs/28 §C.3) —
+   * lets a test exercise genuinely multi-chunk progressive speaking
+   * (e.g. a barge-in landing BETWEEN two chunks of the same turn)
+   * without needing a real multi-iteration tool-call script. Leave
+   * undefined (the default, via a sparse/short array) for the common
+   * case of "one chunk, the whole response."
+   */
+  turnResponseChunks: Array<string[] | undefined> = [];
 
   async startConversation(req: StartConversationRequest): Promise<ConversationResponse> {
     this.startCalls.push(req);
@@ -61,6 +74,7 @@ export class FakeOrchestratorClient implements OrchestratorClientPort {
     conversationId: string,
     req: HandleTurnRequest,
     signal?: AbortSignal,
+    onChunk?: (text: string) => void | Promise<void>,
   ): Promise<TurnResult> {
     this.turnCalls.push({ conversationId, req });
 
@@ -73,16 +87,23 @@ export class FakeOrchestratorClient implements OrchestratorClientPort {
     }
 
     const next = this.turnResponses.shift();
+    const chunks = this.turnResponseChunks.shift();
     if (next instanceof Error) throw next;
-    return (
-      next ?? {
-        conversationId,
-        responseText: "Got it, thanks.",
-        toolCallsExecuted: [],
-        interrupted: false,
-        state: "qualifying",
+    const result: TurnResult = next ?? {
+      conversationId,
+      responseText: "Got it, thanks.",
+      toolCallsExecuted: [],
+      interrupted: false,
+      state: "qualifying",
+    };
+    if (chunks) {
+      for (const chunk of chunks) {
+        await onChunk?.(chunk);
       }
-    );
+    } else if (result.responseText) {
+      await onChunk?.(result.responseText);
+    }
+    return result;
   }
 
   async interrupt(conversationId: string, req: InterruptRequest): Promise<ConversationResponse> {

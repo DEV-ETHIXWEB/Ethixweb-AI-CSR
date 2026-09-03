@@ -75,9 +75,9 @@ If anything here disagrees with the actual running service, the service is corre
 - `idempotencyKey`: **generate a new one per turn ATTEMPT, and reuse the SAME value if you retry that exact attempt.** This is not "one key per turn" — it's "one key per network round-trip you're willing to consider the same logical action." If a request times out and you don't know whether it succeeded, retry with the identical `idempotencyKey`; you will get back the identical cached result, never a duplicate LLM invocation.
 - `allowedTools`: the full list of tool names this turn's agent configuration is permitted to reach. Pass the complete allowlist every time, not a single tool — this is checked as a real authorization gate (`ExecuteToolUseCase` stage 3), and a name outside it is rejected structurally, safely, without crashing the turn.
 
-**Response** (`200`, see §C.2 for the exact shape): `responseText` is what you should synthesize and speak. `interrupted: true` means the response was cut short by a barge-in signal you sent mid-turn — speak what you have, don't wait for more.
+**Response** (`200`): streamed as newline-delimited JSON (`application/x-ndjson`), NOT a single JSON object — see §C.3 for the exact wire format and how to consume it. If you don't want to handle streaming yet, you can still treat the response the old way: read the whole body, take only the final `{"type":"done", ...}` line, and use its fields exactly as `TurnResultResponseDto` (§C.2) always worked — `responseText` is what you should synthesize and speak, `interrupted: true` means the response was cut short by a barge-in signal you sent mid-turn.
 
-**409**: either the conversation already ended, or an identical `idempotencyKey` is already being processed concurrently (should not happen in normal operation — see §G).
+**409**: either the conversation already ended, or an identical `idempotencyKey` is already being processed concurrently (should not happen in normal operation — see §G). Delivered as an ordinary HTTP 409, before any streaming begins — see §C.3's own note on why this ordering matters.
 
 ### B.3 Interrupt — `POST /conversations/:id/interrupt`
 
@@ -86,6 +86,8 @@ If anything here disagrees with the actual running service, the service is corre
 ```
 
 Call this when your own VAD detects the caller speaking while TTS is still playing and there is **no turn HTTP request currently in flight**. If a turn request IS in flight when barge-in is detected, the correct action is different: **abort that in-flight HTTP request directly** (or the underlying signal, if you're calling in-process rather than over HTTP) — this endpoint is the lighter-weight, between-turns signal only. Both mechanisms are real and both matter; using only one is an incomplete barge-in implementation.
+
+**With streaming (§C.3), "in flight" now includes the entire window a turn's response is still arriving as chunks** — not just before the first byte. TTS can legitimately be playing chunk 1 while the HTTP connection is still open waiting for chunk 2; that window still counts as "in flight," so the abort-the-request mechanism applies, not this endpoint, even though TTS is simultaneously playing something. Only once the WHOLE turn's HTTP call has resolved (its `done` line received) and TTS is still finishing that now-fully-known response does this endpoint apply. Getting this wrong is a real regression, not a theoretical one — see `CallSessionOrchestrator.handleBargeIn`'s own comment for the exact failure mode (calling this endpoint mid-stream annotates a response voice-orchestrator hasn't durably saved yet, per the next paragraph).
 
 Because this endpoint is ONLY ever the right call when TTS was already playing an already-fully-generated response, this also does something the state transition alone doesn't: it annotates that response in the model's own working message history as possibly cut off before the caller heard all of it. Found live: the full response text is durably saved into conversation history the moment `POST /turns` returns — before your runtime has spoken a single word of it — so without this, a caller interrupting mid-playback (the common barge-in case) left the model's own memory of "what I just said" silently wrong. This never touches the durable transcript record (still exactly what was generated, for accurate call review) or your own `responseText`/`interrupted` handling — it's internal to how the NEXT turn's LLM call sees its own prior turn.
 
@@ -153,6 +155,34 @@ Deliberately **excluded** from this response: the system prompt and raw message 
 
 This closes a real, previously-open gap: earlier revisions of this document said "the tool result itself signals this to your runtime" (§M), but the actual `TurnResultResponseDto` had no such field — only an internal `escalation.triggered` event existed, which an out-of-process HTTP client cannot subscribe to. `action` is one of `EmergencyAction` (`forward_call`, `priority_notify`, `standard_lead` — see `apps/voice-orchestrator/src/modules/tool-broker/application/handlers/escalate-emergency.handler.ts`); only `forward_call` requires your runtime to execute a transfer. `severity` is `critical` | `high` | `medium`, informational.
 
+### C.3 Turn streaming — `POST /conversations/:id/turns` response format (voice-latency optimization)
+
+Added because of a real, MEASURED finding, not a guess: a real call's first LLM completion produced real acknowledgment text alongside its tool calls, and that text sat completely unused for the full duration of the tool round-trip and a second completion — over a second of dead air — purely because the response used to stay a single blocking JSON object until the ENTIRE turn (every completion, every tool call) had finished. Streaming lets you start speaking the model's opening acknowledgment while a tool call is still resolving in the background, the same pause a human takes before continuing a sentence.
+
+`Content-Type: application/x-ndjson; charset=utf-8`. The body is one JSON object per line (`\n`-terminated), **not** a JSON array — parse it by splitting on newlines and calling `JSON.parse` per line, not `response.json()`. Two possible sequences:
+
+**Success** — zero or more chunk lines, then exactly one `done` line:
+
+```
+{"type":"chunk","text":"Let me pull up your account "}
+{"type":"chunk","text":"real quick."}
+{"type":"done","conversationId":"...","responseText":"Let me pull up your account real quick. Okay, found it — go ahead.","toolCallsExecuted":["searchCustomer"],"interrupted":false,"state":"qualifying"}
+```
+
+**Mid-stream failure** — some chunk lines (possibly zero), then one `error` line instead of `done`:
+
+```
+{"type":"chunk","text":"Let me check on that."}
+{"type":"error","message":"AI provider completion failed: upstream timeout","retryable":true}
+```
+
+- **`chunk`**: `text` is that iteration's NEW text only — never the running total. Speak (or queue to speak) each one as it arrives, in order; do not wait for `done` before speaking the first one. A cached/replayed turn (the idempotent-retry case, §G/§H) streams its whole `responseText` as a single chunk before its `done` line — the chunk contract is uniform whether or not the LLM was actually re-invoked.
+- **`done`**: carries every field `TurnResultResponseDto` (§C.2) always carried (`conversationId`, `responseText`, `toolCallsExecuted`, `interrupted`, `state`, optional `escalation`), plus the `"type"` discriminator — strip that field before treating the rest as the turn result. **`responseText` is the SAME text you already received via the preceding `chunk` lines, concatenated — do not speak it again**; if you're speaking chunks as they arrive, `done` is only for the trailing metadata (`toolCallsExecuted`, `state`, `escalation`), not for more speech.
+- **`error`**: a genuine mid-turn failure (e.g. the AI provider itself erroring) that happened AFTER the HTTP status was already committed to `200`. `retryable` is always `true` today — it deliberately mirrors §G's "5xx is always retryable" rule, since this is exactly what an uncaught error here would have produced as a 500 before streaming existed; apply your existing 5xx retry handling to this event, not a new rule.
+- **Why errors can't just become non-200 status codes**: HTTP cannot change the status code after headers are sent, and headers commit to `200` the moment the FIRST byte of this stream is written. That's why every failure that CAN still become an ordinary HTTP status (404 unknown conversation, 409 already-ended/in-flight — §B.2, §N) is guaranteed to happen strictly before any streaming begins; only a failure genuinely mid-turn becomes this `error` line instead.
+- **RETRY SAFETY — read this before wiring retries to chunks**: §G's "retry any ambiguous outcome with the same `idempotencyKey`" rule was written for a contract where nothing is spoken until the whole turn resolves, so retrying was always safe — the caller had heard nothing yet either way. That assumption no longer holds once you've spoken one or more `chunk` lines: a failed attempt releases its idempotency reservation rather than completing it (so a retry re-invokes the LLM from scratch) and could produce DIFFERENT text than what you already spoke — duplicate or contradictory speech. **If you received at least one `chunk` for this attempt, do not retry a subsequent `error` (or a connection drop with no `done` line) — let the turn end as-is.** A failure before any `chunk` arrived is unaffected; apply §G's retry rule exactly as before.
+- Reference implementation: `apps/voice-runtime/src/modules/orchestrator-client/infrastructure/http-orchestrator-client.ts` (stream parsing) and `apps/voice-runtime/src/modules/call-session/application/call-session-orchestrator.ts` (progressive speaking + the retry-safety rule above, including how a barge-in landing between two chunks cancels the ones not yet spoken).
+
 ## D. Authentication
 
 Single shared bearer token, every request, every endpoint except `GET /healthz` and `GET /readyz`:
@@ -207,8 +237,9 @@ If your runtime's process crashes and restarts mid-call, it currently has no way
 
 1. Your STT finalizes an utterance.
 2. Generate an `idempotencyKey` for this attempt.
-3. `POST /conversations/:id/turns`.
-4. Speak `responseText` from the response. If `interrupted: true`, you already know why (you sent an abort/interrupt signal) — just speak what came back and continue.
+3. `POST /conversations/:id/turns` and read the response as a stream (§C.3), not `response.json()`.
+4. Speak each `chunk` line's `text` as it arrives, in order — don't wait for the stream to finish before speaking the first one. If `interrupted: true` on the final `done` line, you already know why (you sent an abort/interrupt signal) — whatever chunks arrived before that point are everything there is to speak, there's no more coming.
+5. On `done`, you're finished — its `responseText` is only for logging/bookkeeping (it's the same text you already spoke via `chunk` lines, concatenated), never speak it again. On `error`, see §C.3's retry-safety note before deciding whether to retry.
 
 ## L. Call-end behavior — exact sequence
 
@@ -252,7 +283,7 @@ You do **not** need real Twilio/LiveKit/Deepgram credentials to test your integr
 pnpm --filter @ethixweb/voice-orchestrator run test:e2e
 ```
 
-This boots the real Nest application (real auth guard, real validation, real conversation state machine, real Tool Broker) over real HTTP, faking only Redis and the AI provider — see `apps/voice-orchestrator/test/voice-runtime-simulator.ts` if you want to write your own scripted scenarios against the same harness before pointing real telephony at a live deployment. Every scenario in `runtime-contract.e2e.spec.ts` (full lifecycle, concurrency, outages, emergencies, correlation IDs) is a working, runnable example of exactly the request/response shapes above.
+This boots the real Nest application (real auth guard, real validation, real conversation state machine, real Tool Broker) over real HTTP, faking only Redis and the AI provider — see `apps/voice-orchestrator/test/voice-runtime-simulator.ts` if you want to write your own scripted scenarios against the same harness before pointing real telephony at a live deployment. That file also exports `parseTurnResult()`/`parseTurnChunks()` — small helpers for reading the `/turns` NDJSON response (§C.3) in a test without hand-rolling the line-parsing yourself. Every scenario in `runtime-contract.e2e.spec.ts` (full lifecycle, concurrency, outages, emergencies, correlation IDs) is a working, runnable example of exactly the request/response shapes above.
 
 ## P. Example payloads — a complete call, start to finish
 

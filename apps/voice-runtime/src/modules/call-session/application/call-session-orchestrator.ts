@@ -53,6 +53,20 @@ export class CallSessionOrchestrator {
   private ttsAbort: AbortController | null = null;
   private ttsPlaying = false;
   private ended = false;
+  /**
+   * Set by `handleBargeIn` and checked by `handleFinalTranscript`'s
+   * queued chunk-speaking closures — see the streaming redesign's own
+   * comment on `handleFinalTranscript` for why this exists: once a turn
+   * streams its response progressively (speaking chunk 1 while chunk 2
+   * is still arriving over the still-open HTTP connection), a barge-in
+   * has to cancel not just the CURRENTLY-playing chunk (already handled
+   * by `ttsAbort`) but every chunk still queued behind it — otherwise a
+   * chunk that arrives (or was already buffered) after the barge-in
+   * would start NEW audio playing over the caller. Reset to `false` at
+   * the top of every `handleFinalTranscript` call, so it never leaks
+   * across turns.
+   */
+  private bargedInDuringCurrentTurn = false;
 
   constructor(
     @Inject(ORCHESTRATOR_CLIENT) private readonly orchestrator: OrchestratorClientPort,
@@ -227,6 +241,39 @@ export class CallSessionOrchestrator {
    * loop (docs/28 §G: "never generate a fresh key for what might be the
    * same attempt") — the retry loop below is exactly the mechanism that
    * rule exists to make safe.
+   *
+   * STREAMING (the voice-latency optimization's headline fix): each
+   * `onChunk` callback below queues that chunk's text onto `speakQueue`
+   * rather than waiting for `handleTurn` to fully resolve — the caller
+   * starts hearing the model's opening acknowledgment while a tool call
+   * or a second LLM completion is still resolving in the background,
+   * the same pause a human takes mid-sentence, instead of dead air for
+   * the whole turn. `speakQueue` (not a bare series of awaited `speak()`
+   * calls) exists because chunks must never be spoken out of order or
+   * overlapping, while `onChunk` itself must return near-instantly so
+   * it never blocks draining the underlying HTTP stream (see
+   * HttpOrchestratorClient's own comment) — chaining onto a promise
+   * gives both for free. By the time `turnResult` resolves, its
+   * `responseText` has ALREADY been spoken via these chunks (a cached/
+   * replayed turn streams its whole responseText as a single chunk too
+   * — see voice-orchestrator's `/turns` controller — so this is uniform
+   * across both cases), so it must NEVER be spoken again afterward —
+   * that would repeat the entire response a second time.
+   *
+   * RETRY SAFETY: docs/28 §G's retry-the-same-idempotencyKey rule was
+   * written for a contract where NOTHING is spoken until the whole turn
+   * resolves — retrying an ambiguous outcome was always safe because
+   * the caller had heard nothing yet either way. That assumption breaks
+   * under streaming: if a mid-stream failure happens AFTER the caller
+   * already heard one or more chunks, a retry re-invokes the LLM from
+   * scratch (a failed attempt releases its idempotency reservation
+   * rather than completing it — see HandleTurnUseCase's admitTurn) and
+   * could produce DIFFERENT text than what was already spoken —
+   * duplicate or contradictory speech, exactly what barge-in handling
+   * elsewhere in this class exists to prevent. `chunksReceivedThisAttempt`
+   * exists specifically to detect that case and refuse to retry it; a
+   * failure before any chunk arrived is unaffected and keeps the
+   * original retry behavior exactly as before streaming existed.
    */
   private async handleFinalTranscript(
     params: CallSessionParams,
@@ -254,10 +301,13 @@ export class CallSessionOrchestrator {
     let turnResult: TurnResult | null = null;
     let capacityAttempts = 0;
     let turnAttempts = 0;
+    this.bargedInDuringCurrentTurn = false;
+    let speakQueue: Promise<void> = Promise.resolve();
 
     while (turnResult === null) {
       const abortController = new AbortController();
       this.activeTurnAbort = abortController;
+      let chunksReceivedThisAttempt = false;
 
       try {
         turnResult = await this.orchestrator.handleTurn(
@@ -270,14 +320,37 @@ export class CallSessionOrchestrator {
             allowedTools: [...ALLOWED_TOOLS],
           },
           abortController.signal,
+          (text) => {
+            chunksReceivedThisAttempt = true;
+            speakQueue = speakQueue.then(() => {
+              if (this.bargedInDuringCurrentTurn) {
+                return;
+              }
+              return this.speak(text, sink);
+            });
+          },
         );
       } catch (error) {
         if (abortController.signal.aborted) {
           // Barge-in fired mid-turn (docs/28 §B.3 mechanism 1) — the caller
           // is already speaking their next utterance, which will itself
           // produce a new finalized transcript and a new turn. Silently
-          // drop this one rather than retrying or speaking anything.
+          // drop this one rather than retrying or speaking anything
+          // further (handleBargeIn already stopped whatever was
+          // currently playing and marked the rest of speakQueue as
+          // cancelled).
           this.activeTurnAbort = null;
+          await speakQueue;
+          return;
+        }
+
+        if (chunksReceivedThisAttempt) {
+          log.warn(
+            "turn failed mid-stream after the caller had already heard part of the response — not retrying (a retry could produce different, contradictory speech); ending this turn",
+            { conversationId, reason: error instanceof Error ? error.message : String(error) },
+          );
+          this.activeTurnAbort = null;
+          await speakQueue;
           return;
         }
 
@@ -333,43 +406,71 @@ export class CallSessionOrchestrator {
       responseText: turnResult.responseText,
     });
 
+    // responseText was already spoken (or queued to speak) chunk by
+    // chunk as it streamed in above — this just waits for every queued
+    // chunk to actually finish playing before deciding whether to
+    // transfer, never re-speaking the same text a second time.
+    await speakQueue;
+
     if (turnResult.escalation?.action === "forward_call") {
       log.info("emergency escalation signaled — executing call transfer (docs/28 §M)", {
         conversationId,
         severity: turnResult.escalation.severity,
         resolvedOnCallDestination: turnResult.escalation.transferDestination,
       });
-      // Speak first, THEN transfer — the caller should hear SOMETHING
-      // before the line hands off, rather than silence during the
-      // transfer's own connection setup latency. Best-effort: if the
-      // transfer itself fails, the caller has at least heard the response
-      // text and the call continues normally rather than dropping silently.
-      if (turnResult.responseText) {
-        await this.speak(turnResult.responseText, sink);
-      }
+      // The response text has already been spoken above (awaited via
+      // speakQueue) — the caller hears SOMETHING before the line hands
+      // off, rather than silence during the transfer's own connection
+      // setup latency, without speaking it twice. Best-effort: if the
+      // transfer itself fails, the call continues normally rather than
+      // dropping silently.
       await this.executeEmergencyTransfer(params, log, turnResult.escalation.transferDestination);
-      return;
-    }
-
-    if (turnResult.responseText) {
-      await this.speak(turnResult.responseText, sink);
     }
   }
 
   /**
-   * docs/28 §B.3 — barge-in. Two mechanisms, both implemented, chosen
-   * based on what's actually happening right now: if a turn HTTP call is
-   * in flight, abort it directly (mechanism 1); otherwise, if TTS is
-   * playing between turns, call the lighter-weight /interrupt endpoint
-   * (mechanism 2). Either way, Twilio's own audio buffer is cleared so
-   * queued-but-unplayed audio stops immediately — the HTTP-level
-   * abort/interrupt alone does not silence audio Twilio already received.
+   * docs/28 §B.3 — barge-in. Two mechanisms, MUTUALLY EXCLUSIVE, chosen
+   * based on what's actually happening right now: if a turn's HTTP call
+   * is still in flight, abort it directly (mechanism 1); only when it's
+   * NOT (i.e. the turn already fully finished and TTS is now just
+   * playing its already-known-complete response) does the
+   * lighter-weight /interrupt endpoint (mechanism 2) apply. Either way,
+   * Twilio's own audio buffer is cleared so queued-but-unplayed audio
+   * stops immediately — the HTTP-level abort/interrupt alone does not
+   * silence audio Twilio already received.
+   *
+   * Before streaming, these two conditions were NEVER simultaneously
+   * true by construction: `activeTurnAbort` was always cleared before
+   * `speak()` (and thus `ttsPlaying`) ever started, so checking both
+   * unconditionally never actually observed both at once. Streaming
+   * broke that: TTS can now be playing chunk 1 WHILE the HTTP
+   * connection is still open waiting for chunk 2, meaning both are
+   * genuinely true together. Firing mechanism 2 in that window would be
+   * wrong — voice-orchestrator hasn't durably saved this turn's
+   * messages yet (`saveTurnResult` only runs once, after the WHOLE
+   * tool-call loop finishes, see HandleTurnUseCase's own comment), so
+   * `/interrupt`'s "the full response was already durably saved before
+   * playback started" assumption (see InterruptConversationUseCase) is
+   * false mid-stream. The explicit `return` below after mechanism 1
+   * keeps the two paths exclusive instead of relying on timing.
    */
   private handleBargeIn(params: CallSessionParams, sink: MediaStreamSink): void {
+    this.bargedInDuringCurrentTurn = true;
+
     if (this.activeTurnAbort) {
       this.activeTurnAbort.abort();
       this.activeTurnAbort = null;
+      if (this.ttsAbort) {
+        this.ttsAbort.abort();
+        this.ttsAbort = null;
+      }
+      if (this.ttsPlaying) {
+        sink.clearQueuedAudio();
+        this.ttsPlaying = false;
+      }
+      return;
     }
+
     if (this.ttsAbort) {
       this.ttsAbort.abort();
       this.ttsAbort = null;
