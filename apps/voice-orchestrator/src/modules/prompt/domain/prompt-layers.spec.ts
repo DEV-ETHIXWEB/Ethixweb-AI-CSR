@@ -223,4 +223,18 @@ describe("assembleLayeredPrompt", () => {
       "a lead with only a first name is an incomplete record",
     );
   });
+
+  /**
+   * v11: a preemptive rule, not a live-observed bug — real conversations
+   * run against claude-haiku-4-5 for this pass never actually produced
+   * these openers, but they're exactly the kind of canned-enthusiasm
+   * tic this platform is built to avoid (§5's own anti-robotic
+   * philosophy), and the prior "sound natural" instruction never named
+   * them explicitly.
+   */
+  it("explicitly names stock enthusiasm openers to avoid, not just a general 'sound natural' instruction", () => {
+    expect(PLATFORM_BASE_PROMPT_V1).toContain('"Absolutely!"');
+    expect(PLATFORM_BASE_PROMPT_V1).toContain('"Certainly!"');
+    expect(PLATFORM_BASE_PROMPT_V1).toContain('"Great question!"');
+  });
 });
