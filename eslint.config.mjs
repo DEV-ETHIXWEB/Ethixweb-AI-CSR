@@ -42,6 +42,19 @@ export default tseslint.config(
           allowDefaultProject: [
             "packages/database/prisma.config.ts",
             "packages/shared-kernel/vitest.config.ts",
+            // Standalone CLI dev tools (real-provider latency/quality
+            // measurement scripts) — deliberately NOT part of either
+            // package's own tsconfig `include` (that's reserved for
+            // "src", the compiled application; adding "scripts" there
+            // once already broke `nest build`'s output path from
+            // dist/main.js to dist/src/main.js, since TS then computes
+            // a different common rootDir — see that incident's own
+            // commit). ts-node's own `-T` transpile-only mode never
+            // needed these listed here at all; this is purely so the
+            // project service can type-check them for linting.
+            "apps/voice-orchestrator/scripts/measure-streaming-latency.ts",
+            "apps/voice-orchestrator/scripts/measure-conversation-quality.ts",
+            "apps/voice-runtime/scripts/measure-tts-latency.ts",
           ],
         },
         tsconfigRootDir: import.meta.dirname,

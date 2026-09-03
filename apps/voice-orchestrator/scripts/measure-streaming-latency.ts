@@ -84,7 +84,7 @@ interface TurnMeasurement {
 }
 
 async function main(): Promise<void> {
-  const aiProvider = new AnthropicAdapter(apiKey!, process.env["ANTHROPIC_BASE_URL"]);
+  const aiProvider = new AnthropicAdapter(apiKey, process.env["ANTHROPIC_BASE_URL"]);
   const repository = new FakeConversationRepository();
   const eventBus = new FakeEventBus();
   const idempotencyStore = new InMemoryIdempotencyStore();
@@ -133,7 +133,7 @@ async function main(): Promise<void> {
   const measurements: TurnMeasurement[] = [];
 
   for (let i = 0; i < CALLER_TURNS.length; i++) {
-    const callerText = CALLER_TURNS[i]!;
+    const callerText = CALLER_TURNS[i];
     const command: HandleTurnCommand = {
       tenantId: "measurement-tenant",
       conversationId,
@@ -183,12 +183,12 @@ function printTurn(
   for (let i = 0; i < chunkTimestampsMs.length; i++) {
     const label = i === 0 ? "first chunk" : `chunk ${i + 1}`;
     console.log(
-      `  [+${chunkTimestampsMs[i]}ms] ${label} (${chunkTexts[i]!.length} chars): "${chunkTexts[i]}"`,
+      `  [+${chunkTimestampsMs[i]}ms] ${label} (${chunkTexts[i].length} chars): "${chunkTexts[i]}"`,
     );
   }
   console.log(`  [+${doneAtMs}ms] turn done (${chunkTimestampsMs.length} chunk(s) total)`);
   if (chunkTimestampsMs.length > 0) {
-    const firstChunkMs = chunkTimestampsMs[0]!;
+    const firstChunkMs = chunkTimestampsMs[0];
     const savedMs = doneAtMs - firstChunkMs;
     console.log(
       `  => speech could start ${savedMs}ms BEFORE the turn fully finished (${((savedMs / doneAtMs) * 100).toFixed(0)}% of total turn time)`,
@@ -202,7 +202,7 @@ function printSummary(measurements: TurnMeasurement[]): void {
     "=== SUMMARY (real Anthropic API, real HandleTurnUseCase, real sentence-boundary chunking) ===",
   );
   const withChunks = measurements.filter((m) => m.chunkTimestampsMs.length > 0);
-  const firstChunkTimes = withChunks.map((m) => m.chunkTimestampsMs[0]!);
+  const firstChunkTimes = withChunks.map((m) => m.chunkTimestampsMs[0]);
   const totalTimes = measurements.map((m) => m.doneAtMs);
   const chunkCounts = measurements.map((m) => m.chunkTimestampsMs.length);
   const multiChunkTurns = measurements.filter((m) => m.chunkTimestampsMs.length > 1).length;
@@ -216,7 +216,7 @@ function printSummary(measurements: TurnMeasurement[]): void {
   console.log(
     `Total turn duration (ms): min=${Math.min(...totalTimes)} max=${Math.max(...totalTimes)} avg=${avg(totalTimes).toFixed(0)}`,
   );
-  const savedMsPerTurn = withChunks.map((m) => m.doneAtMs - m.chunkTimestampsMs[0]!);
+  const savedMsPerTurn = withChunks.map((m) => m.doneAtMs - m.chunkTimestampsMs[0]);
   console.log(
     `Time speech could start before full turn finished (ms): min=${Math.min(...savedMsPerTurn)} max=${Math.max(...savedMsPerTurn)} avg=${avg(savedMsPerTurn).toFixed(0)}`,
   );

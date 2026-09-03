@@ -107,7 +107,7 @@ const SCRIPTS: ConversationScript[] = [
 ];
 
 async function runScript(script: ConversationScript): Promise<void> {
-  const aiProvider = new AnthropicAdapter(apiKey!, process.env["ANTHROPIC_BASE_URL"]);
+  const aiProvider = new AnthropicAdapter(apiKey, process.env["ANTHROPIC_BASE_URL"]);
   const repository = new FakeConversationRepository();
   const eventBus = new FakeEventBus();
   const idempotencyStore = new InMemoryIdempotencyStore();
