@@ -367,6 +367,83 @@ describe("HandleTurnUseCase", () => {
     });
   });
 
+  /**
+   * Regression coverage for `admitTurn()`'s entire reason for existing:
+   * a streaming HTTP layer (the controller) needs to know whether this
+   * turn is even ADMISSIBLE — conversation exists, not ended, not
+   * already in flight — strictly BEFORE it commits to writing a 200 and
+   * starting a response body, because HTTP cannot change the status
+   * code once that's happened. These prove the exact property that
+   * safety depends on: the three error cases throw directly from
+   * `admitTurn()` itself, with no `run()` ever obtained, and the two
+   * success cases are correctly discriminated by `kind`.
+   */
+  describe("admitTurn (the pre-flight-checks/streaming split execute() is now built on)", () => {
+    it("throws ConversationNotFoundError directly from admitTurn — before any run() exists to call", async () => {
+      const { useCase } = buildUseCase();
+
+      await expect(useCase.admitTurn(baseCommand({ conversationId: "missing" }))).rejects.toThrow(
+        ConversationNotFoundError,
+      );
+    });
+
+    it("throws ConversationAlreadyEndedError directly from admitTurn", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(
+        baseConversation({ endedAt: new Date().toISOString(), endReason: "caller_hangup" }),
+      );
+      const { useCase } = buildUseCase({ repository });
+
+      await expect(useCase.admitTurn(baseCommand())).rejects.toThrow(ConversationAlreadyEndedError);
+    });
+
+    it("throws TurnAlreadyInFlightError directly from admitTurn for a concurrent duplicate idempotencyKey", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const idempotencyStore = new FakeIdempotencyStore();
+      const { useCase } = buildUseCase({ repository, idempotencyStore });
+      const command = baseCommand();
+
+      const firstAdmission = await useCase.admitTurn(command);
+      expect(firstAdmission.kind).toBe("live");
+
+      await expect(useCase.admitTurn(command)).rejects.toThrow(TurnAlreadyInFlightError);
+    });
+
+    it('returns kind: "live" with a run() that executes and persists the turn exactly like execute() does', async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const { useCase } = buildUseCase({ repository });
+      const command = baseCommand({ transcript: "Hi, my water heater is broken" });
+
+      const admission = await useCase.admitTurn(command);
+      expect(admission.kind).toBe("live");
+      if (admission.kind !== "live") throw new Error("unreachable");
+      const chunks: string[] = [];
+      const result = await admission.run((text) => chunks.push(text));
+
+      expect(result.responseText).toBe("hi");
+      expect(chunks).toEqual(["hi"]);
+      const saved = await repository.findById("tenant-1", "conv-1");
+      expect(saved?.transcript.map((t) => t.speaker)).toEqual(["caller", "agent"]);
+    });
+
+    it('returns kind: "cached" with the full result, no run(), on an idempotent replay', async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const { useCase } = buildUseCase({ repository });
+      const command = baseCommand({ transcript: "Hi, my water heater is broken" });
+
+      await useCase.execute(command);
+      const replay = await useCase.admitTurn(command);
+
+      expect(replay.kind).toBe("cached");
+      if (replay.kind !== "cached") throw new Error("unreachable");
+      expect(replay.result.responseText).toBe("hi");
+      expect("run" in replay).toBe(false);
+    });
+  });
+
   it("publishes a lead.created event and records leadId on the conversation when createLead succeeds", async () => {
     const repository = new FakeConversationRepository();
     repository.seed(baseConversation());

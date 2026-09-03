@@ -68,6 +68,18 @@ export interface HandleTurnResult {
   escalation?: { severity: string; action: string; transferDestination: string | null };
 }
 
+/**
+ * `admitTurn()`'s result — see that method's own comment for why this
+ * exists as a distinct two-phase step rather than folded into
+ * `execute()` directly. `"cached"` means an idempotent replay already
+ * fully resolved the turn with no LLM call; `"live"` hands back a `run`
+ * continuation the caller invokes once it's actually ready to commit to
+ * a response (streaming or otherwise).
+ */
+export type TurnAdmission =
+  | { kind: "cached"; result: HandleTurnResult }
+  | { kind: "live"; run: (onChunk?: (text: string) => void) => Promise<HandleTurnResult> };
+
 /** Bounds a pathological model tool-loop. Not a documented constant — an INFERRED safety limit; a real call needs at most a handful (searchCustomer → escalateEmergency → createLead). */
 const MAX_TOOL_ITERATIONS = 5;
 
@@ -143,6 +155,38 @@ export class HandleTurnUseCase {
     command: HandleTurnCommand,
     onChunk?: (text: string) => void,
   ): Promise<HandleTurnResult> {
+    const admission = await this.admitTurn(command);
+    if (admission.kind === "cached") {
+      if (admission.result.responseText) {
+        onChunk?.(admission.result.responseText);
+      }
+      return admission.result;
+    }
+    return admission.run(onChunk);
+  }
+
+  /**
+   * Split out of `execute()` specifically so a streaming HTTP layer (the
+   * controller) can do the pre-flight checks below — conversation
+   * lookup, ended check, idempotency begin/in-flight — and let a
+   * genuine failure there (`ConversationNotFoundError`,
+   * `ConversationAlreadyEndedError`, `TurnAlreadyInFlightError`)
+   * propagate as an ordinary thrown error BEFORE committing to writing
+   * any response body. Once a streaming response has started (status
+   * code + headers sent), HTTP fundamentally cannot change the status
+   * code anymore — so these specific checks, which the existing 404/409
+   * exception-filter behavior depends on, have to fully resolve first,
+   * strictly before the caller writes anything. Only once this returns
+   * a `"live"` admission is it actually safe to commit to a 200 and
+   * start streaming; a `"cached"` admission (idempotent replay) never
+   * touches the LLM at all, so there's nothing to stream — the full
+   * result is already known.
+   *
+   * `execute()` above is unchanged in every observable way for every
+   * existing caller — it's now a thin, fully backward-compatible
+   * wrapper over this and `run()`.
+   */
+  async admitTurn(command: HandleTurnCommand): Promise<TurnAdmission> {
     setSpanAttributes({
       "ethixweb.tenant_id": command.tenantId,
       "ethixweb.conversation_id": command.conversationId,
@@ -164,25 +208,31 @@ export class HandleTurnUseCase {
       ttlSeconds: 3600,
     });
     if (outcome.status === "completed") {
-      if (outcome.result.responseText) {
-        onChunk?.(outcome.result.responseText);
-      }
-      return outcome.result;
+      return { kind: "cached", result: outcome.result };
     }
     if (outcome.status === "in_flight") {
       throw new TurnAlreadyInFlightError(idempotencyKey);
     }
 
-    try {
-      const result = await this.runTurn(command, conversation, onChunk);
-      await this.idempotencyStore.complete(idempotencyKey, result, { ttlSeconds: 3600 });
-      return result;
-    } catch (error) {
-      // Release so a legitimate retry with the SAME key isn't permanently
-      // blocked behind a reservation nothing will ever complete.
-      await this.idempotencyStore.release(idempotencyKey);
-      throw error;
-    }
+    return {
+      kind: "live",
+      run: async (onChunk?: (text: string) => void) => {
+        try {
+          const result = await this.runTurn(command, conversation, onChunk);
+          await this.idempotencyStore.complete(idempotencyKey, result, { ttlSeconds: 3600 });
+          return result;
+        } catch (error) {
+          // Release so a legitimate retry with the SAME key isn't
+          // permanently blocked behind a reservation nothing will ever
+          // complete. Safe to surface as a mid-stream error event (not
+          // an HTTP status change) — by the time `run()` is even
+          // reachable, the caller has already committed to a 200 and
+          // started streaming.
+          await this.idempotencyStore.release(idempotencyKey);
+          throw error;
+        }
+      },
+    };
   }
 
   private async runTurn(
