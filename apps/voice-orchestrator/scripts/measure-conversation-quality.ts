@@ -30,6 +30,8 @@ import { createNoopLogger } from "../src/modules/conversation/application/__fake
 import { ExecuteToolUseCase } from "../src/modules/tool-broker/application/execute-tool.use-case";
 import { ToolRegistry } from "../src/modules/tool-broker/application/tool-registry";
 import { FakeToolAuditLog } from "../src/modules/tool-broker/application/__fakes__/fake-tool-audit-log";
+import { FakeToolHandler } from "../src/modules/tool-broker/application/__fakes__/fake-tool-handler";
+import { TOOL_CATALOG } from "../src/modules/tool-broker/domain/tool-catalog";
 import {
   assembleLayeredPrompt,
   PLATFORM_BASE_PROMPT_V1,
@@ -60,6 +62,17 @@ interface ConversationScript {
   name: string;
   focus: string;
   turns: string[];
+  /**
+   * Off by default (`allowedTools: []`) to isolate pure conversational
+   * flow from tool-calling complexity for the simpler scripts. When
+   * true, every catalog tool is registered with a FakeToolHandler that
+   * always succeeds and offered to the model — needed for scripts
+   * where "can the model actually finish the call" is part of what's
+   * being evaluated (a model with no tools available has no way to
+   * complete a qualifying flow at all, which can itself distort
+   * behavior — see v13's own comment on why this flag exists).
+   */
+  enableTools?: boolean;
 }
 
 const SCRIPTS: ConversationScript[] = [
@@ -104,6 +117,45 @@ const SCRIPTS: ConversationScript[] = [
       "No, sorry, I mean it started yesterday morning, not this morning.",
     ],
   },
+  {
+    name: "v12: property-manager call (real CSR-training reference material)",
+    focus:
+      "Let the caller explain before logistics questions; paraphrase back instead of a bare 'Okay'; ask who the real point of contact is (a tenant here) rather than assuming it's the caller; recognize the second/third issues mentioned in passing as real opportunities to help; describe a look-and-quote agreement honestly as not-yet-committed work; note the future remodel without pressuring; and — the one thing that must NOT appear — no specific appointment window offered (this platform has no scheduling integration to back that up).",
+    turns: [
+      "Hi, my name is Lisa Underwood. You guys have done some work for us on a rental property in Newcastle and I'm looking to get another plumbing issue looked at.",
+      "The tenant has a washer and dryer that when the washer starts dumping its water like it's supposed to, ends up overflowing. So we think the drain's possibly clogged.",
+      "It'll need to be coordinated with the tenants.",
+      "I need to coordinate it with their schedule.",
+      // Matches the real reference transcript's own order: Lisa gives HER
+      // number as soon as it's asked for, directly, on the first ask —
+      // this scenario is about whether the model behaves naturally when
+      // the caller IS cooperative, distinct from the deliberately
+      // adversarial "never answers" variant further below.
+      "703-338-2044.",
+      "We'd also like to consider adding a small utility sink, and we've got two outside faucets that are leaking.",
+      "Yeah, that sounds good.",
+      "Her name is Susan Holton, and her number is 206-276-7266.",
+      "We'll want to pay for it ourselves, not have the tenant pay for it.",
+      "We're also thinking about a kitchen remodel, possibly repiping, but that probably won't be solidified until January.",
+      "Yes, that all sounds good, thank you.",
+    ],
+    enableTools: true,
+  },
+  {
+    name: "v13: caller repeatedly does not answer a direct question (adversarial)",
+    focus:
+      "The harder case v12's own run surfaced: what happens when the caller keeps NOT answering a specific direct question (here, their own phone number), turning to other topics instead, all the way to a clear close signal. Should ask at most twice, then let it go rather than blocking the close on one field.",
+    turns: [
+      "Hi, my water heater stopped working completely, no hot water at all.",
+      "It's been like this since yesterday.",
+      "We'd also like someone to look at a slow drain in the kitchen while they're out.",
+      "Yeah, whenever works.",
+      "We'll cover the cost ourselves.",
+      "Actually, we're also thinking about redoing the upstairs bathroom sometime next year.",
+      "Yes, that's everything, thanks.",
+    ],
+    enableTools: true,
+  },
 ];
 
 async function runScript(script: ConversationScript): Promise<void> {
@@ -118,6 +170,15 @@ async function runScript(script: ConversationScript): Promise<void> {
     new FakeToolAuditLog(),
     createNoopLogger(),
   );
+  const allowedTools: string[] = [];
+  if (script.enableTools) {
+    for (const definition of TOOL_CATALOG) {
+      const handler = new FakeToolHandler();
+      handler.output = { id: randomUUID(), found: false, isEmergency: false };
+      toolRegistry.register(definition, handler);
+      allowedTools.push(definition.name);
+    }
+  }
   const useCase = new HandleTurnUseCase(
     repository,
     aiProvider,
@@ -157,11 +218,15 @@ async function runScript(script: ConversationScript): Promise<void> {
       conversationId,
       idempotencyKey: randomUUID(),
       transcript: callerText,
-      allowedTools: [],
+      allowedTools,
     };
     const result = await useCase.execute(command);
     console.log(`Caller: ${callerText}`);
-    console.log(`CSR:    ${result.responseText}\n`);
+    console.log(`CSR:    ${result.responseText}`);
+    if (result.toolCallsExecuted.length > 0) {
+      console.log(`        [tools called: ${result.toolCallsExecuted.join(", ")}]`);
+    }
+    console.log("");
   }
 }
 

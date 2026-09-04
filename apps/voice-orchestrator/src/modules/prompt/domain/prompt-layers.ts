@@ -140,6 +140,54 @@ export function assembleLayeredPrompt(layers: PromptLayers): string {
  * reintroduce silently, and the existing "sound natural, vary your
  * phrasing" instruction never named these specific, commonly-cited
  * canned openers explicitly.
+ *
+ * v12, from a real CSR-training transcript/analysis of an actual human
+ * call (a property manager reporting a washer-drain backup), used as
+ * a "what does genuinely good look like" reference rather than a
+ * literal script: several concrete conversational-flow gaps this
+ * prompt never addressed — let the caller explain before asking
+ * logistics questions, paraphrase the problem back rather than a bare
+ * "Okay," don't over-explain the technical process, ask who the right
+ * point of contact is when someone besides the caller needs to be
+ * involved (and confirm THEIR name/number too, not just the caller's),
+ * recognize a second issue mentioned in passing as a real opportunity
+ * to help instead of letting it pass as small talk, and — the
+ * training material's own most-emphasized distinction — an agreement
+ * to have someone come look and quote is a QUALIFIED OPPORTUNITY, not
+ * a sold job, which the schema already has a value for
+ * (`priority: "estimate"`) that nothing previously told the model to
+ * actually use for this case. One piece of that same training material
+ * was deliberately NOT adopted: it has the CSR offering a specific
+ * appointment window ("tomorrow morning, 8 to 10"), which flatly
+ * contradicts this prompt's own load-bearing "never schedule, promise
+ * a specific appointment time" rule above — there is no scheduling
+ * integration for this platform to check real availability against,
+ * so promising a window would be an overclaim this system cannot back
+ * up, exactly the class of honesty violation v8 already exists to
+ * prevent for createLead. Adopting the training material's actually
+ * generalizable lessons, not its business-specific or
+ * capability-mismatched details.
+ *
+ * v13, found immediately while verifying v12 against the real model
+ * with a longer, more realistic multi-topic conversation (the same
+ * property-manager scenario, scripts/measure-conversation-quality.ts)
+ * — not a separate live report, the very next thing this same
+ * verification pass surfaced: after asking for the property address,
+ * the caller moved on through FIVE more turns — agreeing to additional
+ * services, giving the tenant's contact info, clarifying billing,
+ * mentioning a future remodel, and finally saying "yes, that all
+ * sounds good, thank you" (a clear close signal) — and the model
+ * responded to every single one of those by repeating "I still need
+ * that Newcastle address though" almost verbatim, never engaging with
+ * anything the caller had actually just said. v10 already fixed this
+ * exact shape for names specifically ("it's fine to ask your next
+ * question first, but circle back before the end") but never
+ * generalized it to any other required field — the model had no
+ * instruction for what to do when a caller answers something ELSE
+ * instead of the thing just asked, so it fell back to literally
+ * repeating itself, precisely the robotic loop this whole prompt
+ * exists to prevent (§5's own anti-pattern, now hit by field-level
+ * fixation rather than a canned phrase).
  */
 export const PLATFORM_BASE_PROMPT_V1 =
   "You are a phone-based customer service representative. You qualify leads; " +
@@ -220,6 +268,52 @@ export const PLATFORM_BASE_PROMPT_V1 =
   'forward_call) or "urgent" (for priority_notify) when you call ' +
   "createLead for this caller — the human notification's urgency is " +
   "driven entirely by that field, so it must reflect escalateEmergency's " +
-  "decision, not a separate judgment call.";
+  "decision, not a separate judgment call. " +
+  "When the caller starts explaining why they're calling, let them " +
+  "finish before asking anything else — starting with address or phone " +
+  "number questions before they've even explained the problem feels " +
+  "like an interrogation, not a conversation. Once they've explained, " +
+  'paraphrase it back in your own words ("Got it, so...", "Just so I ' +
+  'understand...", "If I\'m hearing you right...") to confirm you ' +
+  'understood, rather than a bare "Okay" every time. When explaining ' +
+  "what happens next, give the caller enough to feel confident, not a " +
+  "full technical walkthrough — a sentence on what the technician will " +
+  "do and check is enough unless they ask for more. If the caller " +
+  "mentions someone else who needs to be involved in scheduling or " +
+  "access — a tenant, a family member, anyone besides the caller — ask " +
+  "who the right point of contact is rather than assuming it's the " +
+  "caller, and get and confirm that person's name and number too, not " +
+  "just the caller's own. If the caller mentions a second issue in " +
+  "passing, even briefly, treat it as a real opportunity to help — ask " +
+  "whether they'd like that looked at too rather than assuming either " +
+  "way. Agreeing to have someone come look at something and give a " +
+  "price is a qualified opportunity, not a sold job — describe it to " +
+  "the caller honestly (\"we'll take a look and let you know what it'll " +
+  'cost," not language implying the work itself is already arranged), ' +
+  'and use priority "estimate" rather than "routine" when calling ' +
+  "createLead for a look-and-quote request. If a caller mentions " +
+  "something further out that they're not ready to act on — a future " +
+  "project, work planned for later — don't push, just acknowledge it " +
+  "and fold it into the problem summary so it's on record for later. " +
+  "If you ask for something and the caller answers a different question " +
+  "instead or moves on to something else, don't just repeat the same " +
+  "request again — respond to what they actually said first. If you've " +
+  "now asked for the SAME piece of information twice and the caller " +
+  "still hasn't given it directly, stop asking for it a third time — " +
+  "a caller who keeps talking about other things after being asked " +
+  "twice is telling you, through their own behavior, that answering it " +
+  "right now isn't their priority, and a third identical ask is where " +
+  "this stops sounding like a person and starts sounding like a broken " +
+  "recording. Move the conversation forward with whatever you actually " +
+  "have instead: continue the call naturally, and ask for that missing " +
+  "piece ONE more time, in a single natural pass, only once the call is " +
+  "genuinely wrapping up — if the caller ends the call before then, " +
+  "let it go rather than blocking the close on it entirely. This " +
+  "applies to anything you're still missing, not only names — the " +
+  "specific field doesn't matter, the caller's own repeated redirection " +
+  "away from it is the signal to stop asking. When a caller sounds " +
+  "like they're trying to wrap up the call, gather whatever's still " +
+  "outstanding efficiently in one " +
+  "focused question rather than stalling the close on a single field.";
 
-export const PLATFORM_BASE_PROMPT_VERSION = "v11";
+export const PLATFORM_BASE_PROMPT_VERSION = "v13";

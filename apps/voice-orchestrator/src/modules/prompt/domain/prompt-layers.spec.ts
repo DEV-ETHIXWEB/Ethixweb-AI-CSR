@@ -237,4 +237,94 @@ describe("assembleLayeredPrompt", () => {
     expect(PLATFORM_BASE_PROMPT_V1).toContain('"Certainly!"');
     expect(PLATFORM_BASE_PROMPT_V1).toContain('"Great question!"');
   });
+
+  /**
+   * v12, from a real CSR-training transcript analysis: let the caller
+   * explain why they're calling before asking logistics questions —
+   * the training material's own "interrogation" anti-pattern, and a
+   * generalization of the same over-confirming/robotic-flow philosophy
+   * v3/v9/v11 already encode for other specific cases.
+   */
+  it("instructs the model to let the caller explain before asking logistics questions", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "let them finish before asking anything else",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "feels like an interrogation, not a conversation",
+    );
+  });
+
+  it("instructs the model to paraphrase the problem back with varied phrasing instead of a bare 'Okay'", () => {
+    expect(PLATFORM_BASE_PROMPT_V1).toContain("paraphrase it back in your own words");
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain('bare "okay" every time');
+  });
+
+  it("instructs the model to ask who the right point of contact is when someone besides the caller is involved, and confirm their info too", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "ask who the right point of contact is",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("not just the caller's own");
+  });
+
+  it("instructs the model to recognize a second issue mentioned in passing as a real opportunity to help", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "treat it as a real opportunity to help",
+    );
+  });
+
+  /**
+   * The training material's own most-emphasized distinction: agreeing
+   * to a look-and-quote is a qualified opportunity, not a sold job.
+   * The schema already had a value for this (`priority: "estimate"`)
+   * that nothing previously told the model to actually use.
+   */
+  it('instructs the model to use priority "estimate" (not "routine") for a look-and-quote agreement, and describe it honestly as not-yet-committed work', () => {
+    expect(PLATFORM_BASE_PROMPT_V1).toContain(
+      'use priority "estimate" rather than "routine" when calling createLead',
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("not a sold job");
+  });
+
+  it("instructs the model to document a future, not-yet-actionable opportunity without pressuring the caller", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("don't push");
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("fold it into the problem summary");
+  });
+
+  /**
+   * The one piece of that same training material deliberately NOT
+   * adopted: it has the CSR offering a specific appointment window,
+   * which flatly contradicts this prompt's own "never schedule,
+   * promise a specific appointment time" rule — there is no scheduling
+   * integration to check real availability against. Confirms v12
+   * didn't silently introduce a contradiction alongside its real fixes.
+   */
+  it("still never instructs the model to offer a specific appointment window — v12 did not reintroduce the scheduling promise this prompt forbids", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).not.toMatch(/\b(8 to 10|tomorrow morning)\b/);
+    expect(PLATFORM_BASE_PROMPT_V1).toContain(
+      "you never schedule, promise a specific appointment time",
+    );
+  });
+
+  /**
+   * v13, found immediately while verifying v12 against the real model:
+   * the model repeated "I still need that Newcastle address though"
+   * almost verbatim across five straight turns, never engaging with
+   * anything the caller actually said in between, including a clear
+   * close signal ("yes, that all sounds good, thank you"). A stricter,
+   * count-based instruction was added — NOTE (see this file's own
+   * follow-up real-model runs, not asserted here since this is a text
+   * check, not a behavioral one): re-verifying this against the real
+   * model afterward showed the instruction reduces but does NOT fully
+   * eliminate the fixation — it's a genuine, still-open limitation of
+   * prompt-only tuning for this specific model on this specific
+   * failure mode, tracked honestly rather than claimed fixed. This
+   * test only proves the instruction is present in the prompt text,
+   * not that the model reliably follows it.
+   */
+  it("instructs the model to stop re-asking the same missing field after two attempts rather than repeating it indefinitely", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "if you've now asked for the same piece of information twice",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("stop asking for it a third time");
+  });
 });
