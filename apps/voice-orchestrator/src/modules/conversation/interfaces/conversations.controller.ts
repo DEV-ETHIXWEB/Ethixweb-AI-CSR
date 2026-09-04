@@ -4,6 +4,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Inject,
   Param,
   ParseUUIDPipe,
   Post,
@@ -11,7 +12,9 @@ import {
   Res,
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
+import type { StructuredLogger } from "@ethixweb/shared-kernel";
 import type { FastifyReply } from "fastify";
+import { APP_LOGGER } from "../../../shared/observability/app-logger.module";
 import { EndConversationUseCase } from "../application/end-conversation.use-case";
 import { GetConversationByCallIdUseCase } from "../application/get-conversation-by-call-id.use-case";
 import { GetConversationUseCase } from "../application/get-conversation.use-case";
@@ -53,6 +56,7 @@ export class ConversationsController {
     private readonly getConversation: GetConversationUseCase,
     private readonly getConversationByCallId: GetConversationByCallIdUseCase,
     private readonly interruptConversation: InterruptConversationUseCase,
+    @Inject(APP_LOGGER) private readonly logger: StructuredLogger,
   ) {}
 
   @Post()
@@ -139,9 +143,65 @@ export class ConversationsController {
     // yet, exactly the same 404/409 behavior as before streaming existed.
     const admission = await this.handleTurn.admitTurn(command);
 
-    reply.raw.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8" });
+    // `Connection: close` — found live, not hypothetical: a real call's
+    // 6th turn completed successfully here (this method ran to
+    // completion, "turn processing completed" logged, reply.raw.end()
+    // called) but the Voice Runtime client sat waiting on it for over
+    // 30 seconds with total silence to the caller before a LATER,
+    // unrelated turn's response finally arrived — turns before and
+    // after it, on the same call, completed normally. That shape (works
+    // repeatedly, then silently doesn't, no error either side) is the
+    // signature of a reused keep-alive connection getting into a bad
+    // state rather than anything wrong with any single request/response
+    // — every earlier attempt at hardening the CLIENT's stream-reading
+    // loop (see HttpOrchestratorClient's own comment) still left this
+    // possible, because the client can only behave correctly with
+    // whatever bytes the connection actually delivers to it. Forcing a
+    // fresh connection per turn removes the keep-alive reuse path
+    // entirely — the one variable neither side could fully control —
+    // at the cost of one extra TCP handshake per turn, a real but small
+    // price for a P0 that otherwise makes the caller hear total
+    // silence with no bound short of a 20s client-side timeout.
+    reply.raw.writeHead(200, {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      Connection: "close",
+    });
+    // Diagnostic visibility for the exact failure class above — a
+    // write/close problem on this raw response previously had NO
+    // signal anywhere in these logs; the turn just silently never
+    // finished from the client's perspective. `error` fires on a
+    // genuine socket-level failure; `close` fires whenever the
+    // underlying connection ends, logged only when it happens BEFORE
+    // this handler's own `reply.raw.end()` call below (`finished`
+    // check) — a normal, expected close after we're done is not
+    // worth logging on every turn.
+    // `.once`, not `.on` — each fires at most once per request either
+    // way, and this handler runs once per turn for the life of the
+    // process; `.on` would leak a listener onto the underlying socket
+    // for every single turn ever handled (caught by a real
+    // MaxListenersExceededWarning while adding this very diagnostic —
+    // see this file's own test suite run).
+    reply.raw.once("error", (error: Error) => {
+      this.logger.warn("turn response socket errored", {
+        conversationId: id,
+        reason: error.message,
+      });
+    });
+    reply.raw.once("close", () => {
+      if (!reply.raw.writableEnded) {
+        this.logger.warn("turn response connection closed before the response finished", {
+          conversationId: id,
+        });
+      }
+    });
     const writeLine = (event: Record<string, unknown>): void => {
-      reply.raw.write(`${JSON.stringify(event)}\n`);
+      const flushed = reply.raw.write(`${JSON.stringify(event)}\n`);
+      if (!flushed) {
+        this.logger.warn("turn response write reported backpressure", {
+          conversationId: id,
+          eventType: event["type"],
+        });
+      }
     };
 
     try {

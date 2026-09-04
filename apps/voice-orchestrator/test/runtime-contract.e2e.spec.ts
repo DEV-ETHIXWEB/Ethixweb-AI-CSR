@@ -131,6 +131,15 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       });
       expect(firstTurn.statusCode).toBe(200);
       expect(parseTurnResult(firstTurn)["responseText"]).toContain("Thanks for calling");
+      // Regression coverage for a real live-call failure: a keep-alive
+      // connection reused across several turns on the same call got
+      // into a state where a LATER turn's response never reached the
+      // client at all, even though this endpoint completed normally
+      // server-side — the caller heard total silence. Forcing a fresh
+      // connection per turn (docs/28 §C.3) removes that reuse path
+      // entirely; this asserts the header that makes that happen is
+      // actually present, not just present in intent.
+      expect(firstTurn.headers["connection"]).toBe("close");
 
       const interrupted = await sim.inject({
         method: "POST",
