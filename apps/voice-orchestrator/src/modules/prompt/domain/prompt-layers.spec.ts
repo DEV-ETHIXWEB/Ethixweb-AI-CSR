@@ -327,4 +327,62 @@ describe("assembleLayeredPrompt", () => {
     );
     expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("stop asking for it a third time");
   });
+
+  /**
+   * v14: the greeting never introduced the CSR by name at all — nothing
+   * told the model to, even once a per-tenant name (DEFAULT_BRAND_VOICE_PROMPT)
+   * existed to introduce. The instruction is deliberately CONDITIONAL
+   * ("if you were given a name") since not every tenant will configure one.
+   */
+  it("instructs the model to introduce itself by name in the greeting when a name was given, and not invent one when it wasn't", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "introduce yourself by it in your opening greeting",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("don't invent one");
+  });
+
+  /**
+   * v14: playful personal questions ("how old are you," "what's your
+   * birthday") are deliberately handled DIFFERENTLY from v8's "are you
+   * human or AI" honesty rule — a warm deflection for banter, never a
+   * fabricated fake age/birthday, and the absolute honesty rule stays
+   * untouched for a genuinely serious version of the same question.
+   */
+  it("instructs the model to warmly deflect playful personal questions without fabricating a fake age or birthday, while keeping the serious human/AI honesty rule absolute", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("joking about your age or birthday");
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "never invent a specific fake age, birthday, or personal history",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("always answer that one honestly");
+  });
+
+  /**
+   * v14: closes the same class of gap v6/v8 already closed for failed
+   * tool calls and unsubmitted leads (don't fill an honesty gap with a
+   * confident-sounding fabrication) — this time for technical questions
+   * the model itself isn't confident about.
+   */
+  it("instructs the model to defer an uncertain technical question to the technician rather than guessing", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("don't guess and don't make something");
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "that's something the technician can confirm",
+    );
+  });
+
+  /**
+   * v14: a rare (not reliably reproducible — 1 occurrence in several
+   * real-model runs, scripts/measure-conversation-quality.ts) but
+   * serious artifact if it ever reaches a real call: the model wrote
+   * "*[Calling escalateEmergency]*" as literal spoken response text,
+   * which TTS would read aloud verbatim. A human CSR never narrates
+   * their own internal process — this closes the gap cheaply even
+   * without full reproducibility, matching the same "no visible seam"
+   * philosophy the rest of this prompt is built on.
+   */
+  it("instructs the model never to narrate its own actions or internal process as spoken text (no stage directions)", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "never narrate your own actions or internal process out loud",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("no visible seam between");
+  });
 });

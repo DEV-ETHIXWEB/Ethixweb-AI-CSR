@@ -36,6 +36,7 @@ import {
   assembleLayeredPrompt,
   PLATFORM_BASE_PROMPT_V1,
 } from "../src/modules/prompt/domain/prompt-layers";
+import { DEFAULT_BRAND_VOICE_PROMPT } from "../src/modules/prompt/infrastructure/static-agent-profile.provider";
 import type { Conversation } from "../src/modules/conversation/domain/conversation.entity";
 import type { HandleTurnCommand } from "../src/modules/conversation/application/handle-turn.use-case";
 
@@ -51,9 +52,15 @@ if (!apiKey) {
 }
 const model = process.env["DEFAULT_LLM_MODEL"] ?? "claude-haiku-4-5";
 
+// tenantDefault uses the REAL default (not an empty string) — this is
+// exactly what both StaticAgentProfileProvider and HttpAgentProfileProvider
+// actually return in production (see that constant's own comment on why
+// a personal name lives at this layer, not the platform base), so
+// "does Grace actually introduce herself" is measured against the real
+// assembled prompt, not a stripped-down approximation of it.
 const SYSTEM_PROMPT = assembleLayeredPrompt({
   platformBase: PLATFORM_BASE_PROMPT_V1,
-  tenantDefault: "",
+  tenantDefault: DEFAULT_BRAND_VOICE_PROMPT,
   businessOverride: "",
   runtimeContext: "Business: All Phase Plumbing. Timezone: America/Chicago.",
 });
@@ -156,6 +163,16 @@ const SCRIPTS: ConversationScript[] = [
     ],
     enableTools: true,
   },
+  {
+    name: "v14: name introduction, playful personal question, uncertain technical question",
+    focus:
+      "The greeting should introduce Grace by name (checked separately below, not in this scripted turn list). A playful 'how old are you' should get a warm deflection, never a fabricated fake age. A technical question the model can't confidently answer should defer to the technician, not guess.",
+    turns: [
+      "Hi, my kitchen faucet has been dripping for a few days.",
+      "Ha, so how old are you anyway?",
+      "If the plumber replaces the cartridge, will that definitely fix a slow drain in the same sink too, or could it be something else?",
+    ],
+  },
 ];
 
 async function runScript(script: ConversationScript): Promise<void> {
@@ -230,8 +247,43 @@ async function runScript(script: ConversationScript): Promise<void> {
   }
 }
 
+/**
+ * Replicates StartConversationUseCase.generateGreeting exactly (same
+ * kickoff message, same "no tool calls" shape) without needing that
+ * use case's full dependency graph (core-api client, capacity config,
+ * etc.) — the ONLY thing being measured here is whether the model
+ * actually introduces itself by name, which lives entirely in the
+ * system prompt + this one kickoff message.
+ */
+async function checkGreeting(): Promise<void> {
+  const aiProvider = new AnthropicAdapter(apiKey, process.env["ANTHROPIC_BASE_URL"]);
+  const stream = aiProvider.streamCompletion({
+    model,
+    systemPrompt: SYSTEM_PROMPT,
+    messages: [
+      {
+        role: "user",
+        content:
+          "[The call has just connected. Greet the caller now, following your instructions.]",
+      },
+    ],
+  });
+  let greeting = "";
+  for await (const chunk of stream) {
+    if (chunk.type === "text_delta") {
+      greeting += chunk.text;
+    }
+  }
+  console.log("\n########## v14: opening greeting ##########");
+  console.log(
+    "Focus: should introduce Grace by name, not a generic 'Thanks for calling' with no name.\n",
+  );
+  console.log(`Greeting: ${greeting}\n`);
+}
+
 async function main(): Promise<void> {
   console.log(`Model: ${model}`);
+  await checkGreeting();
   for (const script of SCRIPTS) {
     await runScript(script);
   }

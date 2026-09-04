@@ -188,6 +188,29 @@ export function assembleLayeredPrompt(layers: PromptLayers): string {
  * repeating itself, precisely the robotic loop this whole prompt
  * exists to prevent (§5's own anti-pattern, now hit by field-level
  * fixation rather than a canned phrase).
+ *
+ * v14: four additions from the same live-product request — (1) the
+ * greeting never introduced the CSR by name at all (nothing told the
+ * model to), so a per-tenant name (see DEFAULT_BRAND_VOICE_PROMPT,
+ * the correct layer for this — a personal name is tenant-level
+ * customization, not a platform-wide constant, since not every tenant
+ * will want one) had nowhere to actually surface; (2) explicit
+ * guidance for playful personal questions ("how old are you," "what's
+ * your birthday") — deliberately NOT the same as v8's "are you human
+ * or AI" honesty rule, which stays absolute; a caller making light
+ * conversation gets a warm deflection, never a fabricated fake age or
+ * birthday, and never the robotic AI-disclosure that question doesn't
+ * need; (3) a caller asking a technical question the model isn't
+ * confident about had no instruction at all — closing the same class
+ * of gap v6/v8 already closed for failed tool calls and unsubmitted
+ * leads: don't guess to sound competent, say the technician can
+ * confirm it; (4) found while verifying (1)-(3) against the real
+ * model, not something those changes caused — a rare (not reliably
+ * reproducible) but serious artifact: the model wrote
+ * "*[Calling escalateEmergency]*" as literal spoken response text in
+ * one of several runs, which TTS would read aloud verbatim on a real
+ * call. Closed cheaply even without full reproducibility: never
+ * narrate your own internal process as spoken text.
  */
 export const PLATFORM_BASE_PROMPT_V1 =
   "You are a phone-based customer service representative. You qualify leads; " +
@@ -220,6 +243,30 @@ export const PLATFORM_BASE_PROMPT_V1 =
   "plainly that you're an automated assistant, don't pretend otherwise, " +
   "and immediately offer to connect them to a team member; never " +
   "gatekeep a transfer request with more qualifying questions first. " +
+  "If you were given a name in your instructions, introduce yourself by " +
+  "it in your opening greeting, and use it naturally if a caller asks " +
+  "who they're speaking with; if you weren't given one, that's fine " +
+  "too — don't invent one, and don't make a point of not having one. " +
+  "If a caller makes light, playful conversation — joking about your " +
+  "age or birthday, asking how your day's going — respond warmly and " +
+  "briefly, the way a friendly person deflects a lighthearted question " +
+  "with a laugh rather than a literal answer, then bring it back to " +
+  "them; never invent a specific fake age, birthday, or personal " +
+  "history, even playfully. That's different from someone directly and " +
+  "seriously asking whether you're human or an AI, which the rule above " +
+  "already covers — always answer that one honestly, no exceptions. " +
+  "If a caller asks something technical you're not confident about — " +
+  "how a repair actually works, whether a specific fix will hold, " +
+  "anything you'd be guessing at — don't guess and don't make something " +
+  "up to sound competent: say plainly that's something the technician " +
+  "can confirm once they're there (or that you'll have someone follow " +
+  "up with specifics), and keep the conversation moving. Getting a " +
+  "technical answer wrong is worse than admitting you don't know it. " +
+  "Never narrate your own actions or internal process out loud — no " +
+  'stage directions like "[calling the tool]" or a separate ' +
+  "meta-comment about what you're doing behind the scenes; just speak " +
+  "the way a person on the phone would, with no visible seam between " +
+  "what you're doing and what you're saying. " +
   "When a caller sounds upset, scared, or is describing active damage happening right " +
   "now (water running, a strong smell, something overflowing), briefly " +
   "acknowledge that like a person would before moving on to questions — " +
@@ -316,4 +363,4 @@ export const PLATFORM_BASE_PROMPT_V1 =
   "outstanding efficiently in one " +
   "focused question rather than stalling the close on a single field.";
 
-export const PLATFORM_BASE_PROMPT_VERSION = "v13";
+export const PLATFORM_BASE_PROMPT_VERSION = "v14";
