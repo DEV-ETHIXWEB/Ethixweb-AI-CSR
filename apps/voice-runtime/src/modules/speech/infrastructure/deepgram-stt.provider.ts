@@ -186,6 +186,14 @@ class DeepgramSttSession implements SpeechToTextSession {
     const message = parsed as Record<string, unknown>;
 
     if (message["type"] === "SpeechStarted") {
+      // A real observability gap found while chasing a live silent-call
+      // report: this event drives barge-in (CallSessionOrchestrator's
+      // own handleBargeIn), which itself logs NOTHING when its mechanism-1
+      // path fires (aborting an in-flight turn) — meaning there was
+      // previously no way to distinguish "the caller genuinely
+      // interrupted" from "something else silently killed the turn" by
+      // reading logs alone. That ambiguity cost real diagnostic time.
+      this.logger.info("Deepgram SpeechStarted event");
       this.speechStartedHandler?.();
       return;
     }

@@ -31,6 +31,28 @@ import {
 // prematurely by CallSessionOrchestrator's own turn-retry loop.
 const REQUEST_TIMEOUT_MS = 20_000;
 
+// FOUND LIVE, not hypothetical: multiple turns across a single real call
+// went completely silent — voice-orchestrator's own logs showed each one
+// completing normally server-side (sometimes even after streaming one or
+// two real chunks that got spoken), while voice-runtime never logged a
+// completed round-trip, a retry, OR an error for any of them — not even
+// the "mid-stream failure, don't retry" branch handleFinalTranscript
+// already has for exactly this shape. The only explanation that fits:
+// `reader.read()` itself never settled — neither resolved nor rejected —
+// so the whole read loop hung indefinitely, unbounded even by
+// REQUEST_TIMEOUT_MS's own AbortSignal.timeout, which assumes aborting
+// the underlying fetch also unblocks any pending read on its body
+// stream. That assumption doesn't reliably hold across every connection
+// state this environment has produced live (voice-orchestrator's /turns
+// response now sends `Connection: close`, i.e. a bare TCP FIN with no
+// application-level signal a reader is guaranteed to observe promptly).
+// Racing every individual read against its OWN short timeout, instead of
+// only the request as a whole, means a stalled connection surfaces as an
+// ordinary retryable error within seconds — through the exact retry/
+// no-retry-after-partial-chunks logic that already exists — rather than
+// silence with no bound at all.
+const READ_IDLE_TIMEOUT_MS = 8_000;
+
 /**
  * Implements docs/28 §A-§C exactly, every path/verb/body shape here is
  * copied from that contract, not invented. `fetch` (Node 22's built-in),
@@ -157,7 +179,10 @@ export class HttpOrchestratorClient implements OrchestratorClientPort {
     // closing at all.
     try {
       for (;;) {
-        const chunk = (await reader.read()) as { done: boolean; value: Uint8Array | undefined };
+        const chunk = (await readWithIdleTimeout(reader, path, response.status)) as {
+          done: boolean;
+          value: Uint8Array | undefined;
+        };
         if (chunk.done || !chunk.value) {
           break;
         }
@@ -313,5 +338,58 @@ export class HttpOrchestratorClient implements OrchestratorClientPort {
     }
 
     return response;
+  }
+}
+
+/**
+ * Races a single `reader.read()` call against `READ_IDLE_TIMEOUT_MS` —
+ * see that constant's own comment for the real, live failure this
+ * exists to bound. Rejects with a plain `Error` (not tied to any
+ * specific fetch/DOM error type) on timeout so it's unambiguous in
+ * logs and always retryable by `requestTurnStream`'s own caller, the
+ * same way any other network-level ambiguous outcome is (docs/28 §G).
+ * The timer is always cleared, on both the success and timeout paths —
+ * an uncleared `setTimeout` here would otherwise keep Node's event
+ * loop alive for up to 8s past a request that already finished.
+ */
+async function readWithIdleTimeout(
+  reader: { read(): Promise<unknown> },
+  path: string,
+  responseStatus: number,
+): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      // OrchestratorHttpError (not a plain Error) — matches this
+      // file's own convention for every other network-level failure
+      // here, and gives handleFinalTranscript's retry logic an
+      // explicit, intentional `retryable: true` signal instead of
+      // relying on the fallback `!(error instanceof
+      // OrchestratorConflictError)` inference it would otherwise fall
+      // through to.
+      reject(
+        new OrchestratorHttpError(
+          `POST ${path} stream stalled — no data for ${READ_IDLE_TIMEOUT_MS}ms mid-response`,
+          responseStatus,
+          true,
+        ),
+      );
+    }, READ_IDLE_TIMEOUT_MS);
+  });
+  const readPromise = reader.read();
+  // If the timeout wins the race below, this same read() call is still
+  // outstanding underneath — requestTurnStream's own
+  // `finally { reader.releaseLock() }` will make it settle (reject)
+  // shortly after, per the Streams spec, with nothing left awaiting it
+  // directly. This shadow handler exists purely so THAT later rejection
+  // doesn't surface as an unhandled promise rejection; it's attached to
+  // `readPromise` itself, not to a derived promise, so it has no effect
+  // on what actually gets raced below — a genuine read() error still
+  // propagates through the race exactly as before this existed.
+  readPromise.catch(() => undefined);
+  try {
+    return await Promise.race([readPromise, timeout]);
+  } finally {
+    clearTimeout(timer);
   }
 }

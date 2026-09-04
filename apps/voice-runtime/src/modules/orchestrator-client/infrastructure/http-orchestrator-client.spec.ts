@@ -318,6 +318,56 @@ describe("HttpOrchestratorClient", () => {
       expect(result.responseText).toBe("Got it, one moment.");
     });
 
+    /**
+     * Regression test for a SECOND, distinct real live-call failure —
+     * found on the very next call after the fix above shipped: several
+     * turns across one real call went completely silent again, but
+     * this time voice-orchestrator's own logs showed the connection
+     * being closed mid-response (sometimes AFTER one or more chunks had
+     * already streamed and been spoken), and voice-runtime logged
+     * NOTHING at all for them — no completed round-trip, no retry, not
+     * even the existing "mid-stream failure after partial chunks, not
+     * retrying" branch handleFinalTranscript already has. That absence
+     * of ANY log, success or failure, is the signature of a promise
+     * that never settles: `reader.read()` itself neither resolved nor
+     * rejected, hanging indefinitely — unbounded even by
+     * REQUEST_TIMEOUT_MS's own AbortSignal.timeout, which assumes
+     * aborting the fetch also unblocks any pending read on its body
+     * stream, an assumption that doesn't reliably hold for every
+     * connection-close shape this environment has produced live. This
+     * reproduces exactly that: one real chunk arrives (so the caller
+     * really did hear something, matching the live case), then the
+     * stream goes completely silent — no more data, no close, no
+     * error — forever. Real 8s wait (not fake timers) so this proves
+     * the ACTUAL production timeout value actually fires, not just that
+     * some mechanism theoretically could.
+     */
+    it("does not hang forever when the stream delivers a chunk and then goes silent with no more data and no close", async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValue(
+          ndjsonResponseThatNeverCloses([{ type: "chunk", text: "Let me check on that." }]),
+        );
+      const client = buildClient();
+      const received: string[] = [];
+
+      await expect(
+        client.handleTurn(
+          "conv-1",
+          { tenantId: "t1", idempotencyKey: "k1", transcript: "hi", allowedTools: [] },
+          undefined,
+          (text) => {
+            received.push(text);
+          },
+        ),
+      ).rejects.toMatchObject({ retryable: true });
+
+      // The chunk that streamed BEFORE the stall must still have
+      // reached the caller — a real caller may already be speaking
+      // it, exactly as happened on the real call this test reproduces.
+      expect(received).toEqual(["Let me check on that."]);
+    }, 12_000);
+
     it("resolves correctly with no onChunk callback at all (streaming stays purely additive)", async () => {
       global.fetch = jest.fn().mockResolvedValue(
         ndjsonResponse([

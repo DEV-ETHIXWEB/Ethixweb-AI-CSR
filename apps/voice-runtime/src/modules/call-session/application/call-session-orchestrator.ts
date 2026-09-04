@@ -458,6 +458,13 @@ export class CallSessionOrchestrator {
     this.bargedInDuringCurrentTurn = true;
 
     if (this.activeTurnAbort) {
+      // A real observability gap found while chasing a live silent-call
+      // report: neither mechanism here logged anything on its own, so a
+      // real barge-in was previously indistinguishable, from logs alone,
+      // from something else silently killing an in-flight turn.
+      this.logger.info("barge-in: aborting in-flight turn (mechanism 1)", {
+        conversationId: this.conversationId,
+      });
       this.activeTurnAbort.abort();
       this.activeTurnAbort = null;
       if (this.ttsAbort) {
@@ -476,6 +483,12 @@ export class CallSessionOrchestrator {
       this.ttsAbort = null;
     }
     if (this.ttsPlaying) {
+      this.logger.info(
+        "barge-in: TTS was playing between turns, calling /interrupt (mechanism 2)",
+        {
+          conversationId: this.conversationId,
+        },
+      );
       sink.clearQueuedAudio();
       this.ttsPlaying = false;
       if (this.conversationId) {
