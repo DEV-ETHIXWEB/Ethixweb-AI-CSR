@@ -99,6 +99,18 @@ const MAX_TOOL_ITERATIONS = 5;
 const LOW_STT_CONFIDENCE_THRESHOLD = 0.8;
 
 /**
+ * Once `conversation.transcript` (durable caller+agent turn record) has
+ * at least this many entries with no lead ever attempted, `runTurn`
+ * starts annotating the caller's own message with a reminder — see
+ * `Conversation.leadEverAttempted`'s own comment for why. 6 entries is
+ * 3 caller turns + 3 agent turns — a real caller who's going to give a
+ * name at all almost always has by then; INFERRED, not a measured
+ * constant, same epistemic posture as `LOW_STT_CONFIDENCE_THRESHOLD`
+ * above.
+ */
+const LEAD_REMINDER_AFTER_TURNS = 6;
+
+/**
  * The Turn Manager (docs/03 §2's "the LLM reasons within a state"): takes
  * one finalized caller utterance, runs the LLM/tool loop until the model
  * produces a final spoken response, and returns that text for the Voice
@@ -268,9 +280,29 @@ export class HandleTurnUseCase {
     // The DURABLE transcript record above stores the raw, verbatim text —
     // this is a SEPARATE, annotated copy for the model's own eyes only, so
     // the confidence flag never pollutes the actual call record.
+    let annotatedTranscript = annotateLowConfidenceTranscript(
+      command.transcript,
+      command.sttConfidence,
+    );
+    if (
+      !conversation.leadEverAttempted &&
+      conversation.transcript.length >= LEAD_REMINDER_AFTER_TURNS
+    ) {
+      // Found live on a real ~21-minute call, then reproduced fresh in a
+      // 3-turn test right after the prompt-only fix (v19) for this SAME
+      // finding proved insufficient on its own: prompt wording alone has
+      // a reliability ceiling, the same lesson already applied to
+      // escalateEmergency/searchCustomer. This never fabricates the tool
+      // call itself (the orchestrator has no safe way to know a real
+      // name from free text) — it only makes sure the model's own
+      // attention doesn't drift away from a pending action it alone has
+      // the real customer data to complete, the longer a call runs
+      // without one.
+      annotatedTranscript = annotateMissingLead(annotatedTranscript);
+    }
     conversation.messages.push({
       role: "user",
-      content: annotateLowConfidenceTranscript(command.transcript, command.sttConfidence),
+      content: annotatedTranscript,
     });
 
     const tools = this.toolRegistry
@@ -412,6 +444,9 @@ export class HandleTurnUseCase {
         }
         if (toolCall.name === "searchCustomer") {
           conversation.searchCustomerEverChecked = true;
+        }
+        if (toolCall.name === "createLead") {
+          conversation.leadEverAttempted = true;
         }
         const { output, escalation: toolEscalation } = await this.runTool(
           conversation,
@@ -1047,6 +1082,17 @@ function buildSearchCustomerBackstopCall(phone: string): AiToolCallRequest {
     name: "searchCustomer",
     arguments: { phone },
   };
+}
+
+/** See `LEAD_REMINDER_AFTER_TURNS`'s own comment for when this applies. */
+function annotateMissingLead(transcript: string): string {
+  return (
+    "[no customer/lead record has been created yet this call — if you " +
+    "have the caller's name, call createCustomer now with that name and " +
+    "the caller's own phone number already known from this call; don't " +
+    "wait for an address or zip code first] " +
+    transcript
+  );
 }
 
 /**

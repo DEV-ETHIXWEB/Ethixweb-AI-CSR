@@ -6,7 +6,7 @@ import { FakeToolAuditLog } from "../../tool-broker/application/__fakes__/fake-t
 import { createNoopLogger as createNoopToolLogger } from "../../tool-broker/application/__fakes__/fake-logger";
 import { ToolRegistry } from "../../tool-broker/application/tool-registry";
 import type { ToolDefinition } from "../../tool-broker/domain/tool-definition";
-import type { Conversation } from "../domain/conversation.entity";
+import type { Conversation, TranscriptTurn } from "../domain/conversation.entity";
 import {
   ConversationAlreadyEndedError,
   ConversationNotFoundError,
@@ -49,6 +49,18 @@ function baseConversation(overrides: Partial<Conversation> = {}): Conversation {
     version: 1,
     ...overrides,
   };
+}
+
+/** Alternating caller/agent filler turns — used by the missing-lead-reminder tests to cheaply satisfy `LEAD_REMINDER_AFTER_TURNS` without depending on any particular content. */
+function fillerTranscript(count: number): TranscriptTurn[] {
+  return Array.from({ length: count }, (_unused, index) => ({
+    turnIndex: index,
+    speaker: index % 2 === 0 ? "caller" : "agent",
+    text: `turn ${index}`,
+    confidence: null,
+    offsetMs: 0,
+    at: new Date().toISOString(),
+  }));
 }
 
 function buildUseCase(options?: {
@@ -458,6 +470,126 @@ describe("HandleTurnUseCase", () => {
       // chunk boundary — each must appear intact within a single chunk.
       expect(chunks.some((chunk) => chunk.includes("$3.50"))).toBe(true);
       expect(chunks.some((chunk) => chunk.includes("9 a.m. to 5 p.m."))).toBe(true);
+    });
+  });
+
+  /**
+   * Found live on a real ~21-minute, 99-turn call — the caller gave a
+   * name and always had a real Caller ANI on file, declined to give an
+   * address, and asked for a callback, yet createCustomer/createLead
+   * were never called at all. Reproduced fresh in a 3-turn test right
+   * after fixing the prompt alone (v19) proved insufficient on its own:
+   * prompt wording has a reliability ceiling, the same lesson already
+   * applied to escalateEmergency/searchCustomer. This never fabricates
+   * the tool call with guessed data — only makes sure the model's own
+   * attention doesn't drift from a pending action it alone has the real
+   * data to complete.
+   */
+  describe("missing-lead reminder (LEAD_REMINDER_AFTER_TURNS)", () => {
+    it("annotates the caller's message once the conversation has gone on long enough with no lead ever attempted", async () => {
+      const repository = new FakeConversationRepository();
+      const priorTranscript = fillerTranscript(6);
+      repository.seed(baseConversation({ transcript: priorTranscript }));
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          { type: "text_delta", text: "Sure, what's your address?" },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const { useCase } = buildUseCase({ aiProvider, repository });
+
+      await useCase.execute(baseCommand({ transcript: "no problem, call me back" }));
+
+      const sentMessage = aiProvider.requests[0]?.messages[0];
+      expect(sentMessage?.content).toContain("no customer/lead record has been created yet");
+      expect(sentMessage?.content).toContain("no problem, call me back");
+    });
+
+    it("does NOT annotate before the turn threshold — a short call gets no reminder yet", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation({ transcript: [] }));
+      const aiProvider = new FakeAiProvider();
+      const { useCase } = buildUseCase({ aiProvider, repository });
+
+      await useCase.execute(baseCommand({ transcript: "hi, my sink is clogged" }));
+
+      const sentMessage = aiProvider.requests[0]?.messages[0];
+      expect(sentMessage?.content).toBe("hi, my sink is clogged");
+    });
+
+    it("does NOT annotate once a lead has already been attempted this conversation", async () => {
+      const repository = new FakeConversationRepository();
+      const priorTranscript = fillerTranscript(6);
+      repository.seed(baseConversation({ transcript: priorTranscript, leadEverAttempted: true }));
+      const aiProvider = new FakeAiProvider();
+      const { useCase } = buildUseCase({ aiProvider, repository });
+
+      await useCase.execute(baseCommand({ transcript: "here's my address" }));
+
+      const sentMessage = aiProvider.requests[0]?.messages[0];
+      expect(sentMessage?.content).toBe("here's my address");
+    });
+
+    it("never leaks the reminder annotation into the DURABLE transcript record — only the model-facing copy", async () => {
+      const repository = new FakeConversationRepository();
+      const priorTranscript = fillerTranscript(6);
+      repository.seed(baseConversation({ transcript: priorTranscript }));
+      const { useCase } = buildUseCase({ repository });
+
+      await useCase.execute(baseCommand({ transcript: "no problem, call me back" }));
+
+      const saved = await repository.findById("tenant-1", "conv-1");
+      const lastCallerTurn = saved?.transcript.filter((t) => t.speaker === "caller").pop();
+      expect(lastCallerTurn?.text).toBe("no problem, call me back");
+    });
+
+    it("marks leadEverAttempted true once createLead executes, silencing the reminder on the NEXT turn", async () => {
+      const repository = new FakeConversationRepository();
+      const priorTranscript = fillerTranscript(6);
+      repository.seed(baseConversation({ transcript: priorTranscript }));
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          {
+            type: "tool_call",
+            toolCall: {
+              id: "call-1",
+              name: "createLead",
+              arguments: {
+                customer_id: "cust-1",
+                problem_summary: "clogged sink",
+                priority: "routine",
+                lead_type: "residential",
+              },
+            },
+          },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [
+          { type: "text_delta", text: "Got it, sent over to the team." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const leadHandler = {
+        execute: jest.fn().mockResolvedValue({ lead_id: "lead-1" }),
+      };
+      const { useCase, repository: repo } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "createLead", handler: leadHandler }],
+      });
+
+      await useCase.execute(
+        baseCommand({ transcript: "please submit it", allowedTools: ["createLead"] }),
+      );
+
+      const saved = await repo.findById("tenant-1", "conv-1");
+      expect(saved?.leadEverAttempted).toBe(true);
+      // The "does NOT annotate once a lead has already been attempted"
+      // test above already proves that a seeded leadEverAttempted: true
+      // silences the reminder — this test's own job is just proving a
+      // real createLead execution actually SETS that flag.
     });
   });
 

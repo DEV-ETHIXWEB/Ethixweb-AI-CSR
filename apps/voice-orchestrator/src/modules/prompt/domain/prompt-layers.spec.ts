@@ -536,4 +536,36 @@ describe("assembleLayeredPrompt", () => {
       "never just drop unclear digits and move on without asking again",
     );
   });
+
+  /**
+   * v19: found on a real ~21-minute call — Grace said "I'm getting your
+   * information to the team now" (turn 73) and no createCustomer or
+   * createLead call ever actually fired for that call. Confirmed against
+   * the database: zero customer/lead rows exist for it.
+   */
+  it("forbids claiming the caller's info was sent to the team unless createCustomer/createLead is actually being called that same turn", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "unless you are calling createcustomer",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "don't say the sentence that implies you just did",
+    );
+  });
+
+  /**
+   * v19: found on the SAME real call — the caller gave a name at turn 6
+   * and always had a real Caller ANI on file, yet Grace spent the entire
+   * rest of a 21-minute call chasing zip code and street address instead
+   * of calling createCustomer with what she already had — the same
+   * "self-imposed constraint" pattern v15 already named, resurfacing on
+   * a fresh field.
+   */
+  it("instructs the model that a name plus the caller's own ANI is enough to call createCustomer immediately, not something to defer until address/zip are settled", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "that's genuinely enough to call createcustomer",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "don't keep collecting address, zip code, or anything",
+    );
+  });
 });

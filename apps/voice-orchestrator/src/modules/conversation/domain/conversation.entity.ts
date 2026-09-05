@@ -88,6 +88,27 @@ export interface Conversation {
    */
   lastEmergencyCheckedTranscript?: string;
   /**
+   * True once `createLead` has executed at least one time this
+   * conversation (attempted, not necessarily succeeded — a genuine
+   * failure gets a structured error back to the model, which is a
+   * separate, already-handled path; this only targets "never even
+   * attempted"). Found live on a real ~21-minute, 99-turn call, and
+   * reproduced fresh in a 3-turn test right after fixing the prompt
+   * alone (v19) proved insufficient on its own: the caller gave a name
+   * and always had a real Caller ANI on file, declined to give an
+   * address, and asked for a callback — a clear enough signal to
+   * capture the lead with what's known — but createCustomer/createLead
+   * were never called at all, in either the real call or the
+   * reproduction. Prompt wording alone has a reliability ceiling (the
+   * same lesson already applied to escalateEmergency/searchCustomer);
+   * `runTurn` uses this flag to inject an explicit reminder into the
+   * model's own context once a call has gone on long enough without a
+   * lead — never to fabricate the tool call itself with guessed data,
+   * only to make sure the model doesn't lose track of a pending action
+   * it alone has the real customer data to complete.
+   */
+  leadEverAttempted?: boolean;
+  /**
    * Optimistic-concurrency counter, starting at 1 on `create()` — the ONLY
    * field a use case never sets by hand; it travels unmodified from
    * whatever `findById`/`findByCallId` returned through to `save()`, which

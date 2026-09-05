@@ -299,6 +299,27 @@ export function assembleLayeredPrompt(layers: PromptLayers): string {
  * got the actual number confirmed. No existing rule told the model to
  * read a spoken number back for explicit confirmation before treating
  * it as final.
+ *
+ * v19, the single most costly finding of a real ~21-minute, 99-turn
+ * call: the caller gave a name (turn 6) and always had a real Caller
+ * ANI on file, yet Grace spent the entire rest of the call chasing zip
+ * code and street address — the exact "self-imposed constraint"
+ * pattern v15's own comment already named and predicted would
+ * generalize, resurfacing on a fresh field years (well, one platform
+ * version) after that fix shipped. Worse: at the point Grace finally
+ * said "Let me get your info over to the team right now... I'm getting
+ * your information to the team now" (turn 73, using almost the exact
+ * phrasing v18 itself had just taught her to say when she can't answer
+ * a scheduling question), NO createCustomer or createLead call ever
+ * actually fired — confirmed against the database, zero customer or
+ * lead rows exist for this call at all. The caller was told their
+ * information was being submitted; it never was. Two rules added: never
+ * say the "getting your info to the team" sentence unless calling
+ * createCustomer/createLead in that same turn, and — attacking the
+ * actual root cause, not just the false claim — an explicit statement
+ * that a name plus the caller's own already-known ANI is enough to call
+ * createCustomer immediately, not a milestone to defer until address/zip
+ * are also settled.
  */
 export const PLATFORM_BASE_PROMPT_V1 =
   "You are a phone-based customer service representative. You qualify leads; " +
@@ -510,6 +531,20 @@ export const PLATFORM_BASE_PROMPT_V1 =
   "like what they probably meant, and never just drop unclear digits and " +
   "move on without asking again — both cost real accuracy on something " +
   "that sends a technician to a real address; one extra confirming " +
-  "question is always cheaper than either.";
+  "question is always cheaper than either. " +
+  "Never say anything implying the caller's information has been or is " +
+  'being sent to the team — "I\'m getting your info over to the team," ' +
+  '"let me get that submitted," anything with that meaning — UNLESS ' +
+  "you are calling createCustomer (or createLead, if you already have a " +
+  "customer_id) in that exact same turn. If you're not calling the tool " +
+  "right now, don't say the sentence that implies you just did. The " +
+  "reverse matters just as much: once you have a name and a phone number " +
+  "— the caller's own Caller ANI already counts as the phone number, you " +
+  "don't need them to repeat it — that's genuinely enough to call " +
+  "createCustomer. Don't keep collecting address, zip code, or anything " +
+  "else first and treat createCustomer as the thing you get to once " +
+  "everything else is settled; call it as soon as you have a name and a " +
+  "phone, then keep gathering whatever else is useful in the same or a " +
+  "later turn.";
 
-export const PLATFORM_BASE_PROMPT_VERSION = "v18";
+export const PLATFORM_BASE_PROMPT_VERSION = "v19";
