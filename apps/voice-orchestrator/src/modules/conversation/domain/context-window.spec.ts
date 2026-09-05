@@ -34,6 +34,43 @@ describe("compressMessages", () => {
     expect(result[result.length - 1]).toEqual(lastOriginal);
   });
 
+  /**
+   * Found live on a real ~21-minute, 99-turn call: repeated compaction
+   * (this fires every ~20 new messages past the first pass, not once, on
+   * a call this long) used to silently drop an EARLIER summary's content
+   * the moment that summary itself aged out of the most-recent-20 window
+   * — because the old code only folded "user"/"assistant" messages into
+   * a new summary, and a prior summary is role "system". Confirmed root
+   * cause of a real memory failure: the caller gave their name once
+   * early on; ~57 turns and multiple compaction passes later, Grace
+   * asked them to repeat it. This reproduces that exact shape —
+   * compaction fired twice, like it would over a real long call — and
+   * proves the early fact survives both passes.
+   */
+  it("survives a SECOND compaction pass — an earlier pass's own summary is folded forward, not silently dropped", () => {
+    let messages: AiMessage[] = [
+      { role: "user", content: "hi it's Akash Kumar calling about a leak" },
+      { role: "assistant", content: "Got it, Akash Kumar. What's going on?" },
+      ...userMessages(DEFAULT_MAX_MESSAGES),
+    ];
+
+    // First pass: the name-bearing turn gets folded into a summary.
+    messages = compressMessages(messages);
+    const afterFirstPass = messages[0]?.content ?? "";
+    expect(afterFirstPass).toContain("Akash Kumar");
+
+    // Simulate the rest of a long call: enough more turns for the
+    // message count to cross the threshold a SECOND time — the exact
+    // shape `runTurn` produces, calling compressMessages again on every
+    // turn as messages keep accumulating.
+    messages = [...messages, ...userMessages(DEFAULT_MAX_MESSAGES)];
+    messages = compressMessages(messages);
+
+    const afterSecondPass = messages[0]?.content ?? "";
+    expect(messages[0]?.role).toBe("system");
+    expect(afterSecondPass).toContain("Akash Kumar");
+  });
+
   it("never leaves a tool result orphaned from the assistant message that requested it", () => {
     // Build a history whose naive cut point would land exactly on a
     // `tool` message, orphaning it from its assistant tool_call.
