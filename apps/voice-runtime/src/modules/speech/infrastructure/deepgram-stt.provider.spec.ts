@@ -251,6 +251,149 @@ describe("DeepgramSttProvider", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  /**
+   * Found live: a real call showed continuous low-level VAD-triggered
+   * activity (almost certainly background noise) kept re-triggering
+   * before a clean 500ms silence window could ever complete, so
+   * `speech_final` never arrived at all for over a MINUTE despite
+   * Deepgram having genuinely recognized real words ("wait a minute,
+   * I'll just tell you my details" — an `is_final: true` chunk,
+   * `speech_final: false`) partway through. That utterance, and the rest
+   * of the call, was silently lost — the caller hung up with nothing
+   * ever captured. This safety net exists specifically to close that gap.
+   */
+  describe("speech_final fallback (a real utterance that never gets a clean end-of-speech signal)", () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it("falls back to the last recognized is_final transcript when speech_final never arrives within the fallback window", async () => {
+      const provider = new DeepgramSttProvider(createNoopLogger());
+      const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
+      const handler = jest.fn();
+      session.onFinalTranscript(handler);
+
+      lastSocket!.simulateMessage({
+        type: "Results",
+        is_final: true,
+        speech_final: false,
+        channel: {
+          alternatives: [
+            { transcript: "wait a minute I'll just tell you my details", confidence: 0.99 },
+          ],
+        },
+      });
+      expect(handler).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(4000);
+
+      expect(handler).toHaveBeenCalledWith({
+        transcript: "wait a minute I'll just tell you my details",
+        confidence: 0.99,
+      });
+    });
+
+    it("does NOT fire the fallback when a real speech_final arrives before the window elapses", async () => {
+      const provider = new DeepgramSttProvider(createNoopLogger());
+      const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
+      const handler = jest.fn();
+      session.onFinalTranscript(handler);
+
+      lastSocket!.simulateMessage({
+        type: "Results",
+        is_final: true,
+        speech_final: false,
+        channel: { alternatives: [{ transcript: "burst pipe", confidence: 0.9 }] },
+      });
+      jest.advanceTimersByTime(1000);
+
+      lastSocket!.simulateMessage({
+        type: "Results",
+        is_final: true,
+        speech_final: true,
+        channel: { alternatives: [{ transcript: "burst pipe in the basement", confidence: 0.95 }] },
+      });
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledWith({
+        transcript: "burst pipe in the basement",
+        confidence: 0.95,
+      });
+
+      jest.advanceTimersByTime(4000);
+      expect(handler).toHaveBeenCalledTimes(1); // not called a second time by the (now-cleared) fallback
+    });
+
+    it("extends the fallback window when a newer, different is_final transcript arrives (a growing utterance)", async () => {
+      const provider = new DeepgramSttProvider(createNoopLogger());
+      const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
+      const handler = jest.fn();
+      session.onFinalTranscript(handler);
+
+      lastSocket!.simulateMessage({
+        type: "Results",
+        is_final: true,
+        speech_final: false,
+        channel: { alternatives: [{ transcript: "my sewer line", confidence: 0.9 }] },
+      });
+      jest.advanceTimersByTime(3000); // within the window, not yet fired
+
+      lastSocket!.simulateMessage({
+        type: "Results",
+        is_final: true,
+        speech_final: false,
+        channel: { alternatives: [{ transcript: "my sewer line is backed up", confidence: 0.95 }] },
+      });
+      jest.advanceTimersByTime(3000); // would have fired the FIRST timer, but it was reset
+      expect(handler).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(1000); // completes the SECOND (reset) window
+      expect(handler).toHaveBeenCalledWith({
+        transcript: "my sewer line is backed up",
+        confidence: 0.95,
+      });
+    });
+
+    it("does NOT arm the fallback for a still-interim (not yet is_final) chunk — only genuinely finalized text is eligible", async () => {
+      const provider = new DeepgramSttProvider(createNoopLogger());
+      const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
+      const handler = jest.fn();
+      session.onFinalTranscript(handler);
+
+      lastSocket!.simulateMessage({
+        type: "Results",
+        is_final: false,
+        speech_final: false,
+        channel: { alternatives: [{ transcript: "still forming", confidence: 0.7 }] },
+      });
+      jest.advanceTimersByTime(4000);
+
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("close() cancels any pending fallback so it never fires after the session has ended", async () => {
+      const provider = new DeepgramSttProvider(createNoopLogger());
+      const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
+      const handler = jest.fn();
+      session.onFinalTranscript(handler);
+
+      lastSocket!.simulateMessage({
+        type: "Results",
+        is_final: true,
+        speech_final: false,
+        channel: { alternatives: [{ transcript: "one two three", confidence: 0.9 }] },
+      });
+
+      await session.close();
+      jest.advanceTimersByTime(4000);
+
+      expect(handler).not.toHaveBeenCalled();
+    });
+  });
+
   it("fires onSpeechStarted on a SpeechStarted event, without touching onFinalTranscript", async () => {
     const provider = new DeepgramSttProvider(createNoopLogger());
     const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });

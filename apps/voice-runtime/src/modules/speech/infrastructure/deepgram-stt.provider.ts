@@ -73,6 +73,34 @@ const DEFAULT_LANGUAGE = "multi";
  */
 const ENDPOINTING_MS = 500;
 
+/**
+ * Found live: `ENDPOINTING_MS` above assumes a clean pause. A real call
+ * showed the opposite failure — continuous low-level VAD-triggered
+ * "SpeechStarted" activity (almost certainly background noise, not real
+ * speech — dozens of SpeechStarted events with empty transcripts) kept
+ * re-triggering before a clean 500ms silence window could ever complete,
+ * so `speech_final` never arrived at all for over a MINUTE, despite
+ * Deepgram having genuinely recognized real words partway through (an
+ * `is_final: true` chunk with real transcript content, `speech_final:
+ * false`, mid-window). That entire utterance — and the rest of the call,
+ * which ended in a caller hangup with nothing captured — was silently
+ * lost with no recovery path at all.
+ *
+ * This is an application-level safety net independent of Deepgram's own
+ * endpointing: if the most recently recognized non-empty `is_final`
+ * transcript hasn't been superseded (by a real `speech_final`, or a
+ * newer/different `is_final` chunk resetting this same timer) within this
+ * window, treat it as good enough and deliver it anyway — the same "fail
+ * toward action, not silent loss" principle handle-turn.use-case.ts
+ * already applies to escalateEmergency/searchCustomer, applied here at
+ * the STT layer instead. Deliberately restricted to `is_final: true`
+ * chunks only (never a still-interim one) — that's the one thing
+ * Deepgram's own contract says won't be revised further, matching this
+ * class's existing "only genuinely finalized" posture as closely as a
+ * bounded exception can.
+ */
+const SPEECH_FINAL_FALLBACK_MS = 4000;
+
 @Injectable()
 export class DeepgramSttProvider implements SpeechToTextProvider {
   constructor(@Inject(APP_LOGGER) private readonly logger: StructuredLogger) {}
@@ -111,6 +139,9 @@ class DeepgramSttSession implements SpeechToTextSession {
   private readonly pendingAudio: Buffer[] = [];
   private ready = false;
   private framesSent = 0;
+  /** See `SPEECH_FINAL_FALLBACK_MS`'s own comment for why this exists. */
+  private pendingFallback: { transcript: string; confidence: number } | null = null;
+  private pendingFallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly socket: WebSocket,
@@ -184,6 +215,7 @@ class DeepgramSttSession implements SpeechToTextSession {
   }
 
   async close(): Promise<void> {
+    this.clearPendingFallback();
     if (this.socket.readyState === WebSocket.OPEN) {
       // Deepgram's documented graceful-close message — flushes any
       // in-flight finalization before the socket actually closes, rather
@@ -191,6 +223,14 @@ class DeepgramSttSession implements SpeechToTextSession {
       this.socket.send(JSON.stringify({ type: "CloseStream" }));
     }
     this.socket.close();
+  }
+
+  private clearPendingFallback(): void {
+    if (this.pendingFallbackTimer) {
+      clearTimeout(this.pendingFallbackTimer);
+      this.pendingFallbackTimer = null;
+    }
+    this.pendingFallback = null;
   }
 
   private handleMessage(data: WebSocket.RawData): void {
@@ -263,8 +303,36 @@ class DeepgramSttSession implements SpeechToTextSession {
         if (transcript.trim().length > 0) {
           this.interimSpeechHandler?.();
         }
+        // SPEECH_FINAL_FALLBACK_MS safety net — see that constant's own
+        // comment. Only an `is_final: true` chunk counts (Deepgram's
+        // contract says it won't be revised further); a still-interim
+        // one is too unstable to fall back to. Re-arms the timer only
+        // when the transcript actually changed, so a genuinely growing
+        // utterance keeps extending the window instead of firing early.
+        if (
+          message["is_final"] === true &&
+          transcript.trim().length > 0 &&
+          transcript !== this.pendingFallback?.transcript
+        ) {
+          this.pendingFallback = { transcript, confidence };
+          if (this.pendingFallbackTimer) {
+            clearTimeout(this.pendingFallbackTimer);
+          }
+          this.pendingFallbackTimer = setTimeout(() => {
+            const pending = this.pendingFallback;
+            this.clearPendingFallback();
+            if (pending) {
+              this.logger.warn(
+                "speech_final never arrived — falling back to the last recognized transcript",
+                { transcriptLength: pending.transcript.length, confidence: pending.confidence },
+              );
+              this.finalHandler?.(pending);
+            }
+          }, SPEECH_FINAL_FALLBACK_MS);
+        }
         return;
       }
+      this.clearPendingFallback();
       if (transcript.trim().length === 0) {
         // Deepgram emits a final, empty-transcript result at the tail of
         // silence — not a caller utterance, must not reach /turns as an
