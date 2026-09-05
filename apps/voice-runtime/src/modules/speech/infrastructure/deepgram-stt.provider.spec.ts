@@ -101,7 +101,7 @@ describe("DeepgramSttProvider", () => {
 
     expect(lastSocket).toBeDefined();
     expect(lastSocket!.url).toBe(
-      "wss://api.deepgram.com/v1/listen?encoding=mulaw&sample_rate=8000&channels=1&interim_results=true&vad_events=true&endpointing=300&model=nova-2&language=multi",
+      "wss://api.deepgram.com/v1/listen?encoding=mulaw&sample_rate=8000&channels=1&interim_results=true&vad_events=true&endpointing=500&model=nova-2&language=multi",
     );
     expect(lastSocket!.options).toEqual({ headers: { Authorization: "token test-deepgram-key" } });
   });

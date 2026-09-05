@@ -47,6 +47,32 @@ const MULTILINGUAL_MODEL = "nova-2";
 const PHONE_TUNED_MODEL = "nova-2-phonecall";
 const DEFAULT_LANGUAGE = "multi";
 
+/**
+ * FOUND LIVE, not hypothetical: a real call's transcript showed a caller's
+ * single continuous explanation ("because my kitchen is like floating" /
+ * "and water is coming out of the broken pipe" / "yeah it is coming out" /
+ * "it's still ready") arriving as FOUR separate finalized utterances, each
+ * one firing its own full AI turn — and the caller's very next breath
+ * (continuing the SAME thought) kept landing as a new Deepgram SpeechStarted
+ * event that immediately aborted Grace's in-progress reply to the PREVIOUS
+ * fragment (handleBargeIn, mechanism 1). With 300ms of silence enough to
+ * call an utterance "final," an ordinary mid-sentence pause while a caller
+ * is thinking or explaining is nearly always shorter than that, so this
+ * setting was chopping natural speech into fragments and then having each
+ * fragment's own reply cut off by the next — the caller ended up going 34
+ * seconds this same call getting zero completed audible response and
+ * explicitly asked "are you still connected on the call or not," captured
+ * verbatim in that log. 500ms is a deliberately moderate middle ground, not
+ * a guess: it's the commonly-recommended value for natural back-and-forth
+ * conversational audio (300ms is Deepgram's aggressive/fast-reacting end of
+ * the range, meant for short command-style utterances, not an open-ended
+ * "tell me what happened" explanation). Real trade-off, stated plainly: a
+ * genuinely short, complete utterance (a bare "yes"/"no") now takes up to
+ * ~200ms longer to be recognized as finished — a small, deliberate cost
+ * against the much larger cost this call actually measured.
+ */
+const ENDPOINTING_MS = 500;
+
 @Injectable()
 export class DeepgramSttProvider implements SpeechToTextProvider {
   constructor(@Inject(APP_LOGGER) private readonly logger: StructuredLogger) {}
@@ -67,7 +93,7 @@ export class DeepgramSttProvider implements SpeechToTextProvider {
     const encoding = options.encoding === "mulaw" ? "mulaw" : "linear16";
     const url =
       `${DEEPGRAM_LISTEN_URL}?encoding=${encoding}&sample_rate=${options.sampleRateHz}` +
-      `&channels=1&interim_results=true&vad_events=true&endpointing=300` +
+      `&channels=1&interim_results=true&vad_events=true&endpointing=${ENDPOINTING_MS}` +
       `&model=${model}&language=${language}`;
 
     const socket = new WebSocket(url, { headers: { Authorization: `token ${apiKey}` } });
