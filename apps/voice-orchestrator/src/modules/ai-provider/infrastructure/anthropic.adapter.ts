@@ -194,6 +194,24 @@ function toAnthropicMessage(message: AiMessage): Record<string, unknown> {
     }
     return { role: "assistant", content };
   }
+  if (message.role === "system") {
+    // FOUND LIVE: a real call's history crossed context-window.ts's
+    // DEFAULT_MAX_MESSAGES, which prepends a synthetic role:"system"
+    // compaction summary into conversation.messages — the only source of
+    // a mid-conversation role:"system" message anywhere in this codebase.
+    // Falling through to the generic branch below sent it verbatim as
+    // `messages[0]`, and Anthropic's Messages API rejects role "system"
+    // anywhere inside `messages` at any position (only the top-level
+    // `system` parameter above is valid) — a 400 on every single
+    // subsequent turn for the rest of the call, 100% reproducible, not
+    // intermittent. Folded into a user turn instead: the same choice
+    // Gemini's adapter already makes (its own generic fallback maps any
+    // non-assistant, non-tool role to "user"), and the summary's own text
+    // already self-identifies as an aside ("[Earlier in this call —
+    // ...summarized]"), so the model isn't misled into treating it as
+    // something the caller said.
+    return { role: "user", content: [{ type: "text", text: message.content }] };
+  }
   // Content-block array, not a plain string — `cache_control` (see
   // markLastMessageCacheable) can only attach to a block, never to a bare
   // string `content` field, and every message must already be shaped this

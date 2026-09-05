@@ -96,6 +96,38 @@ describe("AnthropicAdapter", () => {
   });
 
   /**
+   * FOUND LIVE, not hypothetical: a real call's history crossed
+   * context-window.ts's DEFAULT_MAX_MESSAGES, which prepends a synthetic
+   * role:"system" compaction summary into conversation history. Before this
+   * fix, that message fell through to the generic mapping branch and was
+   * sent verbatim as `{ role: "system", ... }` inside `messages` — Anthropic
+   * rejects role "system" anywhere in `messages` (only the top-level
+   * `system` parameter is valid), a 400 on that turn AND every subsequent
+   * turn for the rest of the call, since the summary message never leaves
+   * history once added.
+   */
+  it('never sends role "system" inside messages — a mid-history compaction summary (context-window.ts) is folded into a user turn instead', async () => {
+    fetchMock.mockResolvedValueOnce(sseResponse(200, ""));
+    const adapter = new AnthropicAdapter("test-key");
+    const request: AiCompletionRequest = {
+      ...baseRequest(),
+      messages: [
+        { role: "system", content: "[Earlier in this call — 12 message(s) summarized] ..." },
+        { role: "user", content: "so about that quote" },
+      ],
+    };
+
+    await collect(adapter.streamCompletion(request));
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const sentBody = JSON.parse(init.body as string) as {
+      messages: Array<{ role: string; content: Array<{ type: string; text: string }> }>;
+    };
+    expect(sentBody.messages.map((message) => message.role)).toEqual(["user", "user"]);
+    expect(sentBody.messages[0]?.content[0]?.text).toContain("summarized");
+  });
+
+  /**
    * Regression coverage for a real cost-optimization finding: docs/03 §1
    * itself documents that the system prompt is assembled once per call
    * specifically so provider-side caching is effective, but no
