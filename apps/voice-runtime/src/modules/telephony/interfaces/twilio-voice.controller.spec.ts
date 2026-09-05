@@ -1,5 +1,6 @@
 import type { TenantRoutingProvider } from "../../tenant-routing/domain/tenant-routing.port";
 import { createNoopLogger } from "../../call-session/application/__fakes__/fake-logger";
+import { verifyMediaStreamToken } from "../infrastructure/media-stream-auth.util";
 import { TwilioVoiceController } from "./twilio-voice.controller";
 import { TwilioVoiceWebhookDto } from "./dto/twilio-voice-webhook.dto";
 
@@ -33,6 +34,7 @@ describe("TwilioVoiceController", () => {
 
   it("returns <Connect><Stream> TwiML carrying tenant/business/callerAni resolved from the dialed number", async () => {
     process.env["PUBLIC_BASE_URL"] = "https://runtime.ngrok.example.com";
+    process.env["TWILIO_AUTH_TOKEN"] = "test-auth-token";
     const tenantRouting = new FakeTenantRoutingProvider();
     const controller = new TwilioVoiceController(tenantRouting, createNoopLogger());
 
@@ -48,6 +50,7 @@ describe("TwilioVoiceController", () => {
 
   it("generates a fresh callId on every invocation (docs/28 §B.1)", async () => {
     process.env["PUBLIC_BASE_URL"] = "https://runtime.ngrok.example.com";
+    process.env["TWILIO_AUTH_TOKEN"] = "test-auth-token";
     const tenantRouting = new FakeTenantRoutingProvider();
     const controller = new TwilioVoiceController(tenantRouting, createNoopLogger());
 
@@ -58,6 +61,57 @@ describe("TwilioVoiceController", () => {
       /name="callId" value="([^"]+)"/.exec(twiml)?.[1] ?? "";
     expect(extractCallId(first)).not.toBe(extractCallId(second));
     expect(extractCallId(first)).toHaveLength(36); // UUID
+  });
+
+  /**
+   * QA security audit finding: `/media-stream` (the raw WebSocket route)
+   * had zero authentication of its own — anyone reaching the public URL
+   * could forge a `start` event with an arbitrary tenantId/businessId,
+   * bypassing TwilioSignatureGuard entirely (that guard only protects
+   * THIS webhook POST, a separate HTTP request). This proves the TwiML
+   * this controller emits actually carries a token that
+   * media-stream.gateway.ts can verify, and that the token is genuinely
+   * bound to the exact parameter values sent — not just present.
+   */
+  it("includes a mediaStreamToken Stream Parameter that verifies against the exact call parameters emitted", async () => {
+    process.env["PUBLIC_BASE_URL"] = "https://runtime.ngrok.example.com";
+    process.env["TWILIO_AUTH_TOKEN"] = "test-auth-token";
+    const tenantRouting = new FakeTenantRoutingProvider();
+    const controller = new TwilioVoiceController(tenantRouting, createNoopLogger());
+
+    const twiml = await controller.voice(payload());
+
+    const extract = (name: string): string =>
+      new RegExp(`name="${name}" value="([^"]+)"`).exec(twiml)?.[1] ?? "";
+    const token = extract("mediaStreamToken");
+    expect(token.length).toBeGreaterThan(0);
+    const params = {
+      callId: extract("callId"),
+      tenantId: extract("tenantId"),
+      businessId: extract("businessId"),
+      callerAni: extract("callerAni"),
+      toNumber: extract("toNumber"),
+      timezone: extract("timezone"),
+    };
+    expect(verifyMediaStreamToken(params, token, "test-auth-token")).toBe(true);
+    // A forged connection presenting different parameter values alongside
+    // this SAME valid-looking token must NOT verify — proves the token is
+    // bound to the actual values, not just "some token was present."
+    expect(
+      verifyMediaStreamToken({ ...params, tenantId: "attacker-tenant" }, token, "test-auth-token"),
+    ).toBe(false);
+  });
+
+  it("returns the apology TwiML (never an unsigned <Connect><Stream>) when TWILIO_AUTH_TOKEN is missing at request time", async () => {
+    process.env["PUBLIC_BASE_URL"] = "https://runtime.ngrok.example.com";
+    delete process.env["TWILIO_AUTH_TOKEN"];
+    const tenantRouting = new FakeTenantRoutingProvider();
+    const controller = new TwilioVoiceController(tenantRouting, createNoopLogger());
+
+    const twiml = await controller.voice(payload());
+
+    expect(twiml).not.toContain("<Connect>");
+    expect(twiml).toContain("<Say>");
   });
 
   it("returns the apology TwiML (never throws) when no tenant route is configured for the dialed number", async () => {

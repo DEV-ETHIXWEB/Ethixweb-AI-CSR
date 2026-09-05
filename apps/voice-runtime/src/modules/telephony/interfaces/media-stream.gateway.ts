@@ -14,6 +14,7 @@ import {
   buildTwilioMediaMessage,
   parseTwilioMessage,
 } from "../domain/twilio-media-stream.types";
+import { verifyMediaStreamToken } from "../infrastructure/media-stream-auth.util";
 
 /**
  * Registers a raw `@fastify/websocket` route directly on the underlying
@@ -93,13 +94,52 @@ export class MediaStreamGateway {
 
       if (message.event === "start") {
         const custom = message.start.customParameters ?? {};
-        params = {
+        log = this.logger.child({
+          tenantId: custom["tenantId"] ?? "",
+          callId: custom["callId"] ?? "",
+        });
+
+        // FOUND LIVE via a QA security audit: this raw WebSocket route has
+        // no authentication of its own — anyone reaching the public URL
+        // could previously open a connection and send a forged `start`
+        // event with an arbitrary tenantId/businessId/callerAni, bypassing
+        // TwilioSignatureGuard (which only protects the webhook POST, a
+        // completely separate HTTP request) entirely. See
+        // media-stream-auth.util.ts's own comment for the full exploit and
+        // fix. This MUST run before `params` is trusted for anything,
+        // including the existing missing-field check below — a forged
+        // connection with all required fields present but no valid token
+        // must still be rejected.
+        const authToken = process.env["TWILIO_AUTH_TOKEN"];
+        const signedParams = {
           callId: custom["callId"] ?? "",
           tenantId: custom["tenantId"] ?? "",
           businessId: custom["businessId"] ?? "",
           callerAni: custom["callerAni"] ?? "",
-          toNumber: custom["toNumber"] || undefined,
-          timezone: custom["timezone"] || undefined,
+          toNumber: custom["toNumber"] ?? "",
+          timezone: custom["timezone"] ?? "",
+        };
+        const providedToken = custom["mediaStreamToken"];
+        if (
+          !authToken ||
+          typeof providedToken !== "string" ||
+          providedToken.length === 0 ||
+          !verifyMediaStreamToken(signedParams, providedToken, authToken)
+        ) {
+          log.error(
+            "Media Stream start event failed authentication — missing or invalid mediaStreamToken, closing without ever starting a call",
+          );
+          socket.close();
+          return;
+        }
+
+        params = {
+          callId: signedParams.callId,
+          tenantId: signedParams.tenantId,
+          businessId: signedParams.businessId,
+          callerAni: signedParams.callerAni,
+          toNumber: signedParams.toNumber || undefined,
+          timezone: signedParams.timezone || undefined,
           callSid: message.start.callSid,
           streamSid: message.start.streamSid,
         };

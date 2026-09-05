@@ -14,6 +14,7 @@ import {
   buildConnectStreamTwiml,
   buildDialHumanTwiml,
 } from "../domain/twiml.builder";
+import { signMediaStreamParams } from "../infrastructure/media-stream-auth.util";
 import { TwilioVoiceWebhookDto } from "./dto/twilio-voice-webhook.dto";
 import { TwilioSignatureGuard } from "./guards/twilio-signature.guard";
 
@@ -82,16 +83,32 @@ export class TwilioVoiceController {
 
     log.info("inbound call routed", { tenantId: route.tenantId, businessId: route.businessId });
 
+    const callParameters = {
+      callId,
+      tenantId: route.tenantId,
+      businessId: route.businessId,
+      callerAni: body.From,
+      toNumber: body.To ?? "",
+      timezone: route.timezone ?? "",
+    };
+    // Binds the Media Stream WebSocket connection back to THIS
+    // signature-verified webhook request — see media-stream-auth.util.ts's
+    // own comment for the full reasoning. Signed over every parameter
+    // value, not just present/absent, so a forged connection can't reuse
+    // a valid token alongside different tenantId/businessId/callerAni values.
+    // Runtime check (not just env.schema.ts's own boot-time validation),
+    // matching TwilioSignatureGuard's own defense-in-depth convention for
+    // this exact env var, right above in this same request's own guard.
+    const authToken = process.env["TWILIO_AUTH_TOKEN"];
+    if (!authToken) {
+      log.error("TWILIO_AUTH_TOKEN missing at request time — cannot sign media-stream token");
+      return buildApologyTwiml();
+    }
+    const mediaStreamToken = signMediaStreamParams(callParameters, authToken);
+
     return buildConnectStreamTwiml({
       websocketUrl,
-      callParameters: {
-        callId,
-        tenantId: route.tenantId,
-        businessId: route.businessId,
-        callerAni: body.From,
-        toNumber: body.To ?? "",
-        timezone: route.timezone ?? "",
-      },
+      callParameters: { ...callParameters, mediaStreamToken },
     });
   }
 }
