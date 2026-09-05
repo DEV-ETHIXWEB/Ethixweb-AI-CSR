@@ -55,6 +55,7 @@ export default tseslint.config(
             "apps/voice-orchestrator/scripts/measure-streaming-latency.ts",
             "apps/voice-orchestrator/scripts/measure-conversation-quality.ts",
             "apps/voice-runtime/scripts/measure-tts-latency.ts",
+            "apps/core-api/scripts/seed-all-phase-knowledge.ts",
           ],
         },
         tsconfigRootDir: import.meta.dirname,
