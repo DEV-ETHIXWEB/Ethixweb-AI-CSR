@@ -359,9 +359,31 @@ export class HandleTurnUseCase {
         ) {
           backstops.push(buildSearchCustomerBackstopCall(conversation.callerAni));
         }
+        // Found live on a real ~21-minute call: escalateEmergency's
+        // once-ever backstop correctly fired on turn 1 (an unrelated
+        // "not sure what's going on" transcript), then the caller went on
+        // to describe an ACTIVE, HAPPENING-RIGHT-NOW leak from what they
+        // called a "burst pipe" almost 20 minutes later — real content
+        // that DEFAULT_EMERGENCY_KEYWORDS' own "burst pipe" pattern would
+        // classify as critical/forward_call — and the tool was never
+        // called again for it. Grace's own TEXT response correctly gave
+        // emergency safety instructions (shut off the valve), but the
+        // actual escalation infrastructure (business-configured rules,
+        // on-call transfer, createLead's priority field) never ran,
+        // because `hasCalledEscalateEmergency`'s "ever" gate suppressed a
+        // second, legitimately new check. `looksEmergencyAdjacent` is a
+        // deliberately liberal, LOCAL heuristic — never the actual
+        // classification (core-api's real classify() still owns that
+        // entirely) — that exists only to decide whether THIS turn's
+        // transcript is worth re-checking regardless of an earlier,
+        // unrelated check. Over-triggering costs one harmless extra
+        // round-trip; under-triggering is the one this real call proved
+        // costs an actual missed emergency.
         if (
           command.allowedTools.includes("escalateEmergency") &&
-          !hasCalledEscalateEmergency(conversation)
+          (!hasCalledEscalateEmergency(conversation) ||
+            (looksEmergencyAdjacent(command.transcript) &&
+              conversation.lastEmergencyCheckedTranscript !== command.transcript))
         ) {
           backstops.push(buildEscalationBackstopCall(command.transcript));
         }
@@ -386,6 +408,7 @@ export class HandleTurnUseCase {
         toolCallsExecuted.push(toolCall.name);
         if (toolCall.name === "escalateEmergency") {
           conversation.emergencyEverChecked = true;
+          conversation.lastEmergencyCheckedTranscript = command.transcript;
         }
         if (toolCall.name === "searchCustomer") {
           conversation.searchCustomerEverChecked = true;
@@ -967,6 +990,45 @@ function buildEscalationBackstopCall(transcript: string): AiToolCallRequest {
     name: "escalateEmergency",
     arguments: { description: transcript },
   };
+}
+
+/**
+ * Deliberately liberal keyword trigger, NOT the real emergency
+ * classification (core-api's EscalateEmergencyUseCase.classify — real
+ * word-set matching against DEFAULT_EMERGENCY_KEYWORDS plus any
+ * business-configured rules — still owns that entirely; this only
+ * decides whether THIS caller turn is worth a fresh escalateEmergency
+ * call even though an earlier, unrelated turn already checked once this
+ * conversation). Built from the same vocabulary as
+ * DEFAULT_EMERGENCY_KEYWORDS (burst/pipe, gas, sewer/sewage, flooding,
+ * no water, overflowing) since that's the real classifier this is
+ * gating a call to — a plain substring check, not word-set matching,
+ * because over-triggering here just costs one harmless extra
+ * round-trip where classify() correctly says "not an emergency," while
+ * under-triggering is the exact failure a real call proved costly: an
+ * active leak described as "for that burst pipe... happening right
+ * now" almost 20 minutes into a call, after an unrelated turn-1 check
+ * had already satisfied the old "ever" gate, was never re-classified at
+ * all.
+ */
+function looksEmergencyAdjacent(transcript: string): boolean {
+  const lower = transcript.toLowerCase();
+  const triggers = [
+    "burst",
+    "leak",
+    "flood",
+    "gas leak",
+    "smell gas",
+    "smell of gas",
+    "sewage",
+    "sewer backup",
+    "sewer back up",
+    "no water",
+    "no hot water",
+    "overflowing",
+    "water everywhere",
+  ];
+  return triggers.some((trigger) => lower.includes(trigger));
 }
 
 /** Same rationale as `hasCalledEscalateEmergency` — checks the durable flag first, falls back to a live message-history scan. */

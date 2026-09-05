@@ -773,6 +773,138 @@ describe("HandleTurnUseCase", () => {
   });
 
   /**
+   * Found live on a real ~21-minute call: the escalateEmergency backstop
+   * correctly fired once on turn 1 (an unrelated "not sure what's going
+   * on" transcript), then the caller went on to describe an ACTIVE leak
+   * from a "burst pipe" almost 20 minutes later — real content
+   * DEFAULT_EMERGENCY_KEYWORDS' own "burst pipe" pattern would classify
+   * as critical/forward_call — and the tool was never called again for
+   * it, because the old "ever checked" gate treated turn 1's unrelated
+   * check as covering the whole rest of the call.
+   */
+  it("re-fires the escalateEmergency backstop on a LATER turn whose transcript looks emergency-adjacent, even though an earlier unrelated turn already checked once", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const escalateHandler = {
+      execute: jest.fn().mockResolvedValue({
+        isEmergency: false,
+        severity: "medium",
+        action: "standard_lead",
+        transferDestination: null,
+      }),
+    };
+    const { useCase } = buildUseCase({
+      repository,
+      registeredTools: [{ name: "escalateEmergency", handler: escalateHandler }],
+    });
+
+    // Turn 1: unrelated, satisfies the old "ever checked" gate.
+    await useCase.execute(
+      baseCommand({
+        transcript: "not sure what is going on",
+        idempotencyKey: "turn-1",
+        allowedTools: ["escalateEmergency"],
+      }),
+    );
+    expect(escalateHandler.execute).toHaveBeenCalledTimes(1);
+
+    // A much later turn describing an active leak — must be re-checked,
+    // not silently skipped because turn 1 already "used up" the check.
+    const result = await useCase.execute(
+      baseCommand({
+        transcript: "for that burst pipe, yeah it is happening right now",
+        idempotencyKey: "turn-2",
+        allowedTools: ["escalateEmergency"],
+      }),
+    );
+
+    expect(escalateHandler.execute).toHaveBeenCalledTimes(2);
+    expect(escalateHandler.execute.mock.calls[1]?.[0]).toEqual({
+      description: "for that burst pipe, yeah it is happening right now",
+    });
+    expect(result.toolCallsExecuted).toEqual(["escalateEmergency"]);
+  });
+
+  it("does NOT re-fire the backstop a second time within the SAME turn's own multiple completion iterations, even though that turn's own transcript looks emergency-adjacent", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "Let's get that shut off right away." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+      [
+        { type: "text_delta", text: "Have you shut off the valve yet?" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const escalateHandler = {
+      execute: jest.fn().mockResolvedValue({
+        isEmergency: true,
+        severity: "critical",
+        action: "forward_call",
+        transferDestination: "+15559876543",
+      }),
+    };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "escalateEmergency", handler: escalateHandler }],
+    });
+
+    const result = await useCase.execute(
+      baseCommand({
+        transcript: "there's a burst pipe leaking right now",
+        allowedTools: ["escalateEmergency"],
+      }),
+    );
+
+    // The SAME turn ran two completion iterations (both with no real tool
+    // calls of their own) — escalateEmergency must only fire once for it,
+    // not once per iteration.
+    expect(escalateHandler.execute).toHaveBeenCalledTimes(1);
+    expect(result.toolCallsExecuted).toEqual(["escalateEmergency"]);
+  });
+
+  it("does NOT re-fire the backstop on a later turn whose transcript does not look emergency-adjacent", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const escalateHandler = {
+      execute: jest.fn().mockResolvedValue({
+        isEmergency: false,
+        severity: "medium",
+        action: "standard_lead",
+        transferDestination: null,
+      }),
+    };
+    const { useCase } = buildUseCase({
+      repository,
+      registeredTools: [{ name: "escalateEmergency", handler: escalateHandler }],
+    });
+
+    await useCase.execute(
+      baseCommand({
+        transcript: "not sure what is going on",
+        idempotencyKey: "turn-1",
+        allowedTools: ["escalateEmergency"],
+      }),
+    );
+    expect(escalateHandler.execute).toHaveBeenCalledTimes(1);
+
+    const result = await useCase.execute(
+      baseCommand({
+        transcript: "what's your zip code coverage look like",
+        idempotencyKey: "turn-2",
+        allowedTools: ["escalateEmergency"],
+      }),
+    );
+
+    expect(escalateHandler.execute).toHaveBeenCalledTimes(1); // still just the turn-1 check
+    expect(result.toolCallsExecuted).toEqual([]);
+  });
+
+  /**
    * Found live on a real ~7-minute phone call: a valid caller ANI was
    * present the ENTIRE call, searchCustomer's own tool description calls
    * it "First tool called on every inbound call," and the platform prompt

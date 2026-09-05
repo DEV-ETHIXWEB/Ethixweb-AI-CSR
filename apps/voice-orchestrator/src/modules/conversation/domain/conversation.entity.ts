@@ -71,6 +71,23 @@ export interface Conversation {
    */
   emergencyEverChecked?: boolean;
   /**
+   * The exact caller transcript that most recently triggered an
+   * escalateEmergency check (real or backstop) — set alongside
+   * `emergencyEverChecked`. Found live: a caller turn whose transcript
+   * "looks emergency-adjacent" (see `looksEmergencyAdjacent` in
+   * handle-turn.use-case.ts) is deliberately allowed to re-trigger the
+   * backstop even after `emergencyEverChecked` is already true — an
+   * unrelated turn-1 check must not permanently suppress a genuinely
+   * new emergency described 20 minutes later. But `runTurn`'s tool loop
+   * runs `command.transcript` (the SAME caller turn) through several
+   * completion iterations, and that same transcript would otherwise
+   * re-match `looksEmergencyAdjacent` on every one of them — this field
+   * is what tells a LATER iteration of the SAME turn "already checked
+   * this exact one," so only a genuinely different, later caller turn
+   * can trigger a second check.
+   */
+  lastEmergencyCheckedTranscript?: string;
+  /**
    * Optimistic-concurrency counter, starting at 1 on `create()` — the ONLY
    * field a use case never sets by hand; it travels unmodified from
    * whatever `findById`/`findByCallId` returned through to `save()`, which
