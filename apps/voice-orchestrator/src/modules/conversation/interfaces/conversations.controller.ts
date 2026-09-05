@@ -19,6 +19,7 @@ import { EndConversationUseCase } from "../application/end-conversation.use-case
 import { GetConversationByCallIdUseCase } from "../application/get-conversation-by-call-id.use-case";
 import { GetConversationUseCase } from "../application/get-conversation.use-case";
 import { HandleTurnUseCase } from "../application/handle-turn.use-case";
+import { ProviderCompletionError } from "../../ai-provider/domain/errors";
 import { InterruptConversationUseCase } from "../application/interrupt-conversation.use-case";
 import { StartConversationUseCase } from "../application/start-conversation.use-case";
 import {
@@ -102,11 +103,15 @@ export class ConversationsController {
    * admission ever reaches the `writeHead(200, ...)` line below. A
    * genuine failure AFTER that point (the AI provider erroring mid-turn)
    * can no longer become a different HTTP status — it becomes a
-   * `{"type":"error"}` line instead, `retryable: true` matching exactly
+   * `{"type":"error"}` line instead. `retryable` defaults to true, matching
    * what an uncaught error here would have produced as a 500 before
-   * (docs/28 §G: 5xx is always retryable), so Voice Runtime's existing
-   * retry-with-the-same-idempotencyKey logic needs no new case, only a
-   * new place to read the same signal from.
+   * (docs/28 §G: 5xx is always retryable) — EXCEPT a ProviderCompletionError
+   * (see that class's own comment), which carries the provider adapter's own
+   * real classification instead of that default, so a deterministic/
+   * permanent failure fails fast rather than paying a pointless retry cycle
+   * first. Either way, Voice Runtime's existing retry-with-the-same-
+   * idempotencyKey logic needs no new case, only a new place to read the
+   * signal from.
    */
   @Post(":id/turns")
   @ApiOperation({
@@ -214,10 +219,19 @@ export class ConversationsController {
       }
       writeLine({ type: "done", ...new TurnResultResponseDto(result) });
     } catch (error) {
+      // `retryable` defaults to true for anything that ISN'T a
+      // ProviderCompletionError — an unexpected bug elsewhere in this
+      // method is exactly the "ambiguous outcome, safe to retry" case
+      // docs/28 §G already covers, so that default is unchanged. Only a
+      // ProviderCompletionError carries a real, adapter-computed
+      // classification (see that class's own comment) worth overriding
+      // it with — found live: hardcoding `true` here for every failure,
+      // including deterministic/permanent ones, cost the caller a wasted
+      // multi-second retry-then-apologize cycle on every occurrence.
       writeLine({
         type: "error",
         message: error instanceof Error ? error.message : String(error),
-        retryable: true,
+        retryable: error instanceof ProviderCompletionError ? error.retryable : true,
       });
     } finally {
       reply.raw.end();

@@ -10,6 +10,7 @@ import {
   type AiProviderPort,
   type AiToolCallRequest,
 } from "../../ai-provider/domain/ai-provider.port";
+import { ProviderCompletionError } from "../../ai-provider/domain/errors";
 import { EVENT_BUS, type EventBusPort } from "../../events/domain/orchestrator-event";
 import { ExecuteToolUseCase } from "../../tool-broker/application/execute-tool.use-case";
 import { ToolRegistry } from "../../tool-broker/application/tool-registry";
@@ -515,6 +516,7 @@ export class HandleTurnUseCase {
     const toolCalls: AiToolCallRequest[] = [];
     let interrupted = false;
     let providerErrorMessage: string | null = null;
+    let providerErrorRetryable = true;
     // Voice-pipeline latency investigation — isolates provider-network
     // latency (time to the FIRST chunk, unavoidable no matter how this
     // codebase's own code changes) from total generation time (grows
@@ -544,6 +546,7 @@ export class HandleTurnUseCase {
         }
         if (chunk.type === "error") {
           providerErrorMessage = chunk.message;
+          providerErrorRetryable = chunk.retryable;
         }
         const handled = this.applyChunk(chunk, toolCalls);
         text += handled.text;
@@ -607,8 +610,18 @@ export class HandleTurnUseCase {
     // Voice Runtime's EXISTING, already-tested turn-retry-then-apologize
     // logic already handles correctly — not a new failure mode, routing a
     // previously-silent one through infrastructure that already exists.
+    //
+    // ProviderCompletionError (not a plain Error): carries the adapter's own
+    // retryable classification (AiProviderHttpError.isRetryable) all the way
+    // to ConversationsController's `{type:"error"}` line — found live that a
+    // genuinely PERMANENT failure (a request-shape bug, not a transient
+    // network blip) was still costing the caller a wasted retry-then-fail
+    // cycle because this classification was computed correctly by the
+    // adapter and then discarded here, forcing every failure to look
+    // retryable regardless of cause. See ProviderCompletionError's own
+    // comment for the real cost this measured.
     if (providerErrorMessage !== null && !interrupted && !text && toolCalls.length === 0) {
-      throw new Error(`AI provider completion failed: ${providerErrorMessage}`);
+      throw new ProviderCompletionError(providerErrorMessage, providerErrorRetryable);
     }
 
     this.logger.info("LLM completion finished", {

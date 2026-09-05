@@ -1,4 +1,5 @@
 import type { AiCompletionChunk } from "../../ai-provider/domain/ai-provider.port";
+import { ProviderCompletionError } from "../../ai-provider/domain/errors";
 import { ExecuteToolUseCase } from "../../tool-broker/application/execute-tool.use-case";
 import { FakeIdempotencyStore } from "../../tool-broker/application/__fakes__/fake-idempotency-store";
 import { FakeToolAuditLog } from "../../tool-broker/application/__fakes__/fake-tool-audit-log";
@@ -800,6 +801,47 @@ describe("HandleTurnUseCase", () => {
     const { useCase } = buildUseCase({ aiProvider, repository });
 
     await expect(useCase.execute(baseCommand())).rejects.toThrow(/AI provider completion failed/);
+  });
+
+  /**
+   * Regression coverage for a real cost found while tracing the role:"system"
+   * compaction bug (anthropic.adapter.ts's own fix) all the way to the wire:
+   * every adapter already computes a correct retryable/permanent
+   * classification per error and yields it faithfully on the chunk, but this
+   * use case previously threw a plain `Error` that discarded it, forcing
+   * ConversationsController to hardcode `retryable: true` on every failure —
+   * a genuinely permanent error still cost the caller a wasted retry cycle
+   * before falling back to an apology. ProviderCompletionError carries that
+   * classification the rest of the way instead of losing it here.
+   */
+  it("throws a ProviderCompletionError carrying the adapter's own retryable classification, not a plain Error that discards it", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [{ type: "error", message: "malformed request (400): bad shape", retryable: false }],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    const error: unknown = await useCase.execute(baseCommand()).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ProviderCompletionError);
+    expect((error as ProviderCompletionError).retryable).toBe(false);
+  });
+
+  it("still defaults to retryable: true for a transient provider error (e.g. a 5xx/overload), matching docs/28 §G", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [{ type: "error", message: "anthropic overloaded (529)", retryable: true }],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    const error: unknown = await useCase.execute(baseCommand()).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ProviderCompletionError);
+    expect((error as ProviderCompletionError).retryable).toBe(true);
   });
 
   it("does NOT throw when a provider error arrives only AFTER real text already streamed — that partial text is preserved, not discarded", async () => {
