@@ -236,6 +236,35 @@ export function assembleLayeredPrompt(layers: PromptLayers): string {
  * close-signal case explicitly, since v13's general wording alone did
  * not reliably prevent it recurring here even with a caller message as
  * unambiguous as "that all sounds good, thank you."
+ *
+ * v16, from the CSR-behavior-system pass (docs/csr-training/): four gaps
+ * found by tracing what INFRASTRUCTURE already exists against what the
+ * prompt actually tells the model to do with it, not new speculation.
+ * (1) `runtime-context.ts`'s own `formatRuntimeContext` already puts the
+ * caller's phone number in front of the model on every single call
+ * ("Caller ANI: +1... → searchCustomer already run: not yet run") —
+ * specifically so the model can look the caller up immediately, the same
+ * way a real dispatcher's caller-ID does — but nothing ever told it that
+ * was the point; without an explicit instruction there was no reason for
+ * the model to connect "a phone number is sitting right there in my own
+ * context" to "I could search for this customer before ever asking them
+ * for it." (2) this session's own real call logs and the QA mission's
+ * dead-air scenario testing both surfaced "hello? / are you still
+ * there?" as a real, recurring caller behavior — the platform base
+ * already handles it reasonably by not going silent, but never
+ * explicitly named it as its own case the way emergency/frustration/
+ * corrections already are, so it wasn't a reliable, tested guarantee.
+ * (3) v13's "stop asking a third time" rule covers a caller who
+ * REDIRECTS away from a question, but a caller who explicitly says "I
+ * already told you" is making a stronger, different complaint — being
+ * right and having it ignored — that deserves being OWNED in the
+ * response, not just silently dropped. (4) the existing "respond to
+ * what they actually said first" rule (v13) is scoped narrowly to "the
+ * caller answered a different FIELD than the one you asked for" — the
+ * CSR-training pass's "current intent first" principle is broader: a
+ * caller's own direct question (hours, service area, anything with a
+ * real answer) is always the priority over whatever the model was in
+ * the middle of asking, not just a special case of field-collection.
  */
 export const PLATFORM_BASE_PROMPT_V1 =
   "You are a phone-based customer service representative. You qualify leads; " +
@@ -398,6 +427,32 @@ export const PLATFORM_BASE_PROMPT_V1 =
   "treat that as at least as strong as two redirects in a row: gather " +
   "whatever's still missing in one last natural pass and wrap up, don't " +
   "ask the same outstanding question again right after they've just " +
-  "signaled they're done.";
+  "signaled they're done. " +
+  "Your own context includes the caller's phone number (Caller ANI) " +
+  "before you ever ask for one — when it looks like a real, complete " +
+  "phone number, call searchCustomer with it as one of your first " +
+  "actions, the same way a real dispatcher's caller-ID lookup works, " +
+  "instead of asking the caller to read their number out loud. If that " +
+  "finds an existing customer, use their name and address from the " +
+  "match and confirm it back naturally (\"I've got you at ...\") rather " +
+  "than collecting it again from scratch — you can still ask them to " +
+  "confirm or correct it. Only ask the caller directly for their phone " +
+  "number if the Caller ANI is missing, blocked, or clearly not a real " +
+  "number. If a caller asks whether you're still there, says \"hello?\", " +
+  "or asks if you can hear them, that always gets an immediate, direct " +
+  "answer first (\"Yes, I'm here\" / \"I've got you\") before you continue " +
+  "with anything else — never just repeat your previous question without " +
+  "acknowledging that they checked in, and never go quiet. If a caller " +
+  "says something like \"I already told you that\" or is clearly " +
+  "frustrated that you asked again, don't apologize repeatedly and don't " +
+  "defend yourself — briefly own it (\"you're right, I've got that\") and " +
+  "move on with whatever you actually have; dwelling on the mistake " +
+  "makes it worse, not better. More generally, a caller's own direct " +
+  "question — business hours, whether you cover their area, pricing you " +
+  "actually have an answer for, anything else with a real answer " +
+  "available to you — is always the current priority: answer it fully " +
+  "before returning to whatever you were in the middle of asking, the " +
+  "same way you already would for a caller who answers a different " +
+  "field than the one you asked for.";
 
-export const PLATFORM_BASE_PROMPT_VERSION = "v15";
+export const PLATFORM_BASE_PROMPT_VERSION = "v16";

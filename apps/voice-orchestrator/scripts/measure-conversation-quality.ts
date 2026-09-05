@@ -36,6 +36,7 @@ import {
   assembleLayeredPrompt,
   PLATFORM_BASE_PROMPT_V1,
 } from "../src/modules/prompt/domain/prompt-layers";
+import { formatRuntimeContext } from "../src/modules/prompt/domain/runtime-context";
 import { DEFAULT_BRAND_VOICE_PROMPT } from "../src/modules/prompt/infrastructure/static-agent-profile.provider";
 import type { Conversation } from "../src/modules/conversation/domain/conversation.entity";
 import type { HandleTurnCommand } from "../src/modules/conversation/application/handle-turn.use-case";
@@ -65,6 +66,26 @@ const SYSTEM_PROMPT = assembleLayeredPrompt({
   runtimeContext: "Business: All Phase Plumbing. Timezone: America/Chicago.",
 });
 
+// v16 scenarios specifically test whether the model actually uses Caller
+// ANI for a proactive searchCustomer lookup — needs the REAL
+// formatRuntimeContext shape (not the hand-written approximation above,
+// which predates that rule and has no ANI line at all) so the exact
+// "Caller ANI: ... -> searchCustomer already run: not yet run" text the
+// model sees in production is what's being tested against, not a
+// simplified stand-in.
+const SYSTEM_PROMPT_WITH_ANI = assembleLayeredPrompt({
+  platformBase: PLATFORM_BASE_PROMPT_V1,
+  tenantDefault: DEFAULT_BRAND_VOICE_PROMPT,
+  businessOverride: "",
+  runtimeContext: formatRuntimeContext({
+    currentTimeIso: new Date().toISOString(),
+    timezone: "America/Chicago",
+    businessHours: { isOpen: true, isHoliday: false },
+    callerAni: "+15558127744",
+    existingCustomerMatch: null,
+  }),
+});
+
 interface ConversationScript {
   name: string;
   focus: string;
@@ -80,6 +101,15 @@ interface ConversationScript {
    * behavior — see v13's own comment on why this flag exists).
    */
   enableTools?: boolean;
+  /**
+   * Uses SYSTEM_PROMPT_WITH_ANI (the real formatRuntimeContext shape,
+   * carrying a Caller ANI line) instead of the default hand-written
+   * runtime context — only scripts specifically testing v16's
+   * ANI-lookup rule need this; every other script's simplified context
+   * has no ANI line at all, which would make "does the model use the
+   * ANI" untestable rather than a meaningful negative result.
+   */
+  useAniPrompt?: boolean;
 }
 
 const SCRIPTS: ConversationScript[] = [
@@ -231,6 +261,39 @@ const SCRIPTS: ConversationScript[] = [
     ],
     enableTools: true,
   },
+  {
+    name: "v16: returning caller — uses Caller ANI for an immediate searchCustomer lookup, never asks for the phone number verbally",
+    focus:
+      "The system prompt's own runtime context already carries the caller's phone number (Caller ANI) before any turn happens. A real dispatcher's caller-ID would look this caller up immediately — the model should too, and once searchCustomer finds a match (Marcus Webb, scripted below), it should use that name naturally instead of asking the caller to introduce themselves or read out their number.",
+    turns: [
+      "Hi, my kitchen faucet won't turn off all the way, it's dripping constantly.",
+      "Yeah that's right, it's been going on for about a week.",
+    ],
+    enableTools: true,
+    useAniPrompt: true,
+  },
+  {
+    name: "v16: 'I already told you' — own it, don't over-apologize or restart",
+    focus:
+      "v13's 'stop asking a third time' rule covers a caller who redirects; this is the sharper case — the caller explicitly calls out being asked again. The model should briefly own it and move on, not apologize repeatedly or get stuck.",
+    turns: [
+      "Hi, my garage disposal is jammed and it's making a horrible grinding noise.",
+      "It's a General Electric, about eight years old.",
+      "I already told you it's a GE, why are you asking again?",
+    ],
+    enableTools: true,
+  },
+  {
+    name: "v16: current intent first — a direct business-hours question mid-flow must get answered, not deferred",
+    focus:
+      "Generalizes v13's narrow 'respond to a different field' rule: ANY direct question (not just a different qualifying field) is the caller's current priority. The model has getBusinessHours available and should use it, not dodge the question to keep qualifying.",
+    turns: [
+      "Hi, my bathroom sink is clogged and draining really slowly.",
+      "Actually wait — are you guys open right now? It's pretty late.",
+      "Okay good. So yeah, the sink's been slow for about three days now.",
+    ],
+    enableTools: true,
+  },
 ];
 
 async function runScript(script: ConversationScript): Promise<void> {
@@ -246,12 +309,24 @@ async function runScript(script: ConversationScript): Promise<void> {
     createNoopLogger(),
   );
   const allowedTools: string[] = [];
+  let searchCustomerHandler: FakeToolHandler | null = null;
   if (script.enableTools) {
     for (const definition of TOOL_CATALOG) {
       const handler = new FakeToolHandler();
-      handler.output = { id: randomUUID(), found: false, isEmergency: false };
+      // Existing scripts (v12/v13/emergency) were verified assuming a
+      // NEW-customer flow (found: false, then createCustomer) — changing
+      // that would silently invalidate their own already-verified
+      // results. Only useAniPrompt scripts (specifically testing the
+      // v16 ANI-lookup rule) get a "found" match, matching what that
+      // rule is actually meant to exercise.
+      handler.output = script.useAniPrompt
+        ? { found: true, customer: { id: randomUUID(), name: "Marcus Webb", address: null } }
+        : { id: randomUUID(), found: false, isEmergency: false };
       toolRegistry.register(definition, handler);
       allowedTools.push(definition.name);
+      if (definition.name === "searchCustomer") {
+        searchCustomerHandler = handler;
+      }
     }
   }
   const useCase = new HandleTurnUseCase(
@@ -271,7 +346,7 @@ async function runScript(script: ConversationScript): Promise<void> {
     businessId: "measurement-business",
     callId: randomUUID(),
     state: "qualifying",
-    systemPrompt: SYSTEM_PROMPT,
+    systemPrompt: script.useAniPrompt ? SYSTEM_PROMPT_WITH_ANI : SYSTEM_PROMPT,
     llmModel: model,
     messages: [],
     transcript: [],
@@ -295,11 +370,17 @@ async function runScript(script: ConversationScript): Promise<void> {
       transcript: callerText,
       allowedTools,
     };
+    const searchCustomerCallsBefore = searchCustomerHandler?.callCount ?? 0;
     const result = await useCase.execute(command);
     console.log(`Caller: ${callerText}`);
     console.log(`CSR:    ${result.responseText}`);
     if (result.toolCallsExecuted.length > 0) {
       console.log(`        [tools called: ${result.toolCallsExecuted.join(", ")}]`);
+    }
+    if (searchCustomerHandler && searchCustomerHandler.callCount > searchCustomerCallsBefore) {
+      console.log(
+        `        [searchCustomer called with: ${JSON.stringify(searchCustomerHandler.receivedInputs.at(-1))}]`,
+      );
     }
     console.log("");
   }

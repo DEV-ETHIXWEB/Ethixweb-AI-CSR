@@ -417,4 +417,65 @@ describe("assembleLayeredPrompt", () => {
       "treat that as at least as strong as two redirects in a row",
     );
   });
+
+  /**
+   * v16: runtime-context.ts's own formatRuntimeContext already puts the
+   * caller's phone number in front of the model on every call ("Caller
+   * ANI: ... → searchCustomer already run: not yet run") specifically so
+   * it can be used for an immediate lookup — but nothing ever told the
+   * model that was the point, so the infrastructure existed with no
+   * instruction connecting it to the "don't make a returning caller
+   * repeat themselves" behavior the CSR-training pass is built around.
+   */
+  it("instructs the model to use the caller's own ANI for an immediate searchCustomer lookup instead of asking for their phone number from scratch", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "call searchcustomer with it as one of your first actions",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "instead of asking the caller to read their number out loud",
+    );
+  });
+
+  /**
+   * v16: named explicitly for the first time, even though the platform
+   * base already avoided going silent in real-model testing — this
+   * session's own real call logs and the QA mission's dead-air scenario
+   * both surfaced "hello? / are you still there?" as a real, recurring
+   * caller behavior worth a reliable, tested guarantee rather than an
+   * incidental byproduct of other rules.
+   */
+  it("instructs the model to answer a 'hello? / are you still there?' check-in immediately, before continuing with anything else", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "that always gets an immediate, direct",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("never just repeat your previous question");
+  });
+
+  /**
+   * v16: v13's "stop asking a third time" rule covers a caller who
+   * REDIRECTS away from a question; a caller who explicitly says "I
+   * already told you" is making a different, stronger complaint — being
+   * right and having it ignored — that calls for owning the mistake in
+   * the response, not just silently dropping the question.
+   */
+  it("instructs the model to own it (not over-apologize or get defensive) when a caller says they already provided something", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain('"i already told you that"');
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain('"you\'re right, i\'ve got that"');
+  });
+
+  /**
+   * v16: generalizes v13's narrow "respond to a different FIELD the
+   * caller answered instead" rule into the broader CSR-training "current
+   * intent first" principle — a caller's own direct question (hours,
+   * service area, pricing, anything with a real answer) always outranks
+   * whatever the model itself was in the middle of asking.
+   */
+  it("instructs the model to answer a caller's direct question (hours, service area, pricing) before returning to its own line of questioning", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "a caller's own direct question",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "is always the current priority",
+    );
+  });
 });
