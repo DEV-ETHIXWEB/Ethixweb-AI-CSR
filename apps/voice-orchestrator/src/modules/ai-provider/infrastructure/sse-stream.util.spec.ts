@@ -113,9 +113,7 @@ describe("readSseEvents", () => {
   it("leaves no stray CRLF at the head of the event after a CRLF boundary", async () => {
     // CRLFCRLF is four characters; consuming a fixed two left "\r\n" on the
     // next event, whose data line then no longer started with "data:".
-    const response = fakeResponse([
-      'data: {"first":true}\r\n\r\ndata: {"second":true}\r\n\r\n',
-    ]);
+    const response = fakeResponse(['data: {"first":true}\r\n\r\ndata: {"second":true}\r\n\r\n']);
 
     await expect(collect(response)).resolves.toEqual(['{"first":true}', '{"second":true}']);
   });

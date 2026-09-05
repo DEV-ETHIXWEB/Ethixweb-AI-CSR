@@ -93,7 +93,10 @@ describe("GeminiAdapter", () => {
     // keyword, so the tool catalog's `source: { const: "ai_csr" }` took down
     // every turn rather than degrading. Observed live, not hypothesized.
     fetchMock.mockResolvedValueOnce(
-      sseResponse(200, 'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}\n\n'),
+      sseResponse(
+        200,
+        'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}\n\n',
+      ),
     );
     const adapter = new GeminiAdapter("test-key");
 

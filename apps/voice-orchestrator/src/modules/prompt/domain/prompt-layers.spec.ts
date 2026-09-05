@@ -448,7 +448,9 @@ describe("assembleLayeredPrompt", () => {
     expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
       "that always gets an immediate, direct",
     );
-    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("never just repeat your previous question");
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "never just repeat your previous question",
+    );
   });
 
   /**
@@ -460,7 +462,7 @@ describe("assembleLayeredPrompt", () => {
    */
   it("instructs the model to own it (not over-apologize or get defensive) when a caller says they already provided something", () => {
     expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain('"i already told you that"');
-    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain('"you\'re right, i\'ve got that"');
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("\"you're right, i've got that\"");
   });
 
   /**
@@ -471,12 +473,8 @@ describe("assembleLayeredPrompt", () => {
    * whatever the model itself was in the middle of asking.
    */
   it("instructs the model to answer a caller's direct question (hours, service area, pricing) before returning to its own line of questioning", () => {
-    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
-      "a caller's own direct question",
-    );
-    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
-      "is always the current priority",
-    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("a caller's own direct question");
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("is always the current priority");
   });
 
   /**

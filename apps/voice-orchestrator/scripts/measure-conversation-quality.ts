@@ -330,7 +330,10 @@ async function runScript(script: ConversationScript): Promise<void> {
       // real-looking call history, matching what those rules are
       // actually meant to exercise.
       if (script.useAniPrompt && definition.name === "searchCustomer") {
-        handler.output = { found: true, customer: { id: randomUUID(), name: "Marcus Webb", address: null } };
+        handler.output = {
+          found: true,
+          customer: { id: randomUUID(), name: "Marcus Webb", address: null },
+        };
       } else if (script.useAniPrompt && definition.name === "lookupPreviousCalls") {
         handler.output = {
           calls: [
