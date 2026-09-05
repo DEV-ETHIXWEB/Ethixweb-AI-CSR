@@ -283,6 +283,24 @@ export class CallSessionOrchestrator {
     if (!this.conversationId || this.ended) {
       return;
     }
+    // Defense-in-depth, not a behavior change in the working case: today
+    // this is always already null here, because Deepgram's SpeechStarted
+    // (which drives handleBargeIn) fires before the speech_final event
+    // that reaches this method for the SAME utterance, so the previous
+    // turn is always already aborted by the time a new one starts. But
+    // nothing here actually ENFORCED that — this method just overwrote
+    // `activeTurnAbort` unconditionally, so any future change to the
+    // barge-in trigger path (or an unexpected STT provider event
+    // ordering) could silently let two turns run concurrently, each
+    // eventually calling speak() — the exact overlapping/contradictory
+    // speech class of bug this codebase has otherwise been careful to
+    // rule out by construction. Aborting here too, at the one place that
+    // actually starts a new turn, makes that invariant hold regardless of
+    // whether the barge-in path did its job first.
+    if (this.activeTurnAbort) {
+      this.activeTurnAbort.abort();
+      this.activeTurnAbort = null;
+    }
     const log = this.logger.child({ tenantId: params.tenantId, callId: params.callId });
     const idempotencyKey = randomUUID();
     const conversationId = this.conversationId;

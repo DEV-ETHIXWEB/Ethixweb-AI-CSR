@@ -22,7 +22,11 @@ import {
  */
 export class FakeOrchestratorClient implements OrchestratorClientPort {
   readonly startCalls: StartConversationRequest[] = [];
-  readonly turnCalls: Array<{ conversationId: string; req: HandleTurnRequest }> = [];
+  readonly turnCalls: Array<{
+    conversationId: string;
+    req: HandleTurnRequest;
+    signal: AbortSignal | undefined;
+  }> = [];
   readonly interruptCalls: Array<{ conversationId: string; req: InterruptRequest }> = [];
   readonly endCalls: Array<{ conversationId: string; req: EndConversationRequest }> = [];
 
@@ -76,7 +80,7 @@ export class FakeOrchestratorClient implements OrchestratorClientPort {
     signal?: AbortSignal,
     onChunk?: (text: string) => void | Promise<void>,
   ): Promise<TurnResult> {
-    this.turnCalls.push({ conversationId, req });
+    this.turnCalls.push({ conversationId, req, signal });
 
     if (this.hangTurnUntilAborted) {
       return new Promise<TurnResult>((_resolve, reject) => {

@@ -265,6 +265,46 @@ describe("CallSessionOrchestrator", () => {
         tts.synthesizeCalls.filter((call) => call === "Got it, tell me more about that."),
       ).toHaveLength(1);
     });
+
+    /**
+     * Defense-in-depth regression, found while auditing barge-in for a real
+     * "not responding" call report: this codebase's ONLY protection against
+     * two turns ever running concurrently was that Deepgram's SpeechStarted
+     * (driving handleBargeIn) always fires before the speech_final event
+     * for the SAME utterance — handleFinalTranscript itself never checked
+     * or aborted a still-active previous turn before starting a new one.
+     * That's a latent gap, not yet a proven live bug (this exact STT
+     * ordering has held so far), but nothing enforced it — a future
+     * change to the barge-in trigger, or an unexpected STT provider event
+     * ordering, could let an old turn's response speak stale/contradictory
+     * audio over a newer turn's, since `bargedInDuringCurrentTurn` (which
+     * would otherwise silence it) gets reset to `false` by the NEW turn's
+     * own handleFinalTranscript call before the OLD one ever settles.
+     * Proves the fix directly: a second finalized transcript arrives with
+     * NO emitSpeechStarted() in between, and the first turn's own
+     * AbortSignal must still end up aborted.
+     */
+    it("aborts a still-active previous turn's AbortSignal when a new finalized transcript arrives, even with no intervening speech-started event", async () => {
+      const { orchestrator, orchestratorClient, stt } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      orchestratorClient.hangTurnUntilAborted = true;
+
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+
+      session.emitFinalTranscript("first thing customer said", 0.9);
+      await flushMicrotasks();
+      const firstTurnSignal = orchestratorClient.turnCalls[0]?.signal;
+      expect(firstTurnSignal?.aborted).toBe(false);
+
+      // NO session.emitSpeechStarted() here — the ONLY thing that should
+      // stop the first turn is handleFinalTranscript's own guard.
+      session.emitFinalTranscript("second thing, no barge-in event ever fired", 0.9);
+      await flushMicrotasks();
+
+      expect(orchestratorClient.turnCalls).toHaveLength(2);
+      expect(firstTurnSignal?.aborted).toBe(true);
+    });
   });
 
   describe("duplicate turn (idempotency)", () => {
