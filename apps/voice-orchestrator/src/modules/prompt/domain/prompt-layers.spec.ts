@@ -494,4 +494,46 @@ describe("assembleLayeredPrompt", () => {
       "a returning caller with a service history is exactly who that tool exists for",
     );
   });
+
+  /**
+   * v18: found live on a real ~7-minute phone call — asked "are you guys
+   * available for like after one hour" (a direct question) and the model
+   * silently pivoted straight to asking for a zip code, never
+   * acknowledging the question existed. v17's "direct question is always
+   * the priority" rule only covered questions with a real answer
+   * available; nothing told the model to at least acknowledge one it
+   * genuinely can't answer (live scheduling) instead of acting like it
+   * was never asked.
+   */
+  it("instructs the model to acknowledge a direct question honestly even when it has no real answer, rather than silently skipping it", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "still gets acknowledged, not silently skipped",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "never just pivot straight to your own next question as if a direct question wasn't asked at all",
+    );
+  });
+
+  /**
+   * v18: found on the SAME real call — the caller spelled a zip code
+   * digit by digit ("one double zero one eight," a likely STT
+   * misheard/garbled transcript) and the model confidently read it back
+   * as a DIFFERENT, cleaner-looking real zip ("98018 — got it"), which
+   * the caller then had to correct. A second live attempt at the same
+   * scenario produced a different failure instead — silently dropping
+   * the garbled digits rather than guessing — same root gap: nothing
+   * told the model to read a spoken number back for explicit
+   * confirmation before treating it as final.
+   */
+  it("instructs the model to read back a spoken number for confirmation rather than guessing or silently dropping unclear digits", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "read it back exactly the way you heard it",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "never silently substitute a different, more 'normal-looking' number",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "never just drop unclear digits and move on without asking again",
+    );
+  });
 });

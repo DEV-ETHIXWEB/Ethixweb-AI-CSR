@@ -277,6 +277,28 @@ export function assembleLayeredPrompt(layers: PromptLayers): string {
  * caller's own direct question (hours, service area, anything with a
  * real answer) is always the priority over whatever the model was in
  * the middle of asking, not just a special case of field-collection.
+ *
+ * v18, both found on the SAME real ~7-minute phone call (not a synthetic
+ * scenario): (1) asked "are you guys available for like after one hour"
+ * — a direct question — and the model silently pivoted straight to
+ * asking for a zip code, never acknowledging the question at all. v17's
+ * "direct question is always the priority" rule (above) only covered
+ * questions with "a real answer available" — it had no instruction for
+ * the equally-common case of a direct question the model genuinely
+ * CAN'T answer (live scheduling), so there was nothing telling it to at
+ * least acknowledge that honestly instead of acting like the question
+ * was never asked. (2) the caller spelled a zip code digit by digit
+ * ("one double zero one eight" — a likely STT misheard/garbled
+ * transcript) and the model confidently read it back as a DIFFERENT,
+ * cleaner-looking real Seattle-area zip ("98018 — got it"), which the
+ * caller then had to correct ("took my zip code, I think it's wrong").
+ * Re-run against the live model afterward (not the same transcript,
+ * same failure class): a second attempt at the identical scenario
+ * silently DROPPED the garbled digits instead of guessing — a different
+ * failure, same root gap — neither guessing nor silently moving on ever
+ * got the actual number confirmed. No existing rule told the model to
+ * read a spoken number back for explicit confirmation before treating
+ * it as final.
  */
 export const PLATFORM_BASE_PROMPT_V1 =
   "You are a phone-based customer service representative. You qualify leads; " +
@@ -471,6 +493,23 @@ export const PLATFORM_BASE_PROMPT_V1 =
   "service history is exactly who that tool exists for. If it returns " +
   "anything relevant to what they're calling about now, use it naturally " +
   '("how\'s that disposal holding up since we were out there?"); if ' +
-  "nothing's relevant, just move on without mentioning the lookup at all.";
+  "nothing's relevant, just move on without mentioning the lookup at all. " +
+  "A direct question you genuinely don't have a real answer for — exact " +
+  "real-time technician availability, a specific arrival time, anything " +
+  "that needs live scheduling you can't see — still gets acknowledged, " +
+  "not silently skipped: say so honestly (\"I don't have live scheduling " +
+  "in front of me, but I'll get your info over and the team will confirm " +
+  "timing\") and keep moving, the same way you're already honest about not " +
+  "having an exact price. Never just pivot straight to your own next " +
+  "question as if a direct question wasn't asked at all. " +
+  "When a caller reads out a number — a zip code, phone number, or " +
+  "street number, especially digit by digit — read it back exactly the " +
+  'way you heard it ("let me make sure I\'ve got that right — 9-8-0-1-8?") ' +
+  "and get a real confirmation before treating it as final. Never silently " +
+  "substitute a different, more 'normal-looking' number because it seems " +
+  "like what they probably meant, and never just drop unclear digits and " +
+  "move on without asking again — both cost real accuracy on something " +
+  "that sends a technician to a real address; one extra confirming " +
+  "question is always cheaper than either.";
 
-export const PLATFORM_BASE_PROMPT_VERSION = "v17";
+export const PLATFORM_BASE_PROMPT_VERSION = "v18";
