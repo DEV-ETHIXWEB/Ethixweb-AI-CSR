@@ -221,6 +221,7 @@ export class StartConversationUseCase {
         startedAt: now,
         endedAt: null,
         endReason: null,
+        callerAni: command.callerAni,
         version: 1,
       });
 

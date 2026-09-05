@@ -772,6 +772,163 @@ describe("HandleTurnUseCase", () => {
     expect(result.toolCallsExecuted).toEqual([]);
   });
 
+  /**
+   * Found live on a real ~7-minute phone call: a valid caller ANI was
+   * present the ENTIRE call, searchCustomer's own tool description calls
+   * it "First tool called on every inbound call," and the platform prompt
+   * says the same — yet the model never called it once across 17 turns.
+   * The exact same LLM-sampling-variance gap the escalateEmergency
+   * backstop already closes, just never extended to this tool. Mirrors
+   * that test's own shape.
+   */
+  it("force-calls searchCustomer when the model ends its turn without ever having called it and a caller ANI is on file (deterministic safety net)", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation({ callerAni: "+15558127744" }));
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "Hey there, what's going on?" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+      [
+        { type: "text_delta", text: "Got it." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const searchHandler = {
+      execute: jest.fn().mockResolvedValue({ found: false }),
+    };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "searchCustomer", handler: searchHandler }],
+    });
+
+    const result = await useCase.execute(
+      baseCommand({ transcript: "hi", allowedTools: ["searchCustomer"] }),
+    );
+
+    expect(searchHandler.execute).toHaveBeenCalledTimes(1);
+    expect(searchHandler.execute.mock.calls[0]?.[0]).toEqual({ phone: "+15558127744" });
+    expect(result.toolCallsExecuted).toEqual(["searchCustomer"]);
+  });
+
+  it("does NOT force-call searchCustomer when no caller ANI is on file for this conversation", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const searchHandler = { execute: jest.fn() };
+    const { useCase } = buildUseCase({
+      repository,
+      registeredTools: [{ name: "searchCustomer", handler: searchHandler }],
+    });
+
+    const result = await useCase.execute(
+      baseCommand({ transcript: "hi", allowedTools: ["searchCustomer"] }),
+    );
+
+    expect(searchHandler.execute).not.toHaveBeenCalled();
+    expect(result.toolCallsExecuted).toEqual([]);
+  });
+
+  it("does NOT force-call searchCustomer when it isn't in this call's allowedTools, even with a caller ANI on file", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation({ callerAni: "+15558127744" }));
+    const searchHandler = { execute: jest.fn() };
+    const { useCase } = buildUseCase({
+      repository,
+      registeredTools: [{ name: "searchCustomer", handler: searchHandler }],
+    });
+
+    const result = await useCase.execute(baseCommand({ transcript: "hi", allowedTools: [] }));
+
+    expect(searchHandler.execute).not.toHaveBeenCalled();
+    expect(result.toolCallsExecuted).toEqual([]);
+  });
+
+  it("fires BOTH the searchCustomer and escalateEmergency backstops in the same iteration when both are outstanding", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation({ callerAni: "+15558127744" }));
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "Hey there, what's going on?" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+      [
+        { type: "text_delta", text: "Got it." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const searchHandler = { execute: jest.fn().mockResolvedValue({ found: false }) };
+    const escalateHandler = {
+      execute: jest.fn().mockResolvedValue({
+        isEmergency: false,
+        severity: "medium",
+        action: "standard_lead",
+        transferDestination: null,
+      }),
+    };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [
+        { name: "searchCustomer", handler: searchHandler },
+        { name: "escalateEmergency", handler: escalateHandler },
+      ],
+    });
+
+    const result = await useCase.execute(
+      baseCommand({ transcript: "hi", allowedTools: ["searchCustomer", "escalateEmergency"] }),
+    );
+
+    expect(searchHandler.execute).toHaveBeenCalledTimes(1);
+    expect(escalateHandler.execute).toHaveBeenCalledTimes(1);
+    expect(result.toolCallsExecuted).toEqual(["searchCustomer", "escalateEmergency"]);
+  });
+
+  /**
+   * Same compaction bug class as `emergencyEverChecked` (see that field's
+   * own comment) — proves `searchCustomerEverChecked` independently
+   * survives `compressMessages` dropping the earlier turn's tool-call
+   * message.
+   */
+  it("does NOT re-fire the searchCustomer backstop after compaction has dropped the earlier call's tool-call message", async () => {
+    const repository = new FakeConversationRepository();
+    const oldMessages: Conversation["messages"] = [
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{ id: "t1", name: "searchCustomer", arguments: { phone: "+15558127744" } }],
+      },
+      { role: "tool", toolCallId: "t1", content: "{}" },
+    ];
+    for (let i = 0; i < 40; i++) {
+      oldMessages.push({
+        role: i % 2 === 0 ? "user" : "assistant",
+        content: `filler turn ${i}`,
+      });
+    }
+    repository.seed(
+      baseConversation({
+        callerAni: "+15558127744",
+        searchCustomerEverChecked: true,
+        messages: oldMessages,
+      }),
+    );
+    const searchHandler = { execute: jest.fn() };
+    const { useCase } = buildUseCase({
+      repository,
+      registeredTools: [{ name: "searchCustomer", handler: searchHandler }],
+    });
+
+    const result = await useCase.execute(
+      baseCommand({ transcript: "okay thanks", allowedTools: ["searchCustomer"] }),
+    );
+
+    expect(searchHandler.execute).not.toHaveBeenCalled();
+    expect(result.toolCallsExecuted).toEqual([]);
+  });
+
   it("does NOT force-call escalateEmergency when it isn't in this call's allowedTools", async () => {
     const repository = new FakeConversationRepository();
     repository.seed(baseConversation());

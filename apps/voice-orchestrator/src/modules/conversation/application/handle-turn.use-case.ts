@@ -320,32 +320,55 @@ export class HandleTurnUseCase {
       // flush here; calling onChunk again with `turn.text` would re-speak
       // this whole iteration's text a second time.
 
-      // Deterministic safety net, docs/07 §5.2's "fail-safe toward
+      // Deterministic safety nets, docs/07 §5.2's "fail-safe toward
       // escalation" now enforced in code, not only prompted. Found live:
       // running the SAME unambiguous emergency description 10 times
       // against the real model, with the prompt already telling it to
       // ALWAYS call escalateEmergency (never conditionally), still missed
       // the call entirely on 1 run — LLM sampling variance has a ceiling
       // no prompt wording alone can close. If the model is about to end
-      // its turn with no tool calls and this call has never checked even
-      // once, substitute a synthetic escalateEmergency call for this
-      // iteration — the SAME tool, SAME classification, SAME
-      // orchestrator-executed transfer a real model call would produce,
-      // just guaranteed. The loop then runs one more completion exactly
-      // as it would for any other tool call, so the model still reacts
-      // and narrates naturally rather than the call going silent.
-      // Fires at most once per conversation (message history is the
-      // source of truth, so a real model call short-circuits this on any
-      // later turn) — this targets the observed failure (the model
-      // finishes a turn having never checked at all), not every
-      // conceivable multi-turn shape.
-      const toolCalls =
-        !turn.interrupted &&
-        turn.toolCalls.length === 0 &&
-        command.allowedTools.includes("escalateEmergency") &&
-        !hasCalledEscalateEmergency(conversation)
-          ? [buildEscalationBackstopCall(command.transcript)]
-          : turn.toolCalls;
+      // its turn/iteration with no tool calls of its own, substitute
+      // synthetic call(s) for whichever guaranteed tool(s) this call has
+      // never actually checked — the SAME tool, SAME orchestrator-executed
+      // side effect a real model call would produce, just guaranteed. The
+      // loop then runs one more completion exactly as it would for any
+      // other tool call, so the model still reacts and narrates naturally
+      // rather than the call going silent. Each backstop fires at most
+      // once per conversation (a real model call short-circuits it on any
+      // later turn/iteration) — this targets the observed failure (the
+      // model finishes having never checked at all), not every
+      // conceivable multi-turn shape. Both can fire in the SAME iteration
+      // when both are outstanding (the common case: turn 1, plain
+      // greeting-response text, no tool calls at all).
+      //
+      // searchCustomer's backstop: found live on a real ~7-minute call —
+      // a valid caller ANI was present the entire time, the tool's own
+      // description calls it "First tool called on every inbound call,"
+      // and the platform prompt says the same, yet the model never called
+      // it once in 17 turns. Only fires when `conversation.callerAni` is
+      // actually set — there's nothing to search with otherwise, and that
+      // case is a real caller-ID-unavailable scenario, not a bug this
+      // backstop should paper over.
+      let toolCalls = turn.toolCalls;
+      if (!turn.interrupted && turn.toolCalls.length === 0) {
+        const backstops: AiToolCallRequest[] = [];
+        if (
+          command.allowedTools.includes("searchCustomer") &&
+          conversation.callerAni &&
+          !hasCalledSearchCustomer(conversation)
+        ) {
+          backstops.push(buildSearchCustomerBackstopCall(conversation.callerAni));
+        }
+        if (
+          command.allowedTools.includes("escalateEmergency") &&
+          !hasCalledEscalateEmergency(conversation)
+        ) {
+          backstops.push(buildEscalationBackstopCall(command.transcript));
+        }
+        if (backstops.length > 0) {
+          toolCalls = backstops;
+        }
+      }
 
       if (turn.text || toolCalls.length > 0) {
         conversation.messages.push({
@@ -363,6 +386,9 @@ export class HandleTurnUseCase {
         toolCallsExecuted.push(toolCall.name);
         if (toolCall.name === "escalateEmergency") {
           conversation.emergencyEverChecked = true;
+        }
+        if (toolCall.name === "searchCustomer") {
+          conversation.searchCustomerEverChecked = true;
         }
         const { output, escalation: toolEscalation } = await this.runTool(
           conversation,
@@ -940,6 +966,24 @@ function buildEscalationBackstopCall(transcript: string): AiToolCallRequest {
     id: randomUUID(),
     name: "escalateEmergency",
     arguments: { description: transcript },
+  };
+}
+
+/** Same rationale as `hasCalledEscalateEmergency` — checks the durable flag first, falls back to a live message-history scan. */
+function hasCalledSearchCustomer(conversation: Conversation): boolean {
+  if (conversation.searchCustomerEverChecked === true) {
+    return true;
+  }
+  return conversation.messages.some((message) =>
+    message.toolCalls?.some((toolCall) => toolCall.name === "searchCustomer"),
+  );
+}
+
+function buildSearchCustomerBackstopCall(phone: string): AiToolCallRequest {
+  return {
+    id: randomUUID(),
+    name: "searchCustomer",
+    arguments: { phone },
   };
 }
 

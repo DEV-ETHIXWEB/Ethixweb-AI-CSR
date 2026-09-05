@@ -32,6 +32,30 @@ export interface Conversation {
   endedAt: string | null;
   endReason: string | null;
   /**
+   * The caller's phone number as reported by the telephony provider,
+   * captured once at call start (StartConversationUseCase) — required on
+   * `StartConversationCommand` itself, but optional here (not set on
+   * conversations created before this field existed) so a missing value
+   * reads as "no ANI available" rather than crashing old data. Exists so
+   * `runTurn`'s `searchCustomer` backstop (see `hasCalledSearchCustomer`)
+   * has a phone number to search with without depending on the model
+   * having echoed it into a message first.
+   */
+  callerAni?: string;
+  /**
+   * True once `searchCustomer` has executed at least one time this
+   * conversation (real model call or the deterministic backstop — see
+   * `hasCalledSearchCustomer`'s own comment). Found live: a real ~7-minute
+   * phone call with a valid caller ANI present the entire time NEVER once
+   * called `searchCustomer`, despite the tool's own description calling it
+   * "First tool called on every inbound call" and the platform prompt
+   * instructing the same — the exact same LLM-sampling-variance gap
+   * `emergencyEverChecked`'s backstop already closed for escalateEmergency,
+   * just never extended to this tool. Mirrors `emergencyEverChecked`'s own
+   * compaction-survival rationale.
+   */
+  searchCustomerEverChecked?: boolean;
+  /**
    * True once `escalateEmergency` has executed at least one time this
    * conversation (real model call or the deterministic backstop — see
    * `hasCalledEscalateEmergency`'s own comment, both count identically).

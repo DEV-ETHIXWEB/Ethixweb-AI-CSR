@@ -325,11 +325,15 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
         ],
       ];
       const idempotencyKey = randomUUID();
+      // Deliberately no searchCustomer (or any tool whose deterministic
+      // backstop could add an extra AI-provider completion) — this test
+      // is about idempotent-replay behavior, not backstop behavior; see
+      // handle-turn.use-case.ts's own searchCustomer-backstop comment.
       const turnPayload = {
         tenantId: conversation.tenantId,
         idempotencyKey,
         transcript: "network is about to blip",
-        allowedTools: ["searchCustomer"],
+        allowedTools: ["getBusinessHours"],
       };
 
       const first = await sim.inject({
@@ -376,7 +380,7 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
           tenantId: conversation.tenantId,
           idempotencyKey: randomUUID(),
           transcript: "first thing caller said",
-          allowedTools: ["searchCustomer"],
+          allowedTools: ["getBusinessHours"],
         },
       });
       const second = await sim.inject({
@@ -387,7 +391,7 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
           tenantId: conversation.tenantId,
           idempotencyKey: randomUUID(),
           transcript: "second thing caller said",
-          allowedTools: ["searchCustomer"],
+          allowedTools: ["getBusinessHours"],
         },
       });
 
@@ -479,12 +483,15 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
         method: "POST",
         url: `/v1/conversations/${conversation.id}/turns`,
         headers: authHeader(sim.serviceToken),
-        // Deliberately does NOT include createLead in allowedTools.
+        // Deliberately does NOT include createLead in allowedTools (and
+        // omits searchCustomer too, so its deterministic backstop doesn't
+        // consume the second scripted completion this test needs for the
+        // model's own recovery text).
         payload: {
           tenantId: conversation.tenantId,
           idempotencyKey: randomUUID(),
           transcript: "hello",
-          allowedTools: ["searchCustomer"],
+          allowedTools: ["getBusinessHours"],
         },
       });
 
@@ -583,11 +590,12 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
         ],
       ];
       const idempotencyKey = randomUUID();
+      // No searchCustomer — see the idempotency test above's own comment.
       const turnPayload = {
         tenantId: conversation.tenantId,
         idempotencyKey,
         transcript: "concurrent retry storm",
-        allowedTools: ["searchCustomer"],
+        allowedTools: ["getBusinessHours"],
       };
 
       const [first, second] = await Promise.all([
