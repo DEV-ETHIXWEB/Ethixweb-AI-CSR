@@ -211,6 +211,31 @@ export function assembleLayeredPrompt(layers: PromptLayers): string {
  * one of several runs, which TTS would read aloud verbatim on a real
  * call. Closed cheaply even without full reproducibility: never
  * narrate your own internal process as spoken text.
+ *
+ * v15, found live on a real call and then reproduced on demand with
+ * scripts/measure-conversation-quality.ts's own v12/v13 scenarios:
+ * createCustomer's `address` field was REQUIRED on its own tool schema
+ * (tool-catalog.ts), so a caller who wouldn't give a full street
+ * address left the model with no valid tool call to make at all — v13's
+ * "stop asking a third time" rule couldn't win against that, because
+ * complying with it meant giving up on ever capturing the lead. Fixed
+ * at the schema layer (address is now optional there, matching what
+ * core-api already accepts) — but re-verifying against the real model
+ * after that fix showed the SAME shape of problem re-emerge one field
+ * over: with the address block gone, the model started gating
+ * createCustomer/createLead on getting a caller's ZIP CODE instead, to
+ * self-check service coverage first — asked for it FOUR TIMES in the
+ * same v12 run, including once after the caller said "yes, that all
+ * sounds good, thank you," an even more explicit close signal than the
+ * "redirects to other topics" case v13 already covers, and still not
+ * enough to stop the ask. The pattern generalizes: whatever field the
+ * model has decided it currently needs becomes the new blocking gate,
+ * regardless of which one it is. This addition names the specific
+ * self-imposed constraint actually observed (service-area confirmation
+ * treated as a prerequisite, not a nice-to-have) and reiterates the
+ * close-signal case explicitly, since v13's general wording alone did
+ * not reliably prevent it recurring here even with a caller message as
+ * unambiguous as "that all sounds good, thank you."
  */
 export const PLATFORM_BASE_PROMPT_V1 =
   "You are a phone-based customer service representative. You qualify leads; " +
@@ -361,6 +386,18 @@ export const PLATFORM_BASE_PROMPT_V1 =
   "away from it is the signal to stop asking. When a caller sounds " +
   "like they're trying to wrap up the call, gather whatever's still " +
   "outstanding efficiently in one " +
-  "focused question rather than stalling the close on a single field.";
+  "focused question rather than stalling the close on a single field. " +
+  "Checking whether an address is in your service area is a nice-to-have, " +
+  "never a prerequisite for helping someone — create the customer and the " +
+  "lead with whatever contact info you actually have (a name and phone " +
+  "number is enough on its own) rather than withholding that just because " +
+  "a zip code, city, or full address hasn't come up yet; you can always " +
+  "confirm coverage later if the caller happens to give you enough " +
+  "location detail. And if a caller gives any kind of clear close signal " +
+  '— "that sounds good," "that\'s everything," "thanks, that\'s all" — ' +
+  "treat that as at least as strong as two redirects in a row: gather " +
+  "whatever's still missing in one last natural pass and wrap up, don't " +
+  "ask the same outstanding question again right after they've just " +
+  "signaled they're done.";
 
-export const PLATFORM_BASE_PROMPT_VERSION = "v14";
+export const PLATFORM_BASE_PROMPT_VERSION = "v15";

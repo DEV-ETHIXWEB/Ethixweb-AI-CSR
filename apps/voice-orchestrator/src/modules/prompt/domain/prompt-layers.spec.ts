@@ -385,4 +385,36 @@ describe("assembleLayeredPrompt", () => {
     );
     expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("no visible seam between");
   });
+
+  /**
+   * v15: found live on a real call, then reproduced on demand — with
+   * createCustomer's `address` field made optional (tool-catalog.ts,
+   * the actual bug fix), the model's fixation didn't disappear, it moved
+   * one field over: it started gating customer/lead capture on getting a
+   * ZIP CODE first (to self-check service coverage), asked for it four
+   * times in the same scenario that used to fixate on street address,
+   * including once after a caller close signal. This rule names that
+   * specific self-imposed gate directly.
+   */
+  it("instructs the model that service-area/coverage checking is never a prerequisite for creating the customer/lead", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "checking whether an address is in your service area is a nice-to-have",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "a name and phone number is enough on its own",
+    );
+  });
+
+  /**
+   * v15: v13's general "stop asking a third time" rule alone did not
+   * reliably survive an explicit close signal in real-model testing —
+   * the model asked for a zip code again immediately after the caller
+   * said "yes, that all sounds good, thank you." This names that exact
+   * case explicitly rather than relying on the general wording to cover it.
+   */
+  it("instructs the model to treat an explicit close signal as at least as strong as two redirects, and wrap up rather than asking the outstanding question again", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "treat that as at least as strong as two redirects in a row",
+    );
+  });
 });
