@@ -40,16 +40,39 @@ export const SearchCustomerInputSchema = z.object({
 });
 export type SearchCustomerInput = z.infer<typeof SearchCustomerInputSchema>;
 
+/**
+ * `address` is deliberately OPTIONAL, not required — core-api's own
+ * CreateCustomerToolDto (create-customer-tool.dto.ts) already accepts it
+ * as `@IsOptional()`; nothing downstream needs it to create a customer
+ * record. Requiring it HERE, in the schema the model actually sees, was
+ * a real, found-live bug: a call's real transcript showed the model
+ * asking "what's the street address" FOUR TIMES IN A ROW, including
+ * after the caller had already said "yes, that all sounds good, thank
+ * you" — a clear signal to wrap up. The prompt's own "stop asking a
+ * third time" rule (prompt-layers.ts v13) couldn't win against this:
+ * the model wasn't ignoring the rule, it structurally COULDN'T comply
+ * with it, because address was a required tool argument it had no
+ * valid way to omit — "stop asking" left it with no way to actually
+ * make progress, so it kept asking, the exact "broken recording"
+ * pattern that rule exists to prevent. This schema now matches what
+ * the backend actually requires, giving the model a real way to move
+ * on: capture the lead with whatever address info exists (even none)
+ * rather than blocking the whole call on a field the system doesn't
+ * actually need yet.
+ */
 export const CreateCustomerInputSchema = z.object({
   name: z.object({ first: z.string().min(1), last: z.string().min(1) }),
   phone: e164,
   email: z.string().email().optional(),
-  address: z.object({
-    street: z.string().min(1),
-    city: z.string().min(1),
-    state: z.string().min(1),
-    zip: z.string().min(1),
-  }),
+  address: z
+    .object({
+      street: z.string().min(1),
+      city: z.string().min(1),
+      state: z.string().min(1),
+      zip: z.string().min(1),
+    })
+    .partial()
+    .optional(),
   source: z.literal("ai_csr"),
 });
 export type CreateCustomerInput = z.infer<typeof CreateCustomerInputSchema>;
@@ -117,7 +140,11 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
     name: "createCustomer",
     version: "v1",
     description:
-      "Create a new CRM customer record — only called after searchCustomer returns found: false.",
+      "Create a new CRM customer record — only called after searchCustomer returns found: false. " +
+      "address is OPTIONAL — call this with whatever you actually have. Do not withhold this call, " +
+      "or keep asking the caller for their address, just to fill in a field nothing downstream " +
+      "requires yet; a customer record with a name and phone but no address is a normal, complete " +
+      "outcome, not a partial failure.",
     inputSchema: CreateCustomerInputSchema,
     jsonSchema: {
       type: "object",
@@ -131,17 +158,17 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
         email: { type: "string" },
         address: {
           type: "object",
+          description: "Optional. Include only the parts the caller actually gave you.",
           properties: {
             street: { type: "string" },
             city: { type: "string" },
             state: { type: "string" },
             zip: { type: "string" },
           },
-          required: ["street", "city", "state", "zip"],
         },
         source: { type: "string", const: "ai_csr" },
       },
-      required: ["name", "phone", "address", "source"],
+      required: ["name", "phone", "source"],
     },
     timeoutMs: 3000,
     retryPolicy: { maxAttempts: 4 },
