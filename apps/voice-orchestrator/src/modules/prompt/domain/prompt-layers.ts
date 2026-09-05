@@ -237,6 +237,18 @@ export function assembleLayeredPrompt(layers: PromptLayers): string {
  * not reliably prevent it recurring here even with a caller message as
  * unambiguous as "that all sounds good, thank you."
  *
+ * v17, found immediately while real-model-verifying v16's own ANI-lookup
+ * addition: once searchCustomer matches an existing customer, the model
+ * used the match correctly (name, no re-asking) but never called
+ * lookupPreviousCalls — confirmed with a direct test, a caller saying
+ * "it's Marcus again" with real prior service history available got
+ * treated as a first-time issue, no continuity, no acknowledgment of the
+ * earlier visit. searchCustomer's own tool description already says
+ * "First tool called on every inbound call" — lookupPreviousCalls had no
+ * equivalent instruction telling the model it exists for exactly this
+ * moment, immediately after a match is found, not as a separate,
+ * optional lookup with no obvious trigger.
+ *
  * v16, from the CSR-behavior-system pass (docs/csr-training/): four gaps
  * found by tracing what INFRASTRUCTURE already exists against what the
  * prompt actually tells the model to do with it, not new speculation.
@@ -453,6 +465,12 @@ export const PLATFORM_BASE_PROMPT_V1 =
   "available to you — is always the current priority: answer it fully " +
   "before returning to whatever you were in the middle of asking, the " +
   "same way you already would for a caller who answers a different " +
-  "field than the one you asked for.";
+  "field than the one you asked for. " +
+  "As soon as searchCustomer finds an existing customer, call " +
+  "lookupPreviousCalls for them right after — a returning caller with a " +
+  "service history is exactly who that tool exists for. If it returns " +
+  "anything relevant to what they're calling about now, use it naturally " +
+  "(\"how's that disposal holding up since we were out there?\"); if " +
+  "nothing's relevant, just move on without mentioning the lookup at all.";
 
-export const PLATFORM_BASE_PROMPT_VERSION = "v16";
+export const PLATFORM_BASE_PROMPT_VERSION = "v17";

@@ -273,6 +273,14 @@ const SCRIPTS: ConversationScript[] = [
     useAniPrompt: true,
   },
   {
+    name: "v17: returning caller with real service history — lookupPreviousCalls actually gets called and used",
+    focus:
+      "Direct evidence this was previously broken: a caller saying 'it's Marcus again' with real prior service history available (a disposal issue, scripted below) got lookupPreviousCalls called zero times before v17 — treated as a first-time issue with no continuity. The model should call lookupPreviousCalls once searchCustomer finds a match, and use anything relevant naturally.",
+    turns: ["Hi, it's Marcus again, my kitchen sink is backing up now too."],
+    enableTools: true,
+    useAniPrompt: true,
+  },
+  {
     name: "v16: 'I already told you' — own it, don't over-apologize or restart",
     focus:
       "v13's 'stop asking a third time' rule covers a caller who redirects; this is the sharper case — the caller explicitly calls out being asked again. The model should briefly own it and move on, not apologize repeatedly or get stuck.",
@@ -310,6 +318,7 @@ async function runScript(script: ConversationScript): Promise<void> {
   );
   const allowedTools: string[] = [];
   let searchCustomerHandler: FakeToolHandler | null = null;
+  let lookupPreviousCallsHandler: FakeToolHandler | null = null;
   if (script.enableTools) {
     for (const definition of TOOL_CATALOG) {
       const handler = new FakeToolHandler();
@@ -317,15 +326,31 @@ async function runScript(script: ConversationScript): Promise<void> {
       // NEW-customer flow (found: false, then createCustomer) — changing
       // that would silently invalidate their own already-verified
       // results. Only useAniPrompt scripts (specifically testing the
-      // v16 ANI-lookup rule) get a "found" match, matching what that
-      // rule is actually meant to exercise.
-      handler.output = script.useAniPrompt
-        ? { found: true, customer: { id: randomUUID(), name: "Marcus Webb", address: null } }
-        : { id: randomUUID(), found: false, isEmergency: false };
+      // v16/v17 ANI-lookup + call-history rules) get a "found" match and
+      // real-looking call history, matching what those rules are
+      // actually meant to exercise.
+      if (script.useAniPrompt && definition.name === "searchCustomer") {
+        handler.output = { found: true, customer: { id: randomUUID(), name: "Marcus Webb", address: null } };
+      } else if (script.useAniPrompt && definition.name === "lookupPreviousCalls") {
+        handler.output = {
+          calls: [
+            {
+              date: "2026-08-20",
+              problemSummary: "Kitchen sink garbage disposal jammed, cleared on-site.",
+              resolved: true,
+            },
+          ],
+        };
+      } else {
+        handler.output = { id: randomUUID(), found: false, isEmergency: false };
+      }
       toolRegistry.register(definition, handler);
       allowedTools.push(definition.name);
       if (definition.name === "searchCustomer") {
         searchCustomerHandler = handler;
+      }
+      if (definition.name === "lookupPreviousCalls") {
+        lookupPreviousCallsHandler = handler;
       }
     }
   }
@@ -380,6 +405,13 @@ async function runScript(script: ConversationScript): Promise<void> {
     if (searchCustomerHandler && searchCustomerHandler.callCount > searchCustomerCallsBefore) {
       console.log(
         `        [searchCustomer called with: ${JSON.stringify(searchCustomerHandler.receivedInputs.at(-1))}]`,
+      );
+    }
+    if (lookupPreviousCallsHandler) {
+      console.log(
+        lookupPreviousCallsHandler.callCount > 0
+          ? `        [lookupPreviousCalls WAS called]`
+          : `        [lookupPreviousCalls was NEVER called]`,
       );
     }
     console.log("");

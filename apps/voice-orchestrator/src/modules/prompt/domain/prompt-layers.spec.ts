@@ -478,4 +478,22 @@ describe("assembleLayeredPrompt", () => {
       "is always the current priority",
     );
   });
+
+  /**
+   * v17: found immediately while real-model-verifying v16's own
+   * ANI-lookup addition — a direct test (a caller saying "it's Marcus
+   * again" with real prior service history available via
+   * lookupPreviousCalls) confirmed the tool was NEVER called even after
+   * searchCustomer found a match. searchCustomer's own description says
+   * "First tool called on every inbound call" — lookupPreviousCalls had
+   * no equivalent trigger telling the model when to reach for it.
+   */
+  it("instructs the model to call lookupPreviousCalls immediately after searchCustomer finds an existing customer", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "call lookuppreviouscalls for them right after",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "a returning caller with a service history is exactly who that tool exists for",
+    );
+  });
 });
