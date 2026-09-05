@@ -33,6 +33,11 @@ import {
  * (not `.get(...)`) creates a fresh instance from Nest's DI container per
  * call, matching CallSessionOrchestrator's own per-call state (conversationId,
  * in-flight AbortControllers) — see call-session.module.ts's comment.
+ * This ONLY actually works because CallSessionOrchestrator itself is
+ * `@Injectable({ scope: Scope.TRANSIENT })` — `resolve()` on a
+ * DEFAULT-scoped provider returns the same shared singleton every call,
+ * not a fresh one; found live as a real bug (see that class's own
+ * comment for the exact failure this caused), not a hypothetical one.
  */
 @Injectable()
 export class MediaStreamGateway {

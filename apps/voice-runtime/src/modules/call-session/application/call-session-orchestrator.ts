@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Scope } from "@nestjs/common";
 import type { StructuredLogger } from "@ethixweb/shared-kernel";
 import { APP_LOGGER } from "../../../shared/observability/app-logger.module";
 import {
@@ -44,8 +44,38 @@ const TURN_RETRY_DELAY_MS = 500;
  * §J/§K/§L/§M specify. Everything below maps directly to a numbered
  * section of that contract — see each method's own comment for the
  * specific citation.
+ *
+ * `scope: Scope.TRANSIENT` — FOUND LIVE, the single most severe bug this
+ * whole investigation turned up: this class's own instance fields
+ * (conversationId, ended, activeTurnAbort, ...) are only safe because
+ * every live call is supposed to get its OWN instance, and
+ * media-stream.gateway.ts calls `moduleRef.resolve(CallSessionOrchestrator,
+ * ...)` (not `.get()`) specifically to get one. But `@Injectable()` alone
+ * defaults to Nest's DEFAULT (singleton) scope — and for a
+ * DEFAULT-scoped provider, `moduleRef.resolve()` does NOT create a new
+ * instance; it returns the SAME shared singleton every time, identically
+ * to `.get()`. A previous version of this file's own module-level
+ * comment even asserted the opposite ("moduleRef.resolve() ... creates a
+ * fresh instance … per call") — true for TRANSIENT/REQUEST scope, false
+ * for DEFAULT, and this provider was never actually marked either of the
+ * former. The real consequence, reproduced from a live call's own logs:
+ * call N's caller hangs up, onCallEnd sets `this.ended = true` on the
+ * (shared) instance; call N+1 arrives on the SAME still-running process,
+ * `onCallStart` runs successfully on that SAME reused instance (greeting
+ * plays, STT opens, transcripts get recognized correctly) — but
+ * `this.ended` is still `true` from call N, so handleFinalTranscript's
+ * own guard silently no-ops on EVERY turn, for the rest of that call,
+ * with zero logs on either the success or failure path (indistinguishable
+ * from total unresponsiveness). Every call after the FIRST one on a
+ * given running process was broken this way, until the process happened
+ * to restart — exactly the "greets fine, then never responds again,
+ * every time I call back" pattern reported live, repeatedly. TRANSIENT
+ * (not REQUEST — there is no HTTP request context here, this is a
+ * WebSocket connection's own lifecycle) makes `resolve()`'s per-call
+ * instantiation the module's own long-standing intent finally correct
+ * in practice, not just in a comment.
  */
-@Injectable()
+@Injectable({ scope: Scope.TRANSIENT })
 export class CallSessionOrchestrator {
   private conversationId: string | null = null;
   private sttSession: SpeechToTextSession | null = null;
