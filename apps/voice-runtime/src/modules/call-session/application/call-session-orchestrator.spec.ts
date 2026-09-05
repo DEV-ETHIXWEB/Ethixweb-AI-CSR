@@ -118,7 +118,7 @@ describe("CallSessionOrchestrator", () => {
   });
 
   describe("interruption / barge-in", () => {
-    it("aborts an in-flight turn directly when speech-started fires mid-turn (mechanism 1)", async () => {
+    it("aborts an in-flight turn directly when speech-started is CONFIRMED by real interim speech mid-turn (mechanism 1)", async () => {
       const { orchestrator, orchestratorClient, stt } = buildOrchestratorUnderTest();
       const sink = new FakeMediaStreamSink();
       orchestratorClient.hangTurnUntilAborted = true;
@@ -127,15 +127,24 @@ describe("CallSessionOrchestrator", () => {
       const session = stt.sessions[0]!;
       session.emitFinalTranscript("hello", 0.9);
       await flushMicrotasks();
+      const turnSignal = orchestratorClient.turnCalls[0]?.signal;
+      expect(turnSignal?.aborted).toBe(false);
 
-      // Turn call is in flight (hung) — speech-started now should abort it directly.
+      // Turn call is in flight (hung) — a bare SpeechStarted alone must
+      // NOT abort it (see the "does NOT treat a bare SpeechStarted"
+      // test above); interim speech confirming it should.
       session.emitSpeechStarted();
       await flushMicrotasks();
+      expect(turnSignal?.aborted).toBe(false);
 
+      session.emitInterimSpeech();
+      await flushMicrotasks();
+
+      expect(turnSignal?.aborted).toBe(true);
       expect(orchestratorClient.interruptCalls).toHaveLength(0); // mechanism 1, not mechanism 2
     });
 
-    it("calls the /interrupt endpoint and clears queued audio when speech-started fires while TTS is playing between turns (mechanism 2)", async () => {
+    it("calls the /interrupt endpoint and clears queued audio when speech-started fires (and is CONFIRMED by real interim speech) while TTS is playing between turns (mechanism 2)", async () => {
       const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
       const sink = new FakeMediaStreamSink();
       tts.chunkDelayMs = 20;
@@ -155,12 +164,44 @@ describe("CallSessionOrchestrator", () => {
       // Don't await — TTS is now mid-stream (chunkDelayMs keeps it "playing").
       await new Promise((r) => setTimeout(r, 5));
 
+      // A bare SpeechStarted (the raw VAD signal) is deliberately NOT
+      // enough on its own any more — see handleSpeechStarted's own
+      // comment. Real interim speech confirms it.
       session.emitSpeechStarted();
+      session.emitInterimSpeech();
       await flushMicrotasks();
 
       expect(sink.clearCount).toBeGreaterThanOrEqual(1);
       expect(orchestratorClient.interruptCalls).toHaveLength(1);
       expect(orchestratorClient.interruptCalls[0]?.req.tenantId).toBe("tenant-1");
+    });
+
+    it("does NOT treat a bare SpeechStarted (never confirmed by interim speech) as a barge-in — noise/breath/cough must not kill an in-flight response", async () => {
+      const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      tts.chunkDelayMs = 20;
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "Let me look that up for you, one moment please.",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+      session.emitFinalTranscript("hello", 0.9);
+      await new Promise((r) => setTimeout(r, 5));
+
+      session.emitSpeechStarted();
+      // No emitInterimSpeech() — this is exactly a VAD blip with no real
+      // speech behind it.
+      await flushMicrotasks();
+
+      expect(orchestratorClient.interruptCalls).toHaveLength(0);
+      expect(sink.clearCount).toBe(0);
     });
 
     /**
@@ -201,6 +242,7 @@ describe("CallSessionOrchestrator", () => {
       await new Promise((r) => setTimeout(r, 10));
 
       session.emitSpeechStarted();
+      session.emitInterimSpeech();
       await flushMicrotasks();
       // Let anything still in flight settle — long enough that a
       // wrongly-spoken second chunk would have had time to start.

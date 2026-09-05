@@ -35,6 +35,19 @@ const MAX_CAPACITY_RETRY_ATTEMPTS = 3;
 /** Bounds a turn's ambiguous-outcome retry loop (docs/28 §G: retry the SAME idempotencyKey on timeout/5xx). Not calling shared-kernel's withRetry directly: its exponential-backoff timing (up to 64s between attempts) is wrong for a caller on a live line waiting to hear a response — a live call needs a much tighter, capped retry, not the platform-wide async-job default. */
 const MAX_TURN_RETRY_ATTEMPTS = 3;
 const TURN_RETRY_DELAY_MS = 500;
+/**
+ * How long to wait for onInterimSpeech to confirm a SpeechStarted event
+ * before treating it as noise (a breath, a cough, background audio) and
+ * never firing the barge-in it would otherwise have triggered. Deepgram's
+ * own interim results typically follow real speech onset within a few
+ * hundred ms; this is a generous upper bound, not a tuned latency target
+ * — safe to be generous because a genuine interruption that somehow
+ * skips confirmation entirely is still caught by
+ * handleFinalTranscript's own defensive abort-the-previous-turn guard
+ * once its finalized transcript arrives, so this timer is never the ONLY
+ * thing standing between a real interruption and a stuck response.
+ */
+const BARGE_IN_CONFIRMATION_TIMEOUT_MS = 500;
 
 /**
  * The one class that actually drives a phone call end to end — receives
@@ -97,6 +110,18 @@ export class CallSessionOrchestrator {
    * across turns.
    */
   private bargedInDuringCurrentTurn = false;
+  /**
+   * FOUND LIVE: acting on Deepgram's raw SpeechStarted (VAD onset) alone
+   * killed an in-flight response on every single speech-detection blip,
+   * confirmed real speech or not — a real call's own transcript showed
+   * only 2 of 12 turns ever completing, the rest aborted within 0.3-1.6s
+   * of starting, most before Grace had said more than a word or two.
+   * Non-null while waiting for onInterimSpeech to CONFIRM real words are
+   * being recognized, not just VAD energy — see handleSpeechStarted's
+   * own comment for the full reasoning, including why this is safe even
+   * when confirmation never arrives.
+   */
+  private pendingBargeInTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     @Inject(ORCHESTRATOR_CLIENT) private readonly orchestrator: OrchestratorClientPort,
@@ -210,7 +235,8 @@ export class CallSessionOrchestrator {
         });
       });
     });
-    this.sttSession.onSpeechStarted(() => this.handleBargeIn(params, sink));
+    this.sttSession.onSpeechStarted(() => this.handleSpeechStarted());
+    this.sttSession.onInterimSpeech(() => this.handleInterimSpeech(params, sink));
     this.sttSession.onError((error) => {
       // Found live, not hypothetical: this used to only log. `ws`'s
       // WebSocket never reconnects on its own and DeepgramSttSession has
@@ -477,6 +503,55 @@ export class CallSessionOrchestrator {
   }
 
   /**
+   * FOUND LIVE: the previous design called handleBargeIn directly from
+   * this event — Deepgram's raw VAD onset, fired the instant audio
+   * energy crosses a threshold, with zero guarantee real speech follows.
+   * A real call's own transcript showed the cost precisely: only 2 of 12
+   * turns ever completed, the rest aborted within 0.3-1.6s of starting,
+   * most before Grace had said more than a word or two — every breath,
+   * cough, or moment of background noise was killing an in-flight
+   * response exactly as effectively as a genuine interruption.
+   *
+   * Now: starts (or restarts, on a burst of SpeechStarted events —
+   * clearing and resetting the same timer coalesces that burst into one
+   * confirmation window rather than firing once per blip) a bounded wait
+   * for onInterimSpeech to confirm real words are actually being
+   * recognized. If confirmation never arrives within the timeout, this
+   * SpeechStarted event is treated as noise and the in-flight response
+   * (if any) is never touched.
+   *
+   * Why this is safe even when a genuine interruption is somehow missed
+   * (Deepgram delivers speech_final without a preceding interim, or the
+   * caller's utterance is so short the timer hasn't fired yet):
+   * handleFinalTranscript's own defensive guard aborts any still-active
+   * previous turn itself, at the moment the NEW finalized transcript
+   * starts a turn — this was added specifically as defense-in-depth
+   * against exactly this kind of gap, independent of whatever the
+   * barge-in path did or didn't do. This timer is a responsiveness
+   * optimization (interrupt AS SOON AS real speech is confirmed,
+   * without waiting for full finalization), not the only thing
+   * preventing a stale response from lingering.
+   */
+  private handleSpeechStarted(): void {
+    if (this.pendingBargeInTimer) {
+      clearTimeout(this.pendingBargeInTimer);
+    }
+    this.pendingBargeInTimer = setTimeout(() => {
+      this.pendingBargeInTimer = null;
+    }, BARGE_IN_CONFIRMATION_TIMEOUT_MS);
+  }
+
+  /** Confirms a pending SpeechStarted as real speech, per handleSpeechStarted's own comment — fires the actual barge-in now instead of waiting out the rest of the confirmation window. A no-op if nothing is currently pending (no SpeechStarted preceded this, or it already timed out). */
+  private handleInterimSpeech(params: CallSessionParams, sink: MediaStreamSink): void {
+    if (!this.pendingBargeInTimer) {
+      return;
+    }
+    clearTimeout(this.pendingBargeInTimer);
+    this.pendingBargeInTimer = null;
+    this.handleBargeIn(params, sink);
+  }
+
+  /**
    * docs/28 §B.3 — barge-in. Two mechanisms, MUTUALLY EXCLUSIVE, chosen
    * based on what's actually happening right now: if a turn's HTTP call
    * is still in flight, abort it directly (mechanism 1); only when it's
@@ -586,6 +661,10 @@ export class CallSessionOrchestrator {
     this.ended = true;
     this.activeTurnAbort?.abort();
     this.ttsAbort?.abort();
+    if (this.pendingBargeInTimer) {
+      clearTimeout(this.pendingBargeInTimer);
+      this.pendingBargeInTimer = null;
+    }
     await this.sttSession?.close().catch(() => undefined);
 
     if (!this.conversationId) {

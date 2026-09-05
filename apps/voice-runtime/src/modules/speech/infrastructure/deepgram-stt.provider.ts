@@ -106,6 +106,7 @@ class DeepgramSttSession implements SpeechToTextSession {
   private finalHandler: ((result: { transcript: string; confidence: number }) => void) | null =
     null;
   private speechStartedHandler: (() => void) | null = null;
+  private interimSpeechHandler: (() => void) | null = null;
   private errorHandler: ((error: Error) => void) | null = null;
   private readonly pendingAudio: Buffer[] = [];
   private ready = false;
@@ -172,6 +173,10 @@ class DeepgramSttSession implements SpeechToTextSession {
 
   onSpeechStarted(handler: () => void): void {
     this.speechStartedHandler = handler;
+  }
+
+  onInterimSpeech(handler: () => void): void {
+    this.interimSpeechHandler = handler;
   }
 
   onError(handler: (error: Error) => void): void {
@@ -250,6 +255,14 @@ class DeepgramSttSession implements SpeechToTextSession {
       });
 
       if (message["speech_final"] !== true) {
+        // Barge-in CONFIRMATION signal — see onInterimSpeech's own
+        // comment on the port. Only fires with actual recognized text,
+        // never on an empty interim result (those are just as
+        // meaningless as a bare VAD blip for telling real speech apart
+        // from noise).
+        if (transcript.trim().length > 0) {
+          this.interimSpeechHandler?.();
+        }
         return;
       }
       if (transcript.trim().length === 0) {

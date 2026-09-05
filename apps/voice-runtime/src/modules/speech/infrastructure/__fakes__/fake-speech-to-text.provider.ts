@@ -12,6 +12,7 @@ export class FakeSpeechToTextSession implements SpeechToTextSession {
   private finalHandler: ((result: { transcript: string; confidence: number }) => void) | null =
     null;
   private speechStartedHandler: (() => void) | null = null;
+  private interimSpeechHandler: (() => void) | null = null;
   private errorHandler: ((error: Error) => void) | null = null;
 
   sendAudio(frame: Buffer): void {
@@ -24,6 +25,10 @@ export class FakeSpeechToTextSession implements SpeechToTextSession {
 
   onSpeechStarted(handler: () => void): void {
     this.speechStartedHandler = handler;
+  }
+
+  onInterimSpeech(handler: () => void): void {
+    this.interimSpeechHandler = handler;
   }
 
   onError(handler: (error: Error) => void): void {
@@ -39,9 +44,14 @@ export class FakeSpeechToTextSession implements SpeechToTextSession {
     this.finalHandler?.({ transcript, confidence });
   }
 
-  /** Test helper: simulate Deepgram's VAD detecting speech onset (barge-in signal). */
+  /** Test helper: simulate Deepgram's VAD detecting speech onset (barge-in SIGNAL, not yet confirmed). */
   emitSpeechStarted(): void {
     this.speechStartedHandler?.();
+  }
+
+  /** Test helper: simulate Deepgram delivering an interim result with real recognized text — the barge-in CONFIRMATION signal. */
+  emitInterimSpeech(): void {
+    this.interimSpeechHandler?.();
   }
 
   emitError(error: Error): void {

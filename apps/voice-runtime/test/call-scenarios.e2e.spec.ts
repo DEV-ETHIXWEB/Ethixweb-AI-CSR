@@ -54,10 +54,20 @@ describe("Voice Runtime local call simulator — scripted scenarios", () => {
     await orchestrator.onCallStart(params, sink);
     stt.sessions[0]?.emitFinalTranscript("hello", 0.9);
     await flush();
+    const turnSignal = orchestratorClient.turnCalls[0]?.signal;
+
+    // A bare SpeechStarted (raw VAD onset) alone is deliberately NOT
+    // enough to abort a turn any more — real interim speech confirms it
+    // (see CallSessionOrchestrator's own handleSpeechStarted comment).
     stt.sessions[0]?.emitSpeechStarted();
+    await flush();
+    expect(turnSignal?.aborted).toBe(false);
+
+    stt.sessions[0]?.emitInterimSpeech();
     await flush();
 
     expect(orchestratorClient.turnCalls).toHaveLength(1);
+    expect(turnSignal?.aborted).toBe(true);
     // Only the opening greeting was spoken — the aborted turn never
     // produced a response to speak.
     expect(tts.synthesizeCalls).toEqual(["Thanks for calling, how can I help?"]);

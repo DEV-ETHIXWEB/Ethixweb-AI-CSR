@@ -12,13 +12,33 @@ export interface SpeechToTextSession {
    * Fires once per FINALIZED utterance only — per docs/28 §B.2 ("Only send
    * finalized STT transcripts... There is no separate partial-transcript
    * endpoint; if your STT provider streams partials, buffer until
-   * finalization on your side"). Interim/partial results are consumed
-   * internally by the adapter for barge-in detection (onSpeechStarted) and
-   * never surfaced here.
+   * finalization on your side"). Interim/partial results with real text are
+   * surfaced separately via `onInterimSpeech`, for barge-in CONFIRMATION
+   * only — never as a transcript a caller-facing turn is built from.
    */
   onFinalTranscript(handler: (result: { transcript: string; confidence: number }) => void): void;
-  /** Fires on Deepgram's VAD detecting speech onset — the barge-in signal (docs/28 §B.3). Distinct from onFinalTranscript: this can fire many times before any utterance finalizes. */
+  /**
+   * Fires on Deepgram's VAD detecting speech onset — the raw barge-in
+   * SIGNAL (docs/28 §B.3). Deliberately NOT sufficient on its own to act
+   * on: this is pure voice-activity detection, fired the instant audio
+   * energy crosses a threshold, with no guarantee real speech — as
+   * opposed to a breath, a cough, background noise, or the caller's own
+   * TTS audio echoing back — follows. `onInterimSpeech` is the
+   * confirmation signal; see CallSessionOrchestrator's own comment on
+   * why the two are combined rather than acting on this alone.
+   */
   onSpeechStarted(handler: () => void): void;
+  /**
+   * Fires on the FIRST interim (non-final) STT result carrying actual
+   * recognized text after a `onSpeechStarted` event — i.e., real words
+   * being transcribed, not just VAD energy. FOUND LIVE: acting on
+   * `onSpeechStarted` alone killed an in-flight response on every single
+   * raw speech-detection blip, confirmed or not — a real call's own
+   * transcript showed only 2 of 12 turns ever completing, the rest
+   * aborted within 0.3-1.6s of starting. This event exists so a caller
+   * can be told apart from noise before their response gets cut off.
+   */
+  onInterimSpeech(handler: () => void): void;
   onError(handler: (error: Error) => void): void;
   close(): Promise<void>;
 }
