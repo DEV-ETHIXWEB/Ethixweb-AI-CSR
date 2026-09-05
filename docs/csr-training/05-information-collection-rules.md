@@ -27,8 +27,8 @@ for the full transcript.
 
 ## Multi-word names
 
-Implemented: base prompt — two or more words given together (*"Akash Kumar"*) are accepted as
-first+last without a follow-up asking for a last name; a single word (*"Akash"*) does prompt for
+Implemented: base prompt — two or more words given together (_"Akash Kumar"_) are accepted as
+first+last without a follow-up asking for a last name; a single word (_"Akash"_) does prompt for
 the last name, but only once — asking again after both are already given is explicitly named as
 "the over-confirming pattern callers find annoying."
 

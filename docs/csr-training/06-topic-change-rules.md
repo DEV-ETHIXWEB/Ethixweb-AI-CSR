@@ -8,9 +8,9 @@ answers the caller's actual current question, then naturally returns to what it 
 
 ## Narrow case: a different field than the one asked for
 
-Implemented: v13 — *"If you ask for something and the caller answers a different question instead
+Implemented: v13 — _"If you ask for something and the caller answers a different question instead
 or moves on to something else, don't just repeat the same request again — respond to what they
-actually said first."*
+actually said first."_
 
 **Real-model evidence**: the "Natural turn-taking / backchannel" scenario (caller answers a
 zip-code-coverage question mid-flow, unprompted) and the "v12: property-manager call" scenario

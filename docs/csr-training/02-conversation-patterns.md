@@ -3,8 +3,8 @@
 ## Greeting
 
 Implemented: `DEFAULT_BRAND_VOICE_PROMPT` (tenant layer) + base prompt v14's conditional
-self-introduction — *"If you were given a name in your instructions, introduce yourself by it in
-your opening greeting ... if you weren't given one, that's fine too — don't invent one."*
+self-introduction — _"If you were given a name in your instructions, introduce yourself by it in
+your opening greeting ... if you weren't given one, that's fine too — don't invent one."_
 
 Real-model evidence (`checkGreeting()` in `scripts/measure-conversation-quality.ts`): the greeting
 reliably introduces Grace by name when a tenant name is configured. **Known gap**: when the
@@ -16,26 +16,28 @@ reproduced across 5 runs; root cause is the missing business-name configuration,
 
 ## Acknowledging the actual problem, not a bare "Okay"
 
-Implemented: v12 — *"Once they've explained, paraphrase it back in your own words ('Got it,
+Implemented: v12 — _"Once they've explained, paraphrase it back in your own words ('Got it,
 so...', 'Just so I understand...', 'If I'm hearing you right...') to confirm you understood, rather
-than a bare 'Okay' every time."*
+than a bare 'Okay' every time."_
 
 Bad (the pattern this rule exists to prevent):
+
 > Caller: "My water heater's been making this awful banging noise for like three days now,
 > and this morning there was no hot water at all."
 > CSR: "Okay. What's your address?"
 
 Better (what v12 actually produces, real-model-verified in the "Natural turn-taking" and
 "v12: property-manager call" scenarios):
+
 > CSR: "Got it — so it's been banging for a few days and now you're out of hot water entirely.
 > That's worth getting looked at soon. What's the address?"
 
 ## Real distress gets one short human reaction, not a canned phrase or a long detour
 
-Implemented: base prompt — *"When a caller sounds upset, scared, or is describing active damage
+Implemented: base prompt — _"When a caller sounds upset, scared, or is describing active damage
 happening right now (water running, a strong smell, something overflowing), briefly acknowledge
 that like a person would before moving on to questions — one short human reaction, not a canned
-phrase, and not a long detour."*
+phrase, and not a long detour."_
 
 Real-model evidence (QA mission "urgency and emotion" scenario, active-flooding caller): the model
 opens with a brief acknowledgment + a genuinely useful piece of safety advice ("do you have a
@@ -48,9 +50,9 @@ priority" answer); flagged here as a real, if intermittent, risk rather than sil
 
 ## No stock enthusiasm openers
 
-Implemented: base prompt — explicitly names *"Absolutely!", "Certainly!", "Great question!"* as
-patterns to avoid, on the reasoning that *"a real CSR reacts to what was actually said, not with a
-canned burst of enthusiasm before every single response."*
+Implemented: base prompt — explicitly names _"Absolutely!", "Certainly!", "Great question!"_ as
+patterns to avoid, on the reasoning that _"a real CSR reacts to what was actually said, not with a
+canned burst of enthusiasm before every single response."_
 
 ## Vary phrasing; never repeat a confirmation twice in one response
 
@@ -68,7 +70,7 @@ fix (an explicit "don't do this" instruction) is cheap and low-risk.
 ## Known gaps
 
 - The dev environment's missing business-name configuration is a real, live risk to the greeting's
-  polish — this is a *data* gap (core-api has zero business records with real names in this
+  polish — this is a _data_ gap (core-api has zero business records with real names in this
   environment), not a prompt-layer bug, and belongs on the business-onboarding checklist
   (`docs/42-tenant-onboarding-runbook.md`), not in this prompt.
 - No dedicated automated check yet for "never repeats a confirmation twice in one response" as its

@@ -13,10 +13,10 @@ used the corrected value with zero reversion to the original.
 
 ## Spelling confirmation is conditional, not automatic
 
-Implemented: base prompt — *"Only spell a name back letter by letter when it's genuinely uncommon
+Implemented: base prompt — _"Only spell a name back letter by letter when it's genuinely uncommon
 or foreign-sounding, or when the transcript is flagged as low-confidence — an ordinary name like
 'John Miller' needs no spelling confirmation at all; asking for one anyway is exactly the
-over-confirming pattern callers already find annoying elsewhere, and asking twice is worse."*
+over-confirming pattern callers already find annoying elsewhere, and asking twice is worse."_
 
 This rule exists specifically because the opposite (always spell-confirming) is a documented
 real-world anti-pattern from a comparable CRM-integration finding referenced in this same prompt
@@ -24,8 +24,8 @@ file's own version history (docs/03 §5).
 
 ## Address confirmation is folded into the recap, not a separate step
 
-Implemented: base prompt — *"Always confirm the address back once, folded into the same breath as
-the rest of your recap, not as a separate follow-up question."*
+Implemented: base prompt — _"Always confirm the address back once, folded into the same breath as
+the rest of your recap, not as a separate follow-up question."_
 
 ## Low-confidence STT is a signal for the model, not the caller
 

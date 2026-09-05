@@ -54,15 +54,15 @@ rules.md`'s own note on why historical transcripts are behavioral evidence, neve
 
 ## File index
 
-| File | Covers |
-|---|---|
-| `01-csr-behavior-model.md` | The guiding principles: listen first, current-intent-first, memory-before-question |
-| `02-conversation-patterns.md` | Greeting, acknowledgment, paraphrasing, one-question-at-a-time |
-| `03-common-customer-scenarios.md` | Scenario-by-scenario: what the system does today, with evidence |
-| `04-objection-and-frustration-handling.md` | Frustration, emotion, "I already told you" |
-| `05-information-collection-rules.md` | Memory-before-question, ANI lookup, corrections, when to stop asking |
-| `06-topic-change-rules.md` | Current-intent-first, problem↔pricing↔problem, real-model evidence |
-| `07-correction-and-confirmation-rules.md` | Name/address corrections, spelling confirmation |
-| `08-pricing-and-availability-behavior.md` | Never-quote-a-price, estimates, hours, service area |
-| `09-emergency-and-escalation-behavior.md` | escalateEmergency, human transfer, honesty rules |
-| `10-csr-quality-rubric.md` | The scoring rubric and how to apply it with the real-model harness |
+| File                                       | Covers                                                                             |
+| ------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `01-csr-behavior-model.md`                 | The guiding principles: listen first, current-intent-first, memory-before-question |
+| `02-conversation-patterns.md`              | Greeting, acknowledgment, paraphrasing, one-question-at-a-time                     |
+| `03-common-customer-scenarios.md`          | Scenario-by-scenario: what the system does today, with evidence                    |
+| `04-objection-and-frustration-handling.md` | Frustration, emotion, "I already told you"                                         |
+| `05-information-collection-rules.md`       | Memory-before-question, ANI lookup, corrections, when to stop asking               |
+| `06-topic-change-rules.md`                 | Current-intent-first, problem↔pricing↔problem, real-model evidence                 |
+| `07-correction-and-confirmation-rules.md`  | Name/address corrections, spelling confirmation                                    |
+| `08-pricing-and-availability-behavior.md`  | Never-quote-a-price, estimates, hours, service area                                |
+| `09-emergency-and-escalation-behavior.md`  | escalateEmergency, human transfer, honesty rules                                   |
+| `10-csr-quality-rubric.md`                 | The scoring rubric and how to apply it with the real-model harness                 |

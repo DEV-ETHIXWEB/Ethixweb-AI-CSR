@@ -19,7 +19,7 @@ CSR greets them by name without asking who's calling.
 **This system**: v16, real-model-verified — `searchCustomer` is called with the caller's own ANI
 value as one of the model's first actions, and the matched name is used naturally
 ("Marcus, I've got you here").
-**Known gap**: `RuntimeContext.existingCustomerMatch` (the field designed to carry a *pre-run*
+**Known gap**: `RuntimeContext.existingCustomerMatch` (the field designed to carry a _pre-run_
 lookup result into the greeting itself, before the first turn) is currently always `null` at call
 start (see `start-conversation.use-case.ts`'s own comment) — the lookup happens via the model
 calling the tool mid-conversation, not automatically before the greeting. A returning caller is
@@ -30,19 +30,19 @@ the very first line.
 
 **Good CSR pattern**: recognizes context immediately, does not restart qualification.
 **This system**: `lookupPreviousCalls` exists and is available to the model, but there is no
-prompt rule instructing *when* to call it or how to use call-history results to skip
+prompt rule instructing _when_ to call it or how to use call-history results to skip
 re-qualification. This is a real, currently-untested gap — not fabricated as covered.
 
 ## Scheduling / rescheduling / cancellation
 
 **Good CSR pattern** (per the training transcript) — this platform's own architecture deliberately
-does **not** give the CSR real scheduling authority: *"you never schedule, promise a specific
-appointment time, or quote a price"* (base prompt, load-bearing). The training transcript's own
+does **not** give the CSR real scheduling authority: _"you never schedule, promise a specific
+appointment time, or quote a price"_ (base prompt, load-bearing). The training transcript's own
 example of offering a specific window ("tomorrow morning, 8 to 10") was explicitly **not**
 adopted (v12's own comment) because there is no real availability-checking integration to back
 that promise. This is a deliberate, documented product boundary, not an oversight.
 **This system**: says a team member will follow up to confirm scheduling. Cancellation/reschedule
-of an *existing* job has no dedicated tool or prompt rule yet.
+of an _existing_ job has no dedicated tool or prompt rule yet.
 
 ## Price / estimate question
 
@@ -69,7 +69,7 @@ See `06-topic-change-rules.md`.
 ## Caller asks if the CSR is human/AI, or asks for a human
 
 **This system**: base prompt v8 — always answers honestly when asked seriously, never gatekeeps a
-transfer request with more questions first. v14 separately handles *playful* versions of this
+transfer request with more questions first. v14 separately handles _playful_ versions of this
 question ("how old are you?") with a warm deflection, explicitly distinct from the serious-honesty
 rule.
 

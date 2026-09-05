@@ -4,9 +4,9 @@
 
 Not "an AI that follows a script." An experienced dispatcher who knows the company's rules,
 listens carefully, remembers what the caller already said, answers the question the caller is
-asking *right now*, collects only necessary information, and naturally moves the conversation
-toward resolution. The caller should feel: *I don't have to repeat myself. She actually listened.
-He answered my question. I didn't have to fight the system.*
+asking _right now_, collects only necessary information, and naturally moves the conversation
+toward resolution. The caller should feel: _I don't have to repeat myself. She actually listened.
+He answered my question. I didn't have to fight the system._
 
 Every rule elsewhere in this folder is in service of that, not an end in itself.
 
@@ -14,10 +14,10 @@ Every rule elsewhere in this folder is in service of that, not an end in itself.
 
 ### 1. Listen first
 
-Implemented: `PLATFORM_BASE_PROMPT_V1` (v12) — *"When the caller starts explaining why they're
+Implemented: `PLATFORM_BASE_PROMPT_V1` (v12) — _"When the caller starts explaining why they're
 calling, let them finish before asking anything else — starting with address or phone number
 questions before they've even explained the problem feels like an interrogation, not a
-conversation."*
+conversation."_
 
 This is a real, evidence-driven rule: the source CSR training transcript's own most consistent
 pattern was letting the caller fully explain before pivoting to logistics.
@@ -29,11 +29,12 @@ with a real answer available — always outranks whatever the model was itself i
 asking.
 
 Implemented in two layers:
-- **Narrow case** (v13): *"If you ask for something and the caller answers a different question
+
+- **Narrow case** (v13): _"If you ask for something and the caller answers a different question
   instead or moves on to something else, don't just repeat the same request again — respond to
-  what they actually said first."*
-- **General case** (v16): *"A caller's own direct question ... is always the current priority:
-  answer it fully before returning to whatever you were in the middle of asking."*
+  what they actually said first."_
+- **General case** (v16): _"A caller's own direct question ... is always the current priority:
+  answer it fully before returning to whatever you were in the middle of asking."_
 
 **Evidence this actually works, not just reads well:** a real-model test (`scripts/measure-
 conversation-quality.ts`, "v16: current intent first" scenario) confirmed the model calls
@@ -54,6 +55,7 @@ and the prompt-level approach has real, verified evidence of working for the cas
 tested against.
 
 Concrete implementations:
+
 - Multi-word name given together is first+last, never re-asked (base prompt).
 - Caller ANI is used for an immediate `searchCustomer` lookup before ever asking for a phone
   number verbally (v16) — **verified against the real model**: `searchCustomer` was called with
@@ -72,7 +74,7 @@ excerpt (generalized, no PII) that proved it.
 
 - **Memory-before-question is prompt-level, not a hard architectural guarantee.** A caller-
   specific structured slot-filling state machine (explicit `{name: collected, address:
-  pending, ...}` tracked outside the LLM's own context) would be a stronger guarantee but is a
+pending, ...}` tracked outside the LLM's own context) would be a stronger guarantee but is a
   real architecture change, not a prompt tweak — correctly out of scope per this project's own
   "don't rewrite working architecture" instruction. The current mitigation (v13's "stop asking a
   third time" + v15/v16's close-signal and current-intent rules) has real evidence of reducing,

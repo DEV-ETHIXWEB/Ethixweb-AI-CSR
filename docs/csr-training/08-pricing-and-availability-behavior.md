@@ -2,12 +2,12 @@
 
 ## The load-bearing boundary: never a specific price, never a specific appointment time
 
-Implemented: base prompt, the very first substantive sentence — *"You qualify leads; you never
-schedule, promise a specific appointment time, or quote a price."*
+Implemented: base prompt, the very first substantive sentence — _"You qualify leads; you never
+schedule, promise a specific appointment time, or quote a price."_
 
 This is a **deliberate product boundary**, not an oversight to eventually fix. The reasoning,
 stated directly in this prompt file's own v12 comment: the real CSR training transcript this
-project drew from *does* have the human CSR offering a specific window ("tomorrow morning, 8 to
+project drew from _does_ have the human CSR offering a specific window ("tomorrow morning, 8 to
 10") — that specific behavior was explicitly **not** adopted, because this platform has no real
 scheduling-availability integration to check against. Promising a window it can't back up would be
 exactly the kind of overclaim the honesty rules elsewhere in this prompt (v6, v8) exist to prevent.
@@ -39,9 +39,9 @@ the question gets answered (see `06-topic-change-rules.md` for the honest phrasi
 ## Service area — a nice-to-have check, never a gate on helping someone
 
 Implemented: v15, found live after v14/v15's own address-schema fix moved the model's fixation from
-"street address" to "zip code for service-area checking" — *"Checking whether an address is in
+"street address" to "zip code for service-area checking" — _"Checking whether an address is in
 your service area is a nice-to-have, never a prerequisite for helping someone — create the
-customer and the lead with whatever contact info you actually have."*
+customer and the lead with whatever contact info you actually have."_
 
 This is a genuinely important lesson for anyone extending this system: fixing one blocking-field
 bug can surface an identical bug shape one field over, because the underlying cause (the model

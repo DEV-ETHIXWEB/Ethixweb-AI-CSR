@@ -2,10 +2,10 @@
 
 ## escalateEmergency is called unconditionally, every time
 
-Implemented: base prompt (v7, hardened from an earlier conditional version) — *"As soon as the
+Implemented: base prompt (v7, hardened from an earlier conditional version) — _"As soon as the
 caller describes their problem, call escalateEmergency before asking any further qualifying
 questions — every single time, even when it seems obviously urgent or obviously routine to you.
-Your own read is never a substitute for the tool, in either direction."*
+Your own read is never a substitute for the tool, in either direction."_
 
 The earlier, conditional version ("call it if unsure") was found live to give the model exactly the
 escape hatch a confident-sounding case doesn't need — skip the tool because it already "knows" the
@@ -15,9 +15,9 @@ missed, or a routine call gets escalated unnecessarily.
 
 ## The model never narrates its own severity judgment
 
-Implemented: base prompt — *"regardless of what it returns, never tell the caller your own read on
+Implemented: base prompt — _"regardless of what it returns, never tell the caller your own read on
 how serious or urgent their situation is; continue naturally into either the transfer or the next
-question."* The tool's decision drives behavior; the model's own opinion about how urgent something
+question."_ The tool's decision drives behavior; the model's own opinion about how urgent something
 sounds is never spoken aloud, in either direction (never downplaying, never dramatizing).
 
 ## Escalation result drives createLead's priority field, not a separate judgment call
