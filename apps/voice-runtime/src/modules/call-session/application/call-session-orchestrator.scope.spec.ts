@@ -69,6 +69,23 @@ class TestCallSessionModule {}
  * running process.
  */
 describe("CallSessionOrchestrator DI scope", () => {
+  const originalSilenceTimeout = process.env["SILENCE_CHECK_IN_TIMEOUT_MS"];
+  beforeEach(() => {
+    // Every test here drives onCallStart (real or concurrent), which now
+    // arms a real silence-check-in timer after the greeting — none of
+    // these call onCallEnd, so left at the real 10s default that timer
+    // kept the process alive well past the test run finishing (same
+    // issue found and fixed in call-session-orchestrator.spec.ts).
+    process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = "5";
+  });
+  afterEach(() => {
+    if (originalSilenceTimeout === undefined) {
+      delete process.env["SILENCE_CHECK_IN_TIMEOUT_MS"];
+    } else {
+      process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = originalSilenceTimeout;
+    }
+  });
+
   it("moduleRef.resolve() returns a genuinely fresh instance per call, not the same shared singleton", async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [TestCallSessionModule],

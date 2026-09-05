@@ -19,6 +19,23 @@ import { buildSimulatedCall } from "./local-call-simulator";
  * with the class's unit specs.
  */
 describe("Voice Runtime local call simulator — scripted scenarios", () => {
+  const originalSilenceTimeout = process.env["SILENCE_CHECK_IN_TIMEOUT_MS"];
+  beforeEach(() => {
+    // Every scenario here drives onCallStart, which now arms a real
+    // silence-check-in timer after the greeting — none of these
+    // scenarios call onCallEnd, so left at the real default that timer
+    // kept the process alive for a real 10s after each test finished
+    // (same issue found and fixed in call-session-orchestrator.spec.ts).
+    process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = "5";
+  });
+  afterEach(() => {
+    if (originalSilenceTimeout === undefined) {
+      delete process.env["SILENCE_CHECK_IN_TIMEOUT_MS"];
+    } else {
+      process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = originalSilenceTimeout;
+    }
+  });
+
   it("SCENARIO: normal conversation — start, one turn, response spoken", async () => {
     const { orchestrator, orchestratorClient, stt, tts, sink, params } = buildSimulatedCall();
     orchestratorClient.turnResponses = [

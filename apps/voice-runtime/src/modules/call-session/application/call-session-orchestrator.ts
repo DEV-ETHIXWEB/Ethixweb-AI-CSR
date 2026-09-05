@@ -50,6 +50,55 @@ const TURN_RETRY_DELAY_MS = 500;
 const BARGE_IN_CONFIRMATION_TIMEOUT_MS = 500;
 
 /**
+ * How long Grace waits in COMPLETE silence — zero speech-detection
+ * activity of any kind, not even an unconfirmed VAD blip — after she
+ * finishes speaking before proactively checking in. Found live on a real
+ * ~21-minute call: several gaps of 33-89 seconds with no check-in at
+ * all, because no such mechanism existed anywhere in this codebase (an
+ * audit confirmed this directly — there was no prior "one-time vs
+ * repeating" behavior to preserve, contrary to an earlier assumption).
+ *
+ * Distinct in PURPOSE from `SPEECH_FINAL_FALLBACK_MS`
+ * (deepgram-stt.provider.ts): that one fires when the caller genuinely
+ * IS making sound but it never cleanly finalizes into a transcript (the
+ * "lots of noise, never resolves" case, already found and fixed
+ * separately); this one fires when there is no sound at all. They don't
+ * compete — any VAD activity (even an unconfirmed blip that never
+ * becomes real words) disarms THIS timer, on the reasoning that ANY
+ * detected audio proves the caller is still on the line, whether or not
+ * it ever resolves into text.
+ *
+ * INFERRED, not a measured constant — a real "let me think" pause is
+ * typically well under this; by the time TRUE silence (nothing at all)
+ * has run this long, it reads as dead air, not thinking time.
+ *
+ * Read from `process.env` at call time (raw, not the validated `Env`
+ * object — same convention `executeEmergencyTransfer` already uses in
+ * this same file) rather than a plain constant, specifically so tests
+ * can override it to a tiny value: a real 10s timer left armed by a test
+ * that doesn't call `onCallEnd` (most of the 26 pre-existing tests in
+ * this file don't, since they're testing something else entirely) kept
+ * the whole process alive for the full 10s after the test run finished
+ * — found live running this file's own suite, not a hypothetical.
+ */
+const DEFAULT_SILENCE_CHECK_IN_TIMEOUT_MS = 10_000;
+function silenceCheckInTimeoutMs(): number {
+  const raw = process.env["SILENCE_CHECK_IN_TIMEOUT_MS"];
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SILENCE_CHECK_IN_TIMEOUT_MS;
+}
+
+/**
+ * Deliberately warm, not alarmed — this fires after genuine silence, not
+ * necessarily a problem, so it shouldn't sound like one. Spoken AT MOST
+ * ONCE per silence episode (see `speakSilenceCheckIn`'s own comment) —
+ * never a repeating nag, by construction: its own `speak()` call does
+ * NOT re-arm the timer, unlike every other caller of `speak()` in this
+ * class.
+ */
+const SILENCE_CHECK_IN_PHRASE = "Take your time — I'm still here.";
+
+/**
  * The one class that actually drives a phone call end to end — receives
  * Twilio Media Stream lifecycle events + STT results from the WebSocket
  * gateway (interfaces layer, which owns nothing but wiring this class to a
@@ -122,6 +171,8 @@ export class CallSessionOrchestrator {
    * when confirmation never arrives.
    */
   private pendingBargeInTimer: ReturnType<typeof setTimeout> | null = null;
+  /** See `DEFAULT_SILENCE_CHECK_IN_TIMEOUT_MS`'s own comment for the full design. */
+  private silenceCheckInTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     @Inject(ORCHESTRATOR_CLIENT) private readonly orchestrator: OrchestratorClientPort,
@@ -235,7 +286,7 @@ export class CallSessionOrchestrator {
         });
       });
     });
-    this.sttSession.onSpeechStarted(() => this.handleSpeechStarted());
+    this.sttSession.onSpeechStarted(() => this.handleSpeechStarted(sink));
     this.sttSession.onInterimSpeech(() => this.handleInterimSpeech(params, sink));
     this.sttSession.onError((error) => {
       // Found live, not hypothetical: this used to only log. `ws`'s
@@ -277,6 +328,7 @@ export class CallSessionOrchestrator {
     // every later turn, not a special case for this one.
     if (greeting) {
       await this.speak(greeting, sink);
+      this.armSilenceCheckIn(sink);
     } else {
       // Only reachable against an older voice-orchestrator deployment
       // that predates this fix (rolling deploy, or a stale build) — a
@@ -339,6 +391,14 @@ export class CallSessionOrchestrator {
     if (!this.conversationId || this.ended) {
       return;
     }
+    // A real turn is starting — disarm (not re-arm) the silence check-in
+    // for the duration of turn processing. handleSpeechStarted/
+    // handleInterimSpeech RESET it (arm a fresh window) while the caller
+    // is still just making sound; this is the one place it needs to stop
+    // ticking entirely, since system latency (the HTTP round-trip, tool
+    // calls) is not caller silence — it re-arms again, correctly, once
+    // Grace's response has actually been spoken (below).
+    this.disarmSilenceCheckIn();
     // Defense-in-depth, not a behavior change in the working case: today
     // this is always already null here, because Deepgram's SpeechStarted
     // (which drives handleBargeIn) fires before the speech_final event
@@ -499,6 +559,12 @@ export class CallSessionOrchestrator {
       // transfer itself fails, the call continues normally rather than
       // dropping silently.
       await this.executeEmergencyTransfer(params, log, turnResult.escalation.transferDestination);
+    } else {
+      // Grace just finished speaking her real response and isn't being
+      // handed off — this IS the "now waiting on the caller" checkpoint.
+      // Deliberately NOT armed in the transfer branch above: mid-transfer
+      // isn't a moment to proactively check in on.
+      this.armSilenceCheckIn(sink);
     }
   }
 
@@ -532,7 +598,14 @@ export class CallSessionOrchestrator {
    * without waiting for full finalization), not the only thing
    * preventing a stale response from lingering.
    */
-  private handleSpeechStarted(): void {
+  private handleSpeechStarted(sink: MediaStreamSink): void {
+    // ANY detected audio — even an unconfirmed VAD blip that never goes
+    // on to become real words — proves the caller is still on the line.
+    // RESETS (not just disarms) the silence check-in: a single blip that
+    // never resolves into anything should still not permanently kill the
+    // check-in for the rest of the call — the window just starts counting
+    // fresh from this moment instead.
+    this.armSilenceCheckIn(sink);
     if (this.pendingBargeInTimer) {
       clearTimeout(this.pendingBargeInTimer);
     }
@@ -543,12 +616,67 @@ export class CallSessionOrchestrator {
 
   /** Confirms a pending SpeechStarted as real speech, per handleSpeechStarted's own comment — fires the actual barge-in now instead of waiting out the rest of the confirmation window. A no-op if nothing is currently pending (no SpeechStarted preceded this, or it already timed out). */
   private handleInterimSpeech(params: CallSessionParams, sink: MediaStreamSink): void {
+    this.armSilenceCheckIn(sink);
     if (!this.pendingBargeInTimer) {
       return;
     }
     clearTimeout(this.pendingBargeInTimer);
     this.pendingBargeInTimer = null;
     this.handleBargeIn(params, sink);
+  }
+
+  /**
+   * Arms a bounded wait for the caller to make ANY sound after Grace has
+   * just finished speaking (see `DEFAULT_SILENCE_CHECK_IN_TIMEOUT_MS`'s own
+   * comment). Called explicitly at each real "Grace just stopped
+   * talking, now waiting on the caller" checkpoint — never baked into
+   * `speak()` itself, so capacity-wait/apology utterances (which aren't
+   * genuinely "waiting for the caller's next turn") don't arm it, and
+   * `speakSilenceCheckIn`'s own check-in utterance doesn't re-arm it
+   * either, by simply never calling this method.
+   */
+  private armSilenceCheckIn(sink: MediaStreamSink): void {
+    this.disarmSilenceCheckIn();
+    this.silenceCheckInTimer = setTimeout(() => {
+      this.silenceCheckInTimer = null;
+      this.speakSilenceCheckIn(sink);
+    }, silenceCheckInTimeoutMs());
+  }
+
+  /** Cancels any pending silence check-in without speaking one — real caller activity, a new turn starting, or the call ending all mean there's nothing to check in about. */
+  private disarmSilenceCheckIn(): void {
+    if (this.silenceCheckInTimer) {
+      clearTimeout(this.silenceCheckInTimer);
+      this.silenceCheckInTimer = null;
+    }
+  }
+
+  /**
+   * Fires AT MOST ONCE per silence episode — deliberately does not call
+   * `armSilenceCheckIn` again afterward, unlike a normal turn response,
+   * so a caller who stays silent even after this never hears it a
+   * second time; the call simply keeps waiting (the caller speaking,
+   * hanging up, or the call reaching its own natural end are all still
+   * live outcomes, just not another reminder). Re-arms normally the next
+   * time Grace speaks for a REAL reason. Defensively no-ops if the call
+   * already ended, TTS is already playing, or a turn is actually in
+   * flight — belt-and-suspenders against a race this class's own
+   * disarm-on-activity wiring should already prevent.
+   */
+  private speakSilenceCheckIn(sink: MediaStreamSink): void {
+    if (this.ended || this.ttsPlaying || this.activeTurnAbort) {
+      return;
+    }
+    this.logger.info(
+      "silence check-in: no caller activity detected for the full timeout — speaking a one-time check-in",
+      { conversationId: this.conversationId, timeoutMs: silenceCheckInTimeoutMs() },
+    );
+    this.speak(SILENCE_CHECK_IN_PHRASE, sink).catch((error: unknown) => {
+      this.logger.warn("silence check-in TTS failed", {
+        conversationId: this.conversationId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 
   /**
@@ -665,6 +793,7 @@ export class CallSessionOrchestrator {
       clearTimeout(this.pendingBargeInTimer);
       this.pendingBargeInTimer = null;
     }
+    this.disarmSilenceCheckIn();
     await this.sttSession?.close().catch(() => undefined);
 
     if (!this.conversationId) {
@@ -790,6 +919,10 @@ export class CallSessionOrchestrator {
   }
 
   private async speakApologyAndClose(sink: MediaStreamSink): Promise<void> {
+    // A prior turn's silence check-in could still be armed (e.g. an STT
+    // session error arriving after a normal turn already armed it) — no
+    // point leaving it pending once the call is ending regardless.
+    this.disarmSilenceCheckIn();
     try {
       await this.speak(
         "We're sorry, we're unable to take your call right now. Please try again shortly.",

@@ -40,6 +40,17 @@ function buildOrchestratorUnderTest() {
 
 describe("CallSessionOrchestrator", () => {
   const originalEnv = { ...process.env };
+  beforeEach(() => {
+    // Tiny by default for every test in this file — most of them go
+    // through onCallStart (which now arms a real silence-check-in timer
+    // after the greeting) without ever calling onCallEnd, since they're
+    // testing something else entirely. Left at the real 10s default,
+    // that dangling timer kept the whole process alive for the full 10s
+    // after each test run finished (found running this exact suite).
+    // The "silence check-in" describe block below overrides this to a
+    // real, meaningful value for the tests that actually exercise it.
+    process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = "5";
+  });
   afterEach(() => {
     process.env = { ...originalEnv };
   });
@@ -772,6 +783,255 @@ describe("CallSessionOrchestrator", () => {
         expect(tts.synthesizeCalls).toContain("We're licensed and insured.");
         expect(orchestratorClient.turnCalls).toHaveLength(2);
         expect(tts.synthesizeCalls).toContain("Thanks for waiting, go ahead.");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+  });
+
+  /**
+   * Found live on a real ~21-minute call: several gaps of 33-89 seconds
+   * with no check-in at all. An audit confirmed there was no such
+   * mechanism ANYWHERE in this codebase to begin with — no prior
+   * "one-time vs repeating" behavior existed to preserve. These tests
+   * exercise the new one, added specifically to close that gap without
+   * ever nagging, interrupting active speech, or firing during system
+   * processing.
+   */
+  describe("silence check-in (SILENCE_CHECK_IN_TIMEOUT_MS)", () => {
+    beforeEach(() => {
+      process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = "1000";
+    });
+
+    it("fires a one-time check-in after the caller has been completely silent for the full timeout following the greeting", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+
+        await orchestrator.onCallStart(baseParams(), sink);
+        expect(tts.synthesizeCalls).toEqual(["Thanks for calling, how can I help?"]);
+
+        await jest.advanceTimersByTimeAsync(1000);
+
+        expect(tts.synthesizeCalls).toEqual([
+          "Thanks for calling, how can I help?",
+          "Take your time — I'm still here.",
+        ]);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("does NOT fire when the caller responds before the timeout", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+        orchestratorClient.turnResponses = [
+          {
+            conversationId: "conv-1",
+            responseText: "Got it, what's the issue?",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+        ];
+
+        await orchestrator.onCallStart(baseParams(), sink);
+        await jest.advanceTimersByTimeAsync(500); // well within the 1000ms window
+
+        const session = stt.sessions[0]!;
+        session.emitFinalTranscript("my sink is leaking", 0.9);
+        await jest.advanceTimersByTimeAsync(0);
+
+        // The check-in that would have fired from the ORIGINAL window
+        // (which ends at 1000ms) must not have snuck through — the
+        // response arriving at 500ms disarmed it. A check-in DOES
+        // correctly re-arm for the caller's real response having been
+        // spoken (a genuinely new, later episode — covered by its own
+        // test below), so this only asserts what matters here: no
+        // check-in fired from the original pending window specifically.
+        expect(tts.synthesizeCalls).toEqual([
+          "Thanks for calling, how can I help?",
+          "Got it, what's the issue?",
+        ]);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("does NOT fire twice — after the check-in fires, continued silence does not trigger a second one", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+
+        await orchestrator.onCallStart(baseParams(), sink);
+        await jest.advanceTimersByTimeAsync(1000);
+        expect(
+          tts.synthesizeCalls.filter((t) => t === "Take your time — I'm still here.").length,
+        ).toBe(1);
+
+        await jest.advanceTimersByTimeAsync(5000); // stay silent much longer
+        expect(
+          tts.synthesizeCalls.filter((t) => t === "Take your time — I'm still here.").length,
+        ).toBe(1); // still just the one
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("does NOT fire while a turn is actively processing, even well past the timeout — system latency is not caller silence", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+        orchestratorClient.hangTurnUntilAborted = true;
+
+        await orchestrator.onCallStart(baseParams(), sink);
+        const session = stt.sessions[0]!;
+        session.emitFinalTranscript("my sink is leaking", 0.9);
+        await jest.advanceTimersByTimeAsync(0);
+
+        await jest.advanceTimersByTimeAsync(5000); // the turn is still hanging
+        expect(tts.synthesizeCalls).not.toContain("Take your time — I'm still here.");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("does NOT fire during an emergency call transfer", async () => {
+      jest.useFakeTimers();
+      try {
+        process.env["EMERGENCY_TRANSFER_NUMBER"] = "+15559990000";
+        const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+        orchestratorClient.turnResponses = [
+          {
+            conversationId: "conv-1",
+            responseText: "Connecting you now, please stay on the line.",
+            toolCallsExecuted: ["escalateEmergency"],
+            interrupted: false,
+            state: "emergency_transfer",
+            escalation: {
+              severity: "critical",
+              action: "forward_call",
+              transferDestination: null,
+            },
+          },
+        ];
+
+        await orchestrator.onCallStart(baseParams({ callSid: "CA-emergency" }), sink);
+        const session = stt.sessions[0]!;
+        session.emitFinalTranscript("burst pipe flooding my basement", 0.9);
+        await jest.advanceTimersByTimeAsync(0);
+
+        await jest.advanceTimersByTimeAsync(5000);
+        expect(tts.synthesizeCalls).not.toContain("Take your time — I'm still here.");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("an unconfirmed SpeechStarted blip — never confirmed by real words — still resets the timer, since ANY detected audio proves the caller is present", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, stt, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+
+        await orchestrator.onCallStart(baseParams(), sink);
+        const session = stt.sessions[0]!;
+
+        // A blip at t=800ms (before the 1000ms window would have fired) —
+        // never confirmed by emitInterimSpeech, so it's noise, not a real
+        // barge-in — but it should still reset the silence window.
+        await jest.advanceTimersByTimeAsync(800);
+        session.emitSpeechStarted();
+        await jest.advanceTimersByTimeAsync(0);
+
+        // Only 700ms further (1500ms total) — under a FRESH 1000ms window
+        // from the blip, so no check-in yet.
+        await jest.advanceTimersByTimeAsync(700);
+        expect(tts.synthesizeCalls).not.toContain("Take your time — I'm still here.");
+
+        // Now cross the full fresh window from the blip.
+        await jest.advanceTimersByTimeAsync(400);
+        expect(tts.synthesizeCalls).toContain("Take your time — I'm still here.");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("onCallEnd cancels a pending check-in so it never fires after the call has ended", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+
+        await orchestrator.onCallStart(baseParams(), sink);
+        await orchestrator.onCallEnd(baseParams(), "caller_hangup");
+
+        await jest.advanceTimersByTimeAsync(5000);
+        expect(tts.synthesizeCalls).not.toContain("Take your time — I'm still here.");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("re-arms normally for a later, genuinely new silence episode after the caller resumes and Grace responds again", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+        orchestratorClient.turnResponses = [
+          {
+            conversationId: "conv-1",
+            responseText: "Got it, what's the issue?",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+        ];
+
+        await orchestrator.onCallStart(baseParams(), sink);
+        const session = stt.sessions[0]!;
+        session.emitFinalTranscript("my sink is leaking", 0.9);
+        await jest.advanceTimersByTimeAsync(0);
+        expect(tts.synthesizeCalls).toContain("Got it, what's the issue?");
+
+        // A genuinely NEW silence episode after Grace's real response —
+        // this is a DIFFERENT episode than any prior one, so it should
+        // still get its own check-in, not be permanently suppressed by
+        // the earlier one having already fired once.
+        await jest.advanceTimersByTimeAsync(1000);
+        expect(tts.synthesizeCalls).toContain("Take your time — I'm still here.");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("two separate call instances don't share or interfere with each other's silence timers (session isolation)", async () => {
+      jest.useFakeTimers();
+      try {
+        const first = buildOrchestratorUnderTest();
+        const second = buildOrchestratorUnderTest();
+        const sinkA = new FakeMediaStreamSink();
+        const sinkB = new FakeMediaStreamSink();
+
+        await first.orchestrator.onCallStart(baseParams({ callId: "call-a" }), sinkA);
+        await jest.advanceTimersByTimeAsync(500);
+        await second.orchestrator.onCallStart(baseParams({ callId: "call-b" }), sinkB);
+
+        // Call A's silence timer started 500ms before call B's — at
+        // t=1000ms (500ms into B's own window), A should have already
+        // checked in and B should not have yet.
+        await jest.advanceTimersByTimeAsync(500);
+        expect(first.tts.synthesizeCalls).toContain("Take your time — I'm still here.");
+        expect(second.tts.synthesizeCalls).not.toContain("Take your time — I'm still here.");
+
+        await jest.advanceTimersByTimeAsync(500);
+        expect(second.tts.synthesizeCalls).toContain("Take your time — I'm still here.");
       } finally {
         jest.useRealTimers();
       }
