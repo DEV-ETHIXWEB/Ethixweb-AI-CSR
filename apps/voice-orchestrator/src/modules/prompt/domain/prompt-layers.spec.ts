@@ -568,4 +568,54 @@ describe("assembleLayeredPrompt", () => {
       "don't keep collecting address, zip code, or anything",
     );
   });
+
+  /**
+   * v20: the "sound like a human CSR" delivery pass. The bracket-tag
+   * vocabulary here MUST stay in sync with voice-runtime's own
+   * emotional-delivery.ts EMOTION_PROFILES keys — a word the prompt
+   * names that the parser doesn't recognize gets silently stripped with
+   * no delivery effect (safe, but pointless); this test is the one place
+   * that would catch the two drifting apart.
+   */
+  it("teaches the model the exact supported [bracket] emotional-delivery cue vocabulary, and that cues are never spoken aloud", () => {
+    const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+    expect(prompt).toContain("instructions for the phone system's voice engine only");
+    expect(prompt).toContain("never words to say out loud");
+    for (const cue of [
+      "sincere",
+      "warmly",
+      "softly",
+      "serious",
+      "curious",
+      "thoughtful",
+      "confident",
+      "frustrated",
+      "tired",
+      "gentle",
+      "reassuring",
+      "concerned",
+      "relieved",
+      "building",
+      "slower",
+      "calm",
+      "sighs",
+      "pause",
+    ]) {
+      expect(prompt).toContain(cue);
+    }
+  });
+
+  it("tells the model to use delivery cues sparingly, matched to context, never on every sentence", () => {
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("most sentences need no cue at all");
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "a cue on every sentence reads as fake",
+    );
+  });
+
+  it("instructs one-idea-per-turn response shape: acknowledge, respond, at most one next step — not a stacked list of questions or an over-explanation", () => {
+    const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+    expect(prompt).toContain("keep each response to one real idea");
+    expect(prompt).toContain("never stack multiple questions in");
+    expect(prompt).toContain("detail nobody asked for");
+  });
 });

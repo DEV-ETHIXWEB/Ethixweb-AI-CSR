@@ -38,6 +38,11 @@ function buildOrchestratorUnderTest() {
   return { orchestrator, orchestratorClient, stt, tts, callTransfer };
 }
 
+/** Same as `buildOrchestratorUnderTest`, plus its own fresh `FakeMediaStreamSink` — a convenience for tests (emotional-delivery's [pause] silence-buffer assertions) that need to inspect the RAW audio the sink received, not just which text was synthesized. */
+function buildOrchestratorWithSink() {
+  return { ...buildOrchestratorUnderTest(), sink: new FakeMediaStreamSink() };
+}
+
 describe("CallSessionOrchestrator", () => {
   const originalEnv = { ...process.env };
   beforeEach(() => {
@@ -357,6 +362,255 @@ describe("CallSessionOrchestrator", () => {
 
       expect(orchestratorClient.turnCalls).toHaveLength(2);
       expect(firstTurnSignal?.aborted).toBe(true);
+    });
+  });
+
+  describe("backchannel filtering (mission: backchannels must not trigger barge-in)", () => {
+    it("MISSION EXAMPLE: a pure backchannel ('uh huh') while a turn is in flight (mechanism 1) does NOT abort it", async () => {
+      const { orchestrator, orchestratorClient, stt } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      orchestratorClient.hangTurnUntilAborted = true;
+
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+      session.emitFinalTranscript("hello", 0.9);
+      await flushMicrotasks();
+      const turnSignal = orchestratorClient.turnCalls[0]?.signal;
+
+      session.emitSpeechStarted();
+      session.emitInterimSpeech("uh huh");
+      await flushMicrotasks();
+
+      expect(turnSignal?.aborted).toBe(false);
+    });
+
+    it("MISSION EXAMPLE: a pure backchannel ('okay') while TTS is playing (mechanism 2) does NOT clear audio or call /interrupt", async () => {
+      const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      tts.chunkDelayMs = 20;
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "Let me look that up for you, one moment please.",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+      session.emitFinalTranscript("hello", 0.9);
+      await new Promise((r) => setTimeout(r, 5));
+
+      session.emitSpeechStarted();
+      session.emitInterimSpeech("okay");
+      await flushMicrotasks();
+
+      expect(orchestratorClient.interruptCalls).toHaveLength(0);
+      expect(sink.clearCount).toBe(0);
+    });
+
+    it("MISSION EXAMPLE: 'Yes, but...' — real speech that merely STARTS with an ack word — interrupts immediately, same as any other real speech", async () => {
+      const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      tts.chunkDelayMs = 20;
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "Let me look that up for you, one moment please.",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+      session.emitFinalTranscript("hello", 0.9);
+      await new Promise((r) => setTimeout(r, 5));
+
+      session.emitSpeechStarted();
+      session.emitInterimSpeech("Yes, but that's not what I meant");
+      await flushMicrotasks();
+
+      expect(orchestratorClient.interruptCalls).toHaveLength(1);
+      expect(sink.clearCount).toBeGreaterThanOrEqual(1);
+    });
+
+    it("a backchannel followed by real speech WITHIN the same confirmation window still interrupts, on the later (non-backchannel) interim update", async () => {
+      const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      tts.chunkDelayMs = 20;
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "Let me look that up for you, one moment please.",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+      session.emitFinalTranscript("hello", 0.9);
+      await new Promise((r) => setTimeout(r, 5));
+
+      session.emitSpeechStarted();
+      session.emitInterimSpeech("okay"); // suppressed — pure backchannel
+      await flushMicrotasks();
+      expect(orchestratorClient.interruptCalls).toHaveLength(0);
+
+      // Same utterance keeps growing, still within the 500ms confirmation
+      // window (BARGE_IN_CONFIRMATION_TIMEOUT_MS) — Deepgram delivers a
+      // fuller interim result for the SAME speech activity, no new
+      // SpeechStarted needed.
+      session.emitInterimSpeech("okay wait actually hold on");
+      await flushMicrotasks();
+
+      expect(orchestratorClient.interruptCalls).toHaveLength(1);
+    });
+
+    it("a backchannel while Grace ISN'T speaking and no turn is in flight behaves exactly as before — no special-casing when there's nothing to protect", async () => {
+      const { orchestrator, stt, tts } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+      // Greeting has already fully finished — nothing is playing, no turn
+      // is in flight.
+      await flushMicrotasks();
+
+      session.emitSpeechStarted();
+      session.emitInterimSpeech("okay");
+      await flushMicrotasks();
+
+      // Harmless no-op either way (handleBargeIn has nothing to act on) —
+      // this just proves the backchannel gate didn't change that.
+      expect(tts.synthesizeCalls).toEqual(["Thanks for calling, how can I help?"]);
+    });
+  });
+
+  describe("emotional delivery (speak() strips [bracket] cues and resolves ElevenLabs voice_settings)", () => {
+    it("MISSION EXAMPLE: a turn response with a leading emotional cue is spoken WITHOUT the bracket text, using a non-default voice profile", async () => {
+      const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "[sincere, warm] I'm sorry you're dealing with that.",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+      await orchestrator.onCallStart(baseParams(), sink);
+      stt.sessions[0]!.emitFinalTranscript("my sink is leaking everywhere", 0.9);
+      await flushMicrotasks();
+
+      expect(tts.synthesizeCalls).toContain("I'm sorry you're dealing with that.");
+      expect(tts.synthesizeCalls.join(" ")).not.toMatch(/[[\]]/);
+      const deliveredSettings =
+        tts.voiceSettingsCalls[tts.synthesizeCalls.indexOf("I'm sorry you're dealing with that.")]!;
+      expect(deliveredSettings.stability).toBeLessThan(0.5);
+    });
+
+    it("MISSION EXAMPLE: [pause] splits a response into two spoken segments with an explicit silence gap injected between them", async () => {
+      const { orchestrator, orchestratorClient, stt, tts, sink } = buildOrchestratorWithSink();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "Okay, so what we can do is,[pause]let's figure it out.",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+      await orchestrator.onCallStart(baseParams(), sink);
+      stt.sessions[0]!.emitFinalTranscript("what can you do about it", 0.9);
+      await flushMicrotasks();
+
+      expect(tts.synthesizeCalls).toContain("Okay, so what we can do is,");
+      expect(tts.synthesizeCalls).toContain("let's figure it out.");
+      // A silence buffer (mu-law 0xFF bytes) was sent to the sink between
+      // the two synthesize() calls — deterministic, not left to the TTS
+      // vendor to interpret the pause on its own.
+      const silenceFrame = sink.audioSent.find(
+        (buf) => buf.length > 0 && buf.every((byte) => byte === 0xff),
+      );
+      expect(silenceFrame).toBeDefined();
+    });
+
+    it("an unsupported/malformed tag the model might emit despite the prompt is stripped and never reaches TTS as literal text", async () => {
+      const { orchestrator, orchestratorClient, stt, tts, sink } = buildOrchestratorWithSink();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "[excitedly] Great news [unclosed we found your account.",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+      await orchestrator.onCallStart(baseParams(), sink);
+      stt.sessions[0]!.emitFinalTranscript("did you find my account", 0.9);
+      await flushMicrotasks();
+
+      for (const spoken of tts.synthesizeCalls) {
+        expect(spoken).not.toMatch(/[[\]]/);
+      }
+    });
+
+    it("plain text with no cues at all is spoken with the exact default voice settings — no behavior change for the common, untagged case", async () => {
+      const { orchestrator, orchestratorClient, stt, tts, sink } = buildOrchestratorWithSink();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "Got it, what's the issue?",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+      await orchestrator.onCallStart(baseParams(), sink);
+      stt.sessions[0]!.emitFinalTranscript("hi", 0.9);
+      await flushMicrotasks();
+
+      const index = tts.synthesizeCalls.indexOf("Got it, what's the issue?");
+      expect(index).toBeGreaterThanOrEqual(0);
+      expect(tts.voiceSettingsCalls[index]).toEqual({
+        stability: 0.5,
+        similarityBoost: 0.75,
+        style: 0,
+        speed: 1,
+      });
+    });
+
+    it("a barge-in landing DURING an injected [pause] silence gap still stops Grace immediately — ttsPlaying stays true across the gap", async () => {
+      const { orchestrator, orchestratorClient, stt, tts, sink } = buildOrchestratorWithSink();
+      tts.chunkDelayMs = 30;
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "First part.[pause]Second part that should never be heard.",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+      await orchestrator.onCallStart(baseParams(), sink);
+      stt.sessions[0]!.emitFinalTranscript("hello", 0.9);
+      // Let the first segment finish and the pause gap begin, but not
+      // long enough for the second segment's synthesize() call to start.
+      await new Promise((r) => setTimeout(r, 20));
+
+      stt.sessions[0]!.emitSpeechStarted();
+      stt.sessions[0]!.emitInterimSpeech("wait, hold on");
+      await flushMicrotasks();
+      await new Promise((r) => setTimeout(r, 100));
+
+      expect(tts.synthesizeCalls).not.toContain("Second part that should never be heard.");
     });
   });
 
@@ -816,7 +1070,7 @@ describe("CallSessionOrchestrator", () => {
 
         expect(tts.synthesizeCalls).toEqual([
           "Thanks for calling, how can I help?",
-          "Take your time — I'm still here.",
+          "Take your time. I'm still here.",
         ]);
       } finally {
         jest.useRealTimers();
@@ -870,12 +1124,12 @@ describe("CallSessionOrchestrator", () => {
         await orchestrator.onCallStart(baseParams(), sink);
         await jest.advanceTimersByTimeAsync(1000);
         expect(
-          tts.synthesizeCalls.filter((t) => t === "Take your time — I'm still here.").length,
+          tts.synthesizeCalls.filter((t) => t === "Take your time. I'm still here.").length,
         ).toBe(1);
 
         await jest.advanceTimersByTimeAsync(5000); // stay silent much longer
         expect(
-          tts.synthesizeCalls.filter((t) => t === "Take your time — I'm still here.").length,
+          tts.synthesizeCalls.filter((t) => t === "Take your time. I'm still here.").length,
         ).toBe(1); // still just the one
       } finally {
         jest.useRealTimers();
@@ -895,7 +1149,7 @@ describe("CallSessionOrchestrator", () => {
         await jest.advanceTimersByTimeAsync(0);
 
         await jest.advanceTimersByTimeAsync(5000); // the turn is still hanging
-        expect(tts.synthesizeCalls).not.toContain("Take your time — I'm still here.");
+        expect(tts.synthesizeCalls).not.toContain("Take your time. I'm still here.");
       } finally {
         jest.useRealTimers();
       }
@@ -928,7 +1182,7 @@ describe("CallSessionOrchestrator", () => {
         await jest.advanceTimersByTimeAsync(0);
 
         await jest.advanceTimersByTimeAsync(5000);
-        expect(tts.synthesizeCalls).not.toContain("Take your time — I'm still here.");
+        expect(tts.synthesizeCalls).not.toContain("Take your time. I'm still here.");
       } finally {
         jest.useRealTimers();
       }
@@ -966,7 +1220,7 @@ describe("CallSessionOrchestrator", () => {
         // The check-in still fires at the ORIGINAL 1000ms mark, not a
         // fresh window from the blip.
         await jest.advanceTimersByTimeAsync(200);
-        expect(tts.synthesizeCalls).toContain("Take your time — I'm still here.");
+        expect(tts.synthesizeCalls).toContain("Take your time. I'm still here.");
       } finally {
         jest.useRealTimers();
       }
@@ -990,7 +1244,7 @@ describe("CallSessionOrchestrator", () => {
         }
         await jest.advanceTimersByTimeAsync(100); // crosses the original 1000ms mark
 
-        expect(tts.synthesizeCalls).toContain("Take your time — I'm still here.");
+        expect(tts.synthesizeCalls).toContain("Take your time. I'm still here.");
       } finally {
         jest.useRealTimers();
       }
@@ -1013,11 +1267,11 @@ describe("CallSessionOrchestrator", () => {
         // Under a FRESH 1000ms window from the confirmed speech — no
         // check-in yet at the original schedule's mark.
         await jest.advanceTimersByTimeAsync(200);
-        expect(tts.synthesizeCalls).not.toContain("Take your time — I'm still here.");
+        expect(tts.synthesizeCalls).not.toContain("Take your time. I'm still here.");
 
         // ...but it does fire once the fresh window elapses.
         await jest.advanceTimersByTimeAsync(800);
-        expect(tts.synthesizeCalls).toContain("Take your time — I'm still here.");
+        expect(tts.synthesizeCalls).toContain("Take your time. I'm still here.");
       } finally {
         jest.useRealTimers();
       }
@@ -1033,7 +1287,7 @@ describe("CallSessionOrchestrator", () => {
         await orchestrator.onCallEnd(baseParams(), "caller_hangup");
 
         await jest.advanceTimersByTimeAsync(5000);
-        expect(tts.synthesizeCalls).not.toContain("Take your time — I'm still here.");
+        expect(tts.synthesizeCalls).not.toContain("Take your time. I'm still here.");
       } finally {
         jest.useRealTimers();
       }
@@ -1065,7 +1319,7 @@ describe("CallSessionOrchestrator", () => {
         // still get its own check-in, not be permanently suppressed by
         // the earlier one having already fired once.
         await jest.advanceTimersByTimeAsync(1000);
-        expect(tts.synthesizeCalls).toContain("Take your time — I'm still here.");
+        expect(tts.synthesizeCalls).toContain("Take your time. I'm still here.");
       } finally {
         jest.useRealTimers();
       }
@@ -1087,11 +1341,11 @@ describe("CallSessionOrchestrator", () => {
         // t=1000ms (500ms into B's own window), A should have already
         // checked in and B should not have yet.
         await jest.advanceTimersByTimeAsync(500);
-        expect(first.tts.synthesizeCalls).toContain("Take your time — I'm still here.");
-        expect(second.tts.synthesizeCalls).not.toContain("Take your time — I'm still here.");
+        expect(first.tts.synthesizeCalls).toContain("Take your time. I'm still here.");
+        expect(second.tts.synthesizeCalls).not.toContain("Take your time. I'm still here.");
 
         await jest.advanceTimersByTimeAsync(500);
-        expect(second.tts.synthesizeCalls).toContain("Take your time — I'm still here.");
+        expect(second.tts.synthesizeCalls).toContain("Take your time. I'm still here.");
       } finally {
         jest.useRealTimers();
       }

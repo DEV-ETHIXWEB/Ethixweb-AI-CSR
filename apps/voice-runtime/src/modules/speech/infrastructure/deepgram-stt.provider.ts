@@ -134,7 +134,7 @@ class DeepgramSttSession implements SpeechToTextSession {
   private finalHandler: ((result: { transcript: string; confidence: number }) => void) | null =
     null;
   private speechStartedHandler: (() => void) | null = null;
-  private interimSpeechHandler: (() => void) | null = null;
+  private interimSpeechHandler: ((transcript: string) => void) | null = null;
   private errorHandler: ((error: Error) => void) | null = null;
   private readonly pendingAudio: Buffer[] = [];
   private ready = false;
@@ -206,7 +206,7 @@ class DeepgramSttSession implements SpeechToTextSession {
     this.speechStartedHandler = handler;
   }
 
-  onInterimSpeech(handler: () => void): void {
+  onInterimSpeech(handler: (transcript: string) => void): void {
     this.interimSpeechHandler = handler;
   }
 
@@ -301,7 +301,7 @@ class DeepgramSttSession implements SpeechToTextSession {
         // meaningless as a bare VAD blip for telling real speech apart
         // from noise).
         if (transcript.trim().length > 0) {
-          this.interimSpeechHandler?.();
+          this.interimSpeechHandler?.(transcript);
         }
         // SPEECH_FINAL_FALLBACK_MS safety net — see that constant's own
         // comment. Only an `is_final: true` chunk counts (Deepgram's

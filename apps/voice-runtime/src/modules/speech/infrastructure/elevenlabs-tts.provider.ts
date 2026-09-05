@@ -1,6 +1,10 @@
 import { Injectable } from "@nestjs/common";
 import WebSocket from "ws";
-import type { TextToSpeechProvider } from "../domain/text-to-speech.port";
+import {
+  DEFAULT_VOICE_DELIVERY_SETTINGS,
+  type TextToSpeechProvider,
+  type VoiceDeliverySettings,
+} from "../domain/text-to-speech.port";
 
 /**
  * [Unverified against a live ElevenLabs key in this environment — same
@@ -22,10 +26,24 @@ import type { TextToSpeechProvider } from "../domain/text-to-speech.port";
  * here, not a partial/growing string — so there is still no benefit to
  * feeding THIS adapter incrementally, only to calling it more than once
  * per turn, which the caller already does.
+ *
+ * `voiceSettings` (stability/similarity_boost/style/speed) is
+ * CallSessionOrchestrator's own emotional-delivery layer (see
+ * emotional-delivery.ts) speaking through — every `[bracket]` cue in
+ * Grace's response text has ALREADY been parsed out and translated into
+ * these numbers before `text` ever reaches this adapter; by design, this
+ * class never sees a bracket tag itself, so there is no markup-leak risk
+ * introduced here specifically (the leak risk this codebase actually
+ * guards against lives entirely in emotional-delivery.ts's own
+ * sanitization, which runs before this method is ever called).
  */
 @Injectable()
 export class ElevenLabsTtsProvider implements TextToSpeechProvider {
-  async *synthesize(text: string, signal?: AbortSignal): AsyncIterable<Buffer> {
+  async *synthesize(
+    text: string,
+    signal?: AbortSignal,
+    voiceSettings: VoiceDeliverySettings = DEFAULT_VOICE_DELIVERY_SETTINGS,
+  ): AsyncIterable<Buffer> {
     const apiKey = process.env["ELEVENLABS_API_KEY"];
     const voiceId = process.env["ELEVENLABS_VOICE_ID"];
     if (!apiKey) {
@@ -47,7 +65,12 @@ export class ElevenLabsTtsProvider implements TextToSpeechProvider {
       socket.send(
         JSON.stringify({
           text: " ",
-          voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+          voice_settings: {
+            stability: voiceSettings.stability,
+            similarity_boost: voiceSettings.similarityBoost,
+            style: voiceSettings.style,
+            speed: voiceSettings.speed,
+          },
           xi_api_key: apiKey,
         }),
       );

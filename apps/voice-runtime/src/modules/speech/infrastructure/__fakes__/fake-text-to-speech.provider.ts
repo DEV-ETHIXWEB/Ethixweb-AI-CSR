@@ -1,4 +1,8 @@
-import type { TextToSpeechProvider } from "../../domain/text-to-speech.port";
+import {
+  DEFAULT_VOICE_DELIVERY_SETTINGS,
+  type TextToSpeechProvider,
+  type VoiceDeliverySettings,
+} from "../../domain/text-to-speech.port";
 
 /**
  * Hand-written fake — yields a fixed number of small fake audio chunks per
@@ -8,14 +12,21 @@ import type { TextToSpeechProvider } from "../../domain/text-to-speech.port";
  */
 export class FakeTextToSpeechProvider implements TextToSpeechProvider {
   readonly synthesizeCalls: string[] = [];
+  /** Parallel to `synthesizeCalls` (same index) — the voice settings each call actually received, so emotional-delivery tests can assert on the resolved stability/style/speed, not just the spoken text. */
+  readonly voiceSettingsCalls: VoiceDeliverySettings[] = [];
   chunksPerCall = 3;
   /** Delay (ms) before each chunk — 0 by default so unit tests run instantly; a test can raise this to create a window for an abort signal to fire mid-stream. */
   chunkDelayMs = 0;
   /** When set, synthesize throws this instead of yielding — simulates ElevenLabs failure. */
   failNextWith: Error | null = null;
 
-  async *synthesize(text: string, signal?: AbortSignal): AsyncIterable<Buffer> {
+  async *synthesize(
+    text: string,
+    signal?: AbortSignal,
+    voiceSettings: VoiceDeliverySettings = DEFAULT_VOICE_DELIVERY_SETTINGS,
+  ): AsyncIterable<Buffer> {
     this.synthesizeCalls.push(text);
+    this.voiceSettingsCalls.push(voiceSettings);
     if (this.failNextWith) {
       const error = this.failNextWith;
       this.failNextWith = null;

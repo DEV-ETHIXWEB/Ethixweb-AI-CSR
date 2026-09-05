@@ -54,6 +54,7 @@ export default tseslint.config(
             // project service can type-check them for linting.
             "apps/voice-orchestrator/scripts/measure-streaming-latency.ts",
             "apps/voice-orchestrator/scripts/measure-conversation-quality.ts",
+            "apps/voice-orchestrator/scripts/measure-emotional-delivery.ts",
             "apps/voice-runtime/scripts/measure-tts-latency.ts",
             "apps/core-api/scripts/seed-all-phase-knowledge.ts",
             "apps/core-api/scripts/check-tenant-readiness.ts",

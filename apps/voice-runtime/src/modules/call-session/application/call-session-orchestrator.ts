@@ -29,6 +29,8 @@ import {
   TWILIO_MEDIA_ENCODING,
   TWILIO_MEDIA_SAMPLE_RATE_HZ,
 } from "../../telephony/domain/twilio-media-stream.types";
+import { isPureBackchannel } from "./backchannel-detector";
+import { parseDelivery, silenceBuffer } from "./emotional-delivery";
 
 /** Bounds a capacity-429 wait loop — a caller genuinely on hold this long has almost certainly already hung up or should hit the tenant's configured overflowNumber instead of waiting forever. Not a documented constant, an INFERRED safety limit (same honesty convention as voice-orchestrator's own MAX_TOOL_ITERATIONS). */
 const MAX_CAPACITY_RETRY_ATTEMPTS = 3;
@@ -109,9 +111,12 @@ function silenceCheckInTimeoutMs(): number {
  * ONCE per silence episode (see `speakSilenceCheckIn`'s own comment) —
  * never a repeating nag, by construction: its own `speak()` call does
  * NOT re-arm the timer, unlike every other caller of `speak()` in this
- * class.
+ * class. `[softly]` (parsed by emotional-delivery.ts, stripped before
+ * TTS — see speak()'s own comment) asks for a quieter, lower-energy
+ * delivery than an ordinary turn response, matching what a real person
+ * checking in gently, not urgently, actually sounds like.
  */
-const SILENCE_CHECK_IN_PHRASE = "Take your time — I'm still here.";
+const SILENCE_CHECK_IN_PHRASE = "[softly] Take your time. I'm still here.";
 
 /**
  * The one class that actually drives a phone call end to end — receives
@@ -302,7 +307,9 @@ export class CallSessionOrchestrator {
       });
     });
     this.sttSession.onSpeechStarted(() => this.handleSpeechStarted());
-    this.sttSession.onInterimSpeech(() => this.handleInterimSpeech(params, sink));
+    this.sttSession.onInterimSpeech((transcript) =>
+      this.handleInterimSpeech(params, sink, transcript),
+    );
     this.sttSession.onError((error) => {
       // Found live, not hypothetical: this used to only log. `ws`'s
       // WebSocket never reconnects on its own and DeepgramSttSession has
@@ -637,10 +644,42 @@ export class CallSessionOrchestrator {
     }, BARGE_IN_CONFIRMATION_TIMEOUT_MS);
   }
 
-  /** Confirms a pending SpeechStarted as real speech, per handleSpeechStarted's own comment — fires the actual barge-in now instead of waiting out the rest of the confirmation window. A no-op if nothing is currently pending (no SpeechStarted preceded this, or it already timed out). */
-  private handleInterimSpeech(params: CallSessionParams, sink: MediaStreamSink): void {
+  /**
+   * Confirms a pending SpeechStarted as real speech, per handleSpeechStarted's
+   * own comment — fires the actual barge-in now instead of waiting out the
+   * rest of the confirmation window. A no-op if nothing is currently
+   * pending (no SpeechStarted preceded this, or it already timed out).
+   *
+   * BACKCHANNEL GATE: if this transcript is nothing but a listener
+   * acknowledgment ("yeah," "uh-huh," "okay" — isPureBackchannel) AND
+   * there's actually something to protect (Grace is speaking, or a turn
+   * is in flight), this deliberately does NOT clear/consume the pending
+   * confirmation timer or fire barge-in — it just leaves the SAME
+   * confirmation window running. Two ways that resolves: the caller said
+   * only the backchannel and nothing else, so the window times out on its
+   * own (handleSpeechStarted's own setTimeout) and nothing was ever
+   * interrupted — correct, since nothing worth interrupting for was said;
+   * or the caller keeps talking past the backchannel within the SAME
+   * confirmation window (Deepgram delivers a later interim result for the
+   * same utterance, growing transcript, no new SpeechStarted needed) and
+   * THIS method runs again with the fuller text, which no longer reads as
+   * pure backchannel, and fires normally. Uses the one existing barge-in
+   * mechanism as-is — this is a classification step in front of it, not a
+   * second interruption system.
+   */
+  private handleInterimSpeech(
+    params: CallSessionParams,
+    sink: MediaStreamSink,
+    transcript: string,
+  ): void {
     this.armSilenceCheckIn(sink);
     if (!this.pendingBargeInTimer) {
+      return;
+    }
+    if (isPureBackchannel(transcript) && (this.ttsPlaying || this.activeTurnAbort)) {
+      this.logger.info("backchannel detected mid-speech — not treating it as a barge-in", {
+        conversationId: this.conversationId,
+      });
       return;
     }
     clearTimeout(this.pendingBargeInTimer);
@@ -901,7 +940,31 @@ export class CallSessionOrchestrator {
     }
   }
 
+  /**
+   * The single choke point EVERY spoken utterance in this class passes
+   * through (turn responses, greeting, silence check-in, apology,
+   * capacity brochure segment, transfer confirmation) — which is
+   * deliberately where emotional-delivery.ts's `parseDelivery` runs: one
+   * place guarantees every `[bracket]` cue (recognized or not,
+   * well-formed or not) is resolved into ElevenLabs voice_settings and
+   * stripped from the text before ANYTHING reaches TextToSpeechProvider,
+   * rather than trusting every caller of `speak()` to remember to sanitize
+   * its own text first (see emotional-delivery.ts's own comment for why
+   * this matters and what it defends against).
+   *
+   * A `[pause]` cue splits `text` into multiple segments, each its own
+   * `synthesize()` call, with an explicit silence buffer sent directly to
+   * the sink between them — deterministic, not a hope that the TTS
+   * vendor renders a pause of any particular length. `ttsPlaying` stays
+   * true across that gap (not just during actual audio) so a barge-in
+   * landing mid-pause is still handled correctly by the existing
+   * mechanism 2 path.
+   */
   private async speak(text: string, sink: MediaStreamSink): Promise<void> {
+    const { voiceSettings, segments } = parseDelivery(text);
+    if (segments.length === 0) {
+      return;
+    }
     const abortController = new AbortController();
     this.ttsAbort = abortController;
     this.ttsPlaying = true;
@@ -909,19 +972,34 @@ export class CallSessionOrchestrator {
     // round-trip log above) — this had zero timing anywhere before,
     // splitting a real "feels slow" report into "was it the turn's HTTP
     // round-trip or was it TTS?" was previously impossible from logs.
+    // Aggregated across every segment in this call (not logged per
+    // segment) — same one-log-per-speak()-call contract as before
+    // [pause] existed.
     const startedAt = Date.now();
     let firstChunkAt: number | null = null;
     let chunkCount = 0;
     try {
-      for await (const chunk of this.tts.synthesize(text, abortController.signal)) {
+      for (const segment of segments) {
         if (abortController.signal.aborted) {
           break;
         }
-        if (firstChunkAt === null) {
-          firstChunkAt = Date.now();
+        if (segment.pauseBeforeMs > 0) {
+          sink.sendAudio(silenceBuffer(segment.pauseBeforeMs));
         }
-        chunkCount += 1;
-        sink.sendAudio(chunk);
+        for await (const chunk of this.tts.synthesize(
+          segment.text,
+          abortController.signal,
+          voiceSettings,
+        )) {
+          if (abortController.signal.aborted) {
+            break;
+          }
+          if (firstChunkAt === null) {
+            firstChunkAt = Date.now();
+          }
+          chunkCount += 1;
+          sink.sendAudio(chunk);
+        }
       }
     } catch (error) {
       this.logger.warn("TTS synthesis failed mid-utterance", {
@@ -936,6 +1014,7 @@ export class CallSessionOrchestrator {
         timeToFirstChunkMs: firstChunkAt === null ? null : firstChunkAt - startedAt,
         totalMs: Date.now() - startedAt,
         chunkCount,
+        segmentCount: segments.length,
         aborted: abortController.signal.aborted,
       });
     }

@@ -116,7 +116,7 @@ describe("ElevenLabsTtsProvider", () => {
     expect(lastSocket!.sent).toEqual([
       JSON.stringify({
         text: " ",
-        voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+        voice_settings: { stability: 0.5, similarity_boost: 0.75, style: 0, speed: 1 },
         xi_api_key: "test-elevenlabs-key",
       }),
       JSON.stringify({ text: "Connecting you now. ", flush: true }),
@@ -125,6 +125,28 @@ describe("ElevenLabsTtsProvider", () => {
 
     lastSocket!.simulateFinal();
     await expect(nextPromise).resolves.toEqual({ value: undefined, done: true });
+  });
+
+  it("sends the given voiceSettings instead of the default when the caller supplies emotional-delivery values", async () => {
+    const provider = new ElevenLabsTtsProvider();
+    const iterator = provider
+      .synthesize("I'm sorry that happened.", undefined, {
+        stability: 0.35,
+        similarityBoost: 0.75,
+        style: 0.4,
+        speed: 0.95,
+      })
+      [Symbol.asyncIterator]();
+    void iterator.next();
+    lastSocket!.simulateOpen();
+
+    expect(lastSocket!.sent[0]).toBe(
+      JSON.stringify({
+        text: " ",
+        voice_settings: { stability: 0.35, similarity_boost: 0.75, style: 0.4, speed: 0.95 },
+        xi_api_key: "test-elevenlabs-key",
+      }),
+    );
   });
 
   it("uses ELEVENLABS_MODEL_ID when set, instead of the eleven_turbo_v2_5 default", async () => {

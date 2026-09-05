@@ -12,7 +12,7 @@ export class FakeSpeechToTextSession implements SpeechToTextSession {
   private finalHandler: ((result: { transcript: string; confidence: number }) => void) | null =
     null;
   private speechStartedHandler: (() => void) | null = null;
-  private interimSpeechHandler: (() => void) | null = null;
+  private interimSpeechHandler: ((transcript: string) => void) | null = null;
   private errorHandler: ((error: Error) => void) | null = null;
 
   sendAudio(frame: Buffer): void {
@@ -27,7 +27,7 @@ export class FakeSpeechToTextSession implements SpeechToTextSession {
     this.speechStartedHandler = handler;
   }
 
-  onInterimSpeech(handler: () => void): void {
+  onInterimSpeech(handler: (transcript: string) => void): void {
     this.interimSpeechHandler = handler;
   }
 
@@ -49,9 +49,17 @@ export class FakeSpeechToTextSession implements SpeechToTextSession {
     this.speechStartedHandler?.();
   }
 
-  /** Test helper: simulate Deepgram delivering an interim result with real recognized text — the barge-in CONFIRMATION signal. */
-  emitInterimSpeech(): void {
-    this.interimSpeechHandler?.();
+  /**
+   * Test helper: simulate Deepgram delivering an interim result with real
+   * recognized text — the barge-in CONFIRMATION signal. Defaults to an
+   * unambiguously substantive phrase (not a backchannel word like "yeah"
+   * or "okay") so every existing test that calls this with no argument,
+   * expecting it to confirm a real interruption, keeps working unchanged
+   * — a test that specifically wants to simulate a backchannel passes its
+   * own transcript explicitly.
+   */
+  emitInterimSpeech(transcript = "yes I need help with that"): void {
+    this.interimSpeechHandler?.(transcript);
   }
 
   emitError(error: Error): void {

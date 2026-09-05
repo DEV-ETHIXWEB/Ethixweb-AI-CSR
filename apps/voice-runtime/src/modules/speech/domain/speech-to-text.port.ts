@@ -29,16 +29,22 @@ export interface SpeechToTextSession {
    */
   onSpeechStarted(handler: () => void): void;
   /**
-   * Fires on the FIRST interim (non-final) STT result carrying actual
+   * Fires on EVERY interim (non-final) STT result carrying actual
    * recognized text after a `onSpeechStarted` event — i.e., real words
-   * being transcribed, not just VAD energy. FOUND LIVE: acting on
-   * `onSpeechStarted` alone killed an in-flight response on every single
-   * raw speech-detection blip, confirmed or not — a real call's own
-   * transcript showed only 2 of 12 turns ever completing, the rest
-   * aborted within 0.3-1.6s of starting. This event exists so a caller
-   * can be told apart from noise before their response gets cut off.
+   * being transcribed, not just VAD energy — with that result's own
+   * (cumulative, per Deepgram's contract) transcript text. FOUND LIVE:
+   * acting on `onSpeechStarted` alone killed an in-flight response on
+   * every single raw speech-detection blip, confirmed or not — a real
+   * call's own transcript showed only 2 of 12 turns ever completing, the
+   * rest aborted within 0.3-1.6s of starting. This event exists so a
+   * caller can be told apart from noise before their response gets cut
+   * off. The transcript is passed (not just a bare confirmation signal)
+   * so a caller-facing consumer can distinguish a genuine interruption
+   * from a backchannel ("yeah," "uh-huh," "okay") that isn't meant to
+   * take the floor — see CallSessionOrchestrator's own
+   * isPureBackchannel-gated handling.
    */
-  onInterimSpeech(handler: () => void): void;
+  onInterimSpeech(handler: (transcript: string) => void): void;
   onError(handler: (error: Error) => void): void;
   close(): Promise<void>;
 }
