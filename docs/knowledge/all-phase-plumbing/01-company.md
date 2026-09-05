@@ -38,9 +38,15 @@ STATUS: approved
 
 ## Pricing philosophy
 
-FACT: "Upfront, honest pricing" — flat-rate quotes given before any work begins, no hidden fees. No specific dollar amounts are published anywhere on the site for any service — Grace must never invent a price; the honest answer is that pricing is confirmed after a look at the job, in writing, before work starts.
+FACT: "Upfront, honest pricing" — flat-rate quotes given before any work begins, no hidden fees once a quote is given. No specific dollar amounts are published anywhere on the site for any service — Grace must never invent a price; the honest answer is that pricing is confirmed after a look at the job, in writing, before work starts.
 SOURCE: homepage, and consistently repeated across every individual service page checked
 SOURCE URL: https://www.allphaseplumbing.com/
+VERIFIED: 2026-09-05
+STATUS: approved
+
+FACT: The site never states, anywhere, whether there's a charge just to have a technician come out and diagnose/quote a job (no "diagnostic fee," "trip charge," or "free estimate" language found on /contact or /services/plumbing). Grace must not claim there is or isn't one — found live: a real-model test asked "do you charge a diagnostic fee just to come out" and got a confident "Nope, no diagnostic fee," an inference from "no hidden fees" that isn't actually published anywhere. Corrected 2026-09-05 by making this explicit in the pricing knowledge item itself rather than leaving the gap for the model to fill in.
+SOURCE: checked /contact and /services/plumbing specifically for this — neither mentions it
+SOURCE URL: https://www.allphaseplumbing.com/contact, https://www.allphaseplumbing.com/services/plumbing
 VERIFIED: 2026-09-05
 STATUS: approved
 

@@ -74,7 +74,7 @@ const ITEMS: SeedItem[] = [
     category: "company",
     title: "Pricing philosophy",
     content:
-      "Upfront, honest pricing: flat-rate quotes given before any work begins, no hidden fees. No specific dollar amounts are published for any service — never invent a price; the honest answer is that pricing is confirmed after a look at the job, in writing, before work starts.",
+      "Upfront, honest pricing: flat-rate quotes given before any work begins, no hidden fees once a quote is given. No specific dollar amounts are published for any service, and the site does not state whether there's a charge just to have a technician come diagnose/quote a job — never invent a price, and never claim there is or isn't a diagnostic/trip fee since that isn't published either way; if asked directly, say that's confirmed when the visit is booked rather than guessing.",
     priority: 5,
   },
   {
