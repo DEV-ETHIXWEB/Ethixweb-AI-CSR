@@ -578,6 +578,23 @@ export class HandleTurnUseCase {
           conversationId: conversation.id,
           reason: error instanceof Error ? error.message : String(error),
         });
+        // FOUND LIVE via a QA failure-injection pass, not from a real
+        // call report: a genuinely THROWN exception from the provider's
+        // own generator (every adapter's raw JSON.parse on an SSE
+        // payload can throw this on a malformed vendor response — a
+        // hand-crafted malformed data: line reproduces it directly from
+        // anthropic.adapter.ts) never set providerErrorMessage, only the
+        // well-formed `{type:"error"}` chunk path did. With zero text
+        // produced before the throw, that meant this method returned an
+        // ordinary-looking SUCCESSFUL `{text: "", toolCalls: [],
+        // interrupted: false}` — the EXACT silent-dead-air shape
+        // documented below (search "FallbackAiProvider") as already
+        // fixed for the error-CHUNK case, just never extended to cover
+        // a genuine throw. `retryable: true` by default here: an
+        // unclassified exception is exactly the "ambiguous outcome, safe
+        // to retry" case docs/28 §G already covers, the same default
+        // ProviderCompletionError itself falls back to.
+        providerErrorMessage = error instanceof Error ? error.message : String(error);
       }
     }
 

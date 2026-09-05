@@ -14,6 +14,19 @@ export class FakeAiProvider implements AiProviderPort {
     ],
   ];
   public readonly requests: AiCompletionRequest[] = [];
+  /**
+   * Consumed in lockstep with `responses` (same call index) — when set for
+   * the current call, thrown from INSIDE the generator right after that
+   * call's queued chunks are yielded. Models a genuinely thrown exception
+   * mid-stream (a malformed JSON payload from the vendor, a connection
+   * reset while iterating) — distinct from a well-formed `{type:"error"}`
+   * chunk, which every other fake response already covers. Found live:
+   * anthropic.adapter.ts's own JSON.parse can throw exactly this shape on
+   * a malformed SSE payload, and HandleTurnUseCase's "AI provider stream
+   * failed mid-turn" catch branch existed with zero test coverage until
+   * this was added specifically to exercise it.
+   */
+  public throwAfterChunks: Array<Error | null> = [];
   private callIndex = 0;
 
   /**
@@ -35,10 +48,15 @@ export class FakeAiProvider implements AiProviderPort {
     _signal?: AbortSignal,
   ): AsyncIterable<AiCompletionChunk> {
     this.requests.push(request);
-    const chunks = this.responses[Math.min(this.callIndex, this.responses.length - 1)] ?? [];
+    const index = this.callIndex;
+    const chunks = this.responses[Math.min(index, this.responses.length - 1)] ?? [];
+    const throwAfter = this.throwAfterChunks[index];
     this.callIndex += 1;
     for (const chunk of chunks) {
       yield chunk;
+    }
+    if (throwAfter) {
+      throw throwAfter;
     }
   }
 }

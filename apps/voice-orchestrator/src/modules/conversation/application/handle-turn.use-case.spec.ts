@@ -862,6 +862,45 @@ describe("HandleTurnUseCase", () => {
     expect(result.interrupted).toBe(false);
   });
 
+  /**
+   * QA mission failure-injection pass: the test above covers a
+   * WELL-FORMED `{type:"error"}` chunk arriving mid-stream. This covers
+   * the OTHER real failure shape — the provider's own async generator
+   * genuinely THROWING mid-iteration, which every adapter's raw
+   * `JSON.parse` on an SSE payload can do on a malformed vendor response
+   * (confirmed live: a hand-crafted malformed data: line reproduces this
+   * exact throw from anthropic.adapter.ts). This exercises
+   * streamOneCompletion's own try/catch around the `for await` loop —
+   * found with ZERO existing test coverage anywhere in this file despite
+   * being a real, reachable path.
+   */
+  it("does NOT throw when the provider's stream genuinely THROWS (not a well-formed error chunk) after real text already streamed — same partial-text preservation as a well-formed error", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [[{ type: "text_delta", text: "Let me pull that up for" }]];
+    aiProvider.throwAfterChunks = [new Error("Unexpected token in JSON at position 1")];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    const result = await useCase.execute(baseCommand());
+
+    expect(result.responseText).toBe("Let me pull that up for");
+    expect(result.interrupted).toBe(false);
+  });
+
+  it("throws (not silently succeeds with empty text) when the provider's stream throws BEFORE any usable text was produced", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [[]];
+    aiProvider.throwAfterChunks = [new Error("connection reset before any bytes arrived")];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    await expect(useCase.execute(baseCommand())).rejects.toThrow(
+      /connection reset before any bytes arrived/,
+    );
+  });
+
   it("compresses the message history before each provider call once it exceeds the context window", async () => {
     const repository = new FakeConversationRepository();
     const longHistory = Array.from({ length: 45 }, (_unused, index) => ({
