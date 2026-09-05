@@ -173,6 +173,64 @@ const SCRIPTS: ConversationScript[] = [
       "If the plumber replaces the cartridge, will that definitely fix a slow drain in the same sink too, or could it be something else?",
     ],
   },
+  {
+    name: "QA mission Phase 6: name correction must actually stick",
+    focus:
+      "Caller gives 'John Smith', then corrects to 'John Smythe' — every mention afterward, and any tool call, must use Smythe, not Smith. This is the single most concrete, checkable memory-correctness test: either the transcript says Smythe from that point on or it doesn't.",
+    turns: [
+      "Hi, my garbage disposal stopped working entirely.",
+      "My name is John Smith.",
+      "Actually, sorry, it's John Smythe, S-M-Y-T-H-E.",
+      "My phone number is 555-822-1199.",
+      "Can you just confirm the name and number you have for me?",
+    ],
+    enableTools: true,
+  },
+  {
+    name: "QA mission Phase 6: address correction must actually stick",
+    focus:
+      "Caller gives '17 Birchwood Lane', then corrects to '19 Birchwood Lane' — the same test as the name correction above, for an address instead. Any recap or tool call afterward must use 19, not 17.",
+    turns: [
+      "Hi, I've got a burst pipe under my kitchen sink, water everywhere.",
+      "My address is 17 Birchwood Lane.",
+      "Sorry, that's wrong — it's 19 Birchwood Lane, not 17.",
+      "My name is Priya Nair, phone is 555-440-2210.",
+      "Can you read that address back to me before we hang up?",
+    ],
+    enableTools: true,
+  },
+  {
+    name: "QA mission Phase 9: topic change and return (problem -> pricing -> problem)",
+    focus:
+      "Caller interrupts their own problem description to ask an unrelated pricing question, then expects the conversation to pick back up where it left off — not restart, not ignore the pricing question, not get stuck on either topic.",
+    turns: [
+      "Hi, my AC isn't cooling the house at all.",
+      "Actually, before we get into that — how much do you typically charge just for a diagnostic visit?",
+      "Okay that's helpful. So yeah, the AC — it's been blowing room-temperature air since this morning.",
+      "It's a two-story house, upstairs is worse than downstairs.",
+    ],
+  },
+  {
+    name: "QA mission Phase 18: dead-air / 'are you there' recovery",
+    focus:
+      "A caller asking 'hello?' / 'are you still there?' mid-conversation must get an immediate, direct, human-sounding response acknowledging them — never silence, never a generic restart, never ignoring that they just asked a direct question.",
+    turns: [
+      "Hi, I need someone to look at my water heater, it's making a banging noise.",
+      "Hello? Are you still there?",
+      "Can you hear me okay?",
+    ],
+  },
+  {
+    name: "QA mission Phase 10: urgency and emotion (panicked caller, active flooding)",
+    focus:
+      "A caller describing active, ongoing damage with visible urgency/distress should get a brief, human acknowledgment before questions continue — not a canned phrase, not a long detour, and the model should not casually continue with routine qualifying questions as if nothing was said.",
+    turns: [
+      "Oh my god, okay, um, water is just pouring out from under my sink right now, it's flooding my kitchen, I don't know what to do.",
+      "I already turned off the water at the wall but there's still water everywhere on the floor.",
+      "Please, how fast can someone get here?",
+    ],
+    enableTools: true,
+  },
 ];
 
 async function runScript(script: ConversationScript): Promise<void> {
