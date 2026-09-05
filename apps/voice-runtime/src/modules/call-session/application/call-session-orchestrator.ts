@@ -548,6 +548,16 @@ export class CallSessionOrchestrator {
         tenantId: params.tenantId,
         endReason,
       });
+      // Another real observability gap found while reconstructing a live
+      // call's full timeline: this method previously logged NOTHING on its
+      // success path — only the best-effort-failure branch below ever
+      // wrote a line — so a call that ended cleanly and a call whose
+      // runtime silently got stuck mid-conversation were indistinguishable
+      // from logs alone; the only signal either way was the log simply
+      // stopping. This closes that gap the same way SpeechStarted/
+      // handleBargeIn's own gaps were closed earlier in this
+      // investigation.
+      this.logger.info("call ended", { conversationId: this.conversationId, endReason });
     } catch (error) {
       this.logger.warn("end-conversation call failed (best-effort, not retried)", {
         conversationId: this.conversationId,
