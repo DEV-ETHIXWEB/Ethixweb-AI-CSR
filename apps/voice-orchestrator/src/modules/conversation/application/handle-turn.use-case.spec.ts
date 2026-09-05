@@ -724,6 +724,54 @@ describe("HandleTurnUseCase", () => {
     expect(result.responseText).toBe("Let's get you help right away. Connecting you now.");
   });
 
+  /**
+   * Found live on a real ~10-minute phone call (turn 18 of 40): the
+   * backstop fired a SECOND time mid-call, adding a full extra LLM
+   * round-trip (measured: this exact turn's response time nearly doubled
+   * vs. every neighboring turn). Root cause — `compressMessages`
+   * (context-window.ts), which runs at the top of every `runTurn`
+   * iteration once a long call passes its message-count threshold,
+   * replaces old messages with a plain-text summary that drops the
+   * `toolCalls` array entirely. `hasCalledEscalateEmergency` used to read
+   * ONLY `conversation.messages`, so once the turn-1 backstop call's own
+   * message got compacted away, the "have we ever checked" signal was
+   * lost and the backstop fired again. This seeds a conversation shaped
+   * exactly like that: `emergencyEverChecked: true` (set on the earlier
+   * real turn) but `messages` long enough, and with the ORIGINAL
+   * escalateEmergency tool-call message old enough, that this turn's own
+   * `compressMessages` call drops it before the model ever runs.
+   */
+  it("does NOT re-fire the escalateEmergency backstop after compaction has dropped the earlier call's tool-call message", async () => {
+    const repository = new FakeConversationRepository();
+    const oldMessages: Conversation["messages"] = [
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{ id: "t1", name: "escalateEmergency", arguments: { description: "hi" } }],
+      },
+      { role: "tool", toolCallId: "t1", content: "{}" },
+    ];
+    for (let i = 0; i < 40; i++) {
+      oldMessages.push({
+        role: i % 2 === 0 ? "user" : "assistant",
+        content: `filler turn ${i}`,
+      });
+    }
+    repository.seed(baseConversation({ emergencyEverChecked: true, messages: oldMessages }));
+    const escalateHandler = { execute: jest.fn() };
+    const { useCase } = buildUseCase({
+      repository,
+      registeredTools: [{ name: "escalateEmergency", handler: escalateHandler }],
+    });
+
+    const result = await useCase.execute(
+      baseCommand({ transcript: "okay thanks", allowedTools: ["escalateEmergency"] }),
+    );
+
+    expect(escalateHandler.execute).not.toHaveBeenCalled();
+    expect(result.toolCallsExecuted).toEqual([]);
+  });
+
   it("does NOT force-call escalateEmergency when it isn't in this call's allowedTools", async () => {
     const repository = new FakeConversationRepository();
     repository.seed(baseConversation());

@@ -32,6 +32,21 @@ export interface Conversation {
   endedAt: string | null;
   endReason: string | null;
   /**
+   * True once `escalateEmergency` has executed at least one time this
+   * conversation (real model call or the deterministic backstop — see
+   * `hasCalledEscalateEmergency`'s own comment, both count identically).
+   * Found live: `compressMessages` (context-window.ts) replaces old
+   * `messages` entries with a plain-text summary once a long call passes
+   * the compaction threshold, which silently drops the `toolCalls` array
+   * that a message-history-only check relied on — the backstop then
+   * re-fired a SECOND time on turn 18 of a real ~10-minute call, costing
+   * an extra full LLM round-trip on that turn for no reason. This field
+   * is the durable signal that survives compaction; optional (not set on
+   * conversations created before this field existed) so `undefined`
+   * correctly reads as "not yet checked," same as `false`.
+   */
+  emergencyEverChecked?: boolean;
+  /**
    * Optimistic-concurrency counter, starting at 1 on `create()` — the ONLY
    * field a use case never sets by hand; it travels unmodified from
    * whatever `findById`/`findByCallId` returned through to `save()`, which

@@ -361,6 +361,9 @@ export class HandleTurnUseCase {
 
       for (const toolCall of toolCalls) {
         toolCallsExecuted.push(toolCall.name);
+        if (toolCall.name === "escalateEmergency") {
+          conversation.emergencyEverChecked = true;
+        }
         const { output, escalation: toolEscalation } = await this.runTool(
           conversation,
           toolCall,
@@ -915,8 +918,18 @@ function looksLikeAbbreviation(buffer: string, periodEndIndex: number): boolean 
   return ["mr", "mrs", "ms", "dr", "st", "vs", "etc", "approx", "jr", "sr"].includes(word);
 }
 
-/** Source of truth for "has this call ever checked" is the message history itself, not a separate flag — a real model-issued call and the backstop call below are indistinguishable here, both short-circuit the same way. */
+/**
+ * A real model-issued call and the backstop call below are indistinguishable
+ * here, both short-circuit the same way. Checks `emergencyEverChecked` FIRST
+ * — the durable signal that survives `compressMessages` dropping old
+ * `toolCalls` entries during a long call (see that field's own comment) —
+ * falling back to a live message-history scan for a conversation that
+ * predates the field (or any path that sets the flag).
+ */
 function hasCalledEscalateEmergency(conversation: Conversation): boolean {
+  if (conversation.emergencyEverChecked === true) {
+    return true;
+  }
   return conversation.messages.some((message) =>
     message.toolCalls?.some((toolCall) => toolCall.name === "escalateEmergency"),
   );
