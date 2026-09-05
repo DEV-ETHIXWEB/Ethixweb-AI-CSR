@@ -934,7 +934,21 @@ describe("CallSessionOrchestrator", () => {
       }
     });
 
-    it("an unconfirmed SpeechStarted blip — never confirmed by real words — still resets the timer, since ANY detected audio proves the caller is present", async () => {
+    /**
+     * Found live on a real ~2.5-minute call: a bare VAD SpeechStarted
+     * blip with NO recognized content fired every 1-3 seconds for a
+     * continuous 37-second stretch (Deepgram's own event log:
+     * transcriptLength: 0 on nearly every one) — almost certainly
+     * background noise, not the caller. The FIRST version of this fix
+     * reset the silence check-in on every one of those, on the reasoning
+     * that "any detected audio proves presence" — which meant the
+     * check-in essentially never got a clean window to fire in an
+     * environment with any ambient noise at all; the caller eventually
+     * had to say "hey grace i'm waiting for a reply" because it never
+     * checked in. A bare, content-free blip now does NOT reset the
+     * timer — only `handleInterimSpeech` (real recognized text) does.
+     */
+    it("a bare SpeechStarted blip with no recognized content does NOT reset the timer — only real recognized speech does", async () => {
       jest.useFakeTimers();
       try {
         const { orchestrator, stt, tts } = buildOrchestratorUnderTest();
@@ -943,20 +957,66 @@ describe("CallSessionOrchestrator", () => {
         await orchestrator.onCallStart(baseParams(), sink);
         const session = stt.sessions[0]!;
 
-        // A blip at t=800ms (before the 1000ms window would have fired) —
-        // never confirmed by emitInterimSpeech, so it's noise, not a real
-        // barge-in — but it should still reset the silence window.
+        // A content-free blip at t=800ms — should NOT push the check-in
+        // out any further than its original 1000ms schedule.
         await jest.advanceTimersByTimeAsync(800);
         session.emitSpeechStarted();
         await jest.advanceTimersByTimeAsync(0);
 
-        // Only 700ms further (1500ms total) — under a FRESH 1000ms window
-        // from the blip, so no check-in yet.
-        await jest.advanceTimersByTimeAsync(700);
+        // The check-in still fires at the ORIGINAL 1000ms mark, not a
+        // fresh window from the blip.
+        await jest.advanceTimersByTimeAsync(200);
+        expect(tts.synthesizeCalls).toContain("Take your time — I'm still here.");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("continuous content-free SpeechStarted blips (simulating background noise) do not prevent the check-in from firing at all — the exact real-call failure this fix closes", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, stt, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+
+        await orchestrator.onCallStart(baseParams(), sink);
+        const session = stt.sessions[0]!;
+
+        // A blip every 300ms for the whole window — if a bare blip reset
+        // the timer (the old, disproven behavior), this would push the
+        // check-in out indefinitely, exactly as it did on the real call.
+        for (let elapsed = 0; elapsed < 900; elapsed += 300) {
+          await jest.advanceTimersByTimeAsync(300);
+          session.emitSpeechStarted();
+        }
+        await jest.advanceTimersByTimeAsync(100); // crosses the original 1000ms mark
+
+        expect(tts.synthesizeCalls).toContain("Take your time — I'm still here.");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("real recognized speech (confirmed interim text), unlike a bare blip, DOES reset the timer", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, stt, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+
+        await orchestrator.onCallStart(baseParams(), sink);
+        const session = stt.sessions[0]!;
+
+        await jest.advanceTimersByTimeAsync(800);
+        session.emitSpeechStarted();
+        session.emitInterimSpeech(); // real recognized text, not just VAD energy
+        await jest.advanceTimersByTimeAsync(0);
+
+        // Under a FRESH 1000ms window from the confirmed speech — no
+        // check-in yet at the original schedule's mark.
+        await jest.advanceTimersByTimeAsync(200);
         expect(tts.synthesizeCalls).not.toContain("Take your time — I'm still here.");
 
-        // Now cross the full fresh window from the blip.
-        await jest.advanceTimersByTimeAsync(400);
+        // ...but it does fire once the fresh window elapses.
+        await jest.advanceTimersByTimeAsync(800);
         expect(tts.synthesizeCalls).toContain("Take your time — I'm still here.");
       } finally {
         jest.useRealTimers();

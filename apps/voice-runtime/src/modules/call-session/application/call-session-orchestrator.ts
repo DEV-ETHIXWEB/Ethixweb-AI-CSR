@@ -50,27 +50,42 @@ const TURN_RETRY_DELAY_MS = 500;
 const BARGE_IN_CONFIRMATION_TIMEOUT_MS = 500;
 
 /**
- * How long Grace waits in COMPLETE silence — zero speech-detection
- * activity of any kind, not even an unconfirmed VAD blip — after she
- * finishes speaking before proactively checking in. Found live on a real
- * ~21-minute call: several gaps of 33-89 seconds with no check-in at
- * all, because no such mechanism existed anywhere in this codebase (an
- * audit confirmed this directly — there was no prior "one-time vs
- * repeating" behavior to preserve, contrary to an earlier assumption).
+ * How long Grace waits with no REAL recognized caller speech — not
+ * "zero VAD activity," see below — after she finishes speaking before
+ * proactively checking in. Found live on a real ~21-minute call: several
+ * gaps of 33-89 seconds with no check-in at all, because no such
+ * mechanism existed anywhere in this codebase (an audit confirmed this
+ * directly — there was no prior "one-time vs repeating" behavior to
+ * preserve, contrary to an earlier assumption).
+ *
+ * What resets this timer changed after a REAL call exposed a flaw in the
+ * first version: that version reset it on ANY detected audio, including
+ * a bare VAD SpeechStarted blip with no recognized content, on the
+ * reasoning that any detected audio proves presence. A real ~2.5-minute
+ * call proved that too permissive in practice — Deepgram fired
+ * SpeechStarted/empty-Results events every 1-3 seconds for a continuous
+ * 37-second stretch (transcriptLength: 0 on nearly all of them, almost
+ * certainly background noise), so the timer never got a clean window to
+ * fire in an environment with any ambient noise at all — the caller
+ * eventually had to say "hey grace i'm waiting for a reply" because it
+ * never checked in. Only `handleInterimSpeech` (Deepgram delivering REAL
+ * recognized text, not just VAD energy) resets it now; a bare
+ * content-free blip doesn't extend the window, but doesn't need to —
+ * nothing disarms it either, so the check-in still fires at its
+ * originally-scheduled time regardless of how much background noise
+ * happened in the meantime.
  *
  * Distinct in PURPOSE from `SPEECH_FINAL_FALLBACK_MS`
  * (deepgram-stt.provider.ts): that one fires when the caller genuinely
  * IS making sound but it never cleanly finalizes into a transcript (the
  * "lots of noise, never resolves" case, already found and fixed
- * separately); this one fires when there is no sound at all. They don't
- * compete — any VAD activity (even an unconfirmed blip that never
- * becomes real words) disarms THIS timer, on the reasoning that ANY
- * detected audio proves the caller is still on the line, whether or not
- * it ever resolves into text.
+ * separately); this one fires when the caller never said anything
+ * recognizable at all. They don't compete — different trigger, different
+ * purpose, both real gaps found on real calls.
  *
  * INFERRED, not a measured constant — a real "let me think" pause is
- * typically well under this; by the time TRUE silence (nothing at all)
- * has run this long, it reads as dead air, not thinking time.
+ * typically well under this; by the time this long has passed with
+ * nothing recognizable said, it reads as dead air, not thinking time.
  *
  * Read from `process.env` at call time (raw, not the validated `Env`
  * object — same convention `executeEmergencyTransfer` already uses in
@@ -286,7 +301,7 @@ export class CallSessionOrchestrator {
         });
       });
     });
-    this.sttSession.onSpeechStarted(() => this.handleSpeechStarted(sink));
+    this.sttSession.onSpeechStarted(() => this.handleSpeechStarted());
     this.sttSession.onInterimSpeech(() => this.handleInterimSpeech(params, sink));
     this.sttSession.onError((error) => {
       // Found live, not hypothetical: this used to only log. `ws`'s
@@ -392,12 +407,12 @@ export class CallSessionOrchestrator {
       return;
     }
     // A real turn is starting — disarm (not re-arm) the silence check-in
-    // for the duration of turn processing. handleSpeechStarted/
-    // handleInterimSpeech RESET it (arm a fresh window) while the caller
-    // is still just making sound; this is the one place it needs to stop
-    // ticking entirely, since system latency (the HTTP round-trip, tool
-    // calls) is not caller silence — it re-arms again, correctly, once
-    // Grace's response has actually been spoken (below).
+    // for the duration of turn processing. handleInterimSpeech RESETS it
+    // (arms a fresh window) once the caller's speech has real recognized
+    // content; this is the one place it needs to stop ticking entirely,
+    // since system latency (the HTTP round-trip, tool calls) is not
+    // caller silence — it re-arms again, correctly, once Grace's
+    // response has actually been spoken (below).
     this.disarmSilenceCheckIn();
     // Defense-in-depth, not a behavior change in the working case: today
     // this is always already null here, because Deepgram's SpeechStarted
@@ -598,14 +613,22 @@ export class CallSessionOrchestrator {
    * without waiting for full finalization), not the only thing
    * preventing a stale response from lingering.
    */
-  private handleSpeechStarted(sink: MediaStreamSink): void {
-    // ANY detected audio — even an unconfirmed VAD blip that never goes
-    // on to become real words — proves the caller is still on the line.
-    // RESETS (not just disarms) the silence check-in: a single blip that
-    // never resolves into anything should still not permanently kill the
-    // check-in for the rest of the call — the window just starts counting
-    // fresh from this moment instead.
-    this.armSilenceCheckIn(sink);
+  private handleSpeechStarted(): void {
+    // Found live on a real call: this used to reset the silence check-in
+    // here too, on the reasoning that ANY detected audio proves presence.
+    // A real ~2.5-minute call proved that wrong in practice — a raw VAD
+    // onset fires on background noise as readily as real speech (this
+    // exact call had a SpeechStarted/empty-Results event every 1-3
+    // seconds, transcriptLength: 0, for a continuous 37-second stretch,
+    // per Deepgram's own event log), so resetting on it meant the check-in
+    // essentially never got a clean window to fire at all — the caller
+    // eventually had to say "hey grace i'm waiting for a reply" because it
+    // never checked in. `handleInterimSpeech` (real recognized text, not
+    // just VAD energy) is the correct, much rarer signal for "the caller
+    // is genuinely making sound" — kept there, removed here. A bare blip
+    // with no content doesn't extend the window, but it doesn't need to:
+    // nothing here disarms it either, so the check-in still fires at its
+    // originally-scheduled time regardless — no permanent-silencing risk.
     if (this.pendingBargeInTimer) {
       clearTimeout(this.pendingBargeInTimer);
     }
