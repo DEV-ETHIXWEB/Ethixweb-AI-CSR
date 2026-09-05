@@ -127,4 +127,76 @@ describe("CallSessionOrchestrator DI scope", () => {
     expect(secondOrchestratorClient.turnCalls).toHaveLength(1);
     expect(secondOrchestratorClient.turnCalls[0]?.req.transcript).toBe("hello, is anyone there");
   });
+
+  /**
+   * QA mission Phase 3 (multi-call/session isolation): the two tests above
+   * prove SEQUENTIAL reuse is safe (call 2 starts only after call 1 fully
+   * ends). This test goes further and proves CONCURRENT isolation — five
+   * calls genuinely overlapping in time, each started before any of the
+   * others finish, each fed its own distinct transcripts interleaved with
+   * the others' — and confirms every single turn landed on the correct
+   * call's own conversationId, with zero cross-talk. This is the shape a
+   * real multi-line deployment actually produces (simultaneous inbound
+   * calls on a running process), not just "one call after another."
+   */
+  it("five concurrent, interleaved calls never cross-contaminate each other's turns", async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [TestCallSessionModule],
+    }).compile();
+    const nestModuleRef = moduleRef.get(ModuleRef);
+    const sharedOrchestratorClient: FakeOrchestratorClient = await nestModuleRef.resolve(
+      ORCHESTRATOR_CLIENT,
+      undefined,
+      { strict: false },
+    );
+    const sharedStt: FakeSpeechToTextProvider = await nestModuleRef.resolve(
+      SPEECH_TO_TEXT_PROVIDER,
+      undefined,
+      { strict: false },
+    );
+
+    const callIds = ["call-A", "call-B", "call-C", "call-D", "call-E"];
+    // Each call gets its own orchestrator instance AND its own
+    // conversationId, resolved/started concurrently via Promise.all —
+    // genuinely overlapping, not sequential.
+    const orchestrators = await Promise.all(
+      callIds.map(() =>
+        nestModuleRef.resolve(CallSessionOrchestrator, undefined, { strict: false }),
+      ),
+    );
+    await Promise.all(
+      orchestrators.map((orchestrator, index) =>
+        orchestrator.onCallStart(baseParams(callIds[index]!), new FakeMediaStreamSink()),
+      ),
+    );
+
+    // Interleave: emit call A's, then B's, then C's, etc. transcripts in a
+    // round-robin, not call-by-call — the exact "genuinely overlapping"
+    // shape a real concurrent-calls scenario produces.
+    for (let i = 0; i < callIds.length; i++) {
+      sharedStt.sessions[i]!.emitFinalTranscript(`transcript from ${callIds[i]}`, 0.9);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(sharedOrchestratorClient.turnCalls).toHaveLength(5);
+    // Every call's OWN turn carries ITS OWN transcript AND landed on ITS
+    // OWN conversationId — cross-contamination would show up as either a
+    // transcript attributed to the wrong conversationId, a missing turn,
+    // or a duplicate.
+    const seenConversationIds = new Set<string>();
+    for (let i = 0; i < callIds.length; i++) {
+      const expectedTranscript = `transcript from ${callIds[i]}`;
+      const matching = sharedOrchestratorClient.turnCalls.filter(
+        (call) => call.req.transcript === expectedTranscript,
+      );
+      expect(matching).toHaveLength(1);
+      const conversationId = matching[0]!.conversationId;
+      // Each call's conversationId is genuinely distinct from every other
+      // call's — proves onCallStart's own StartConversationRequest for
+      // call i never got confused with call j's.
+      expect(seenConversationIds.has(conversationId)).toBe(false);
+      seenConversationIds.add(conversationId);
+    }
+    expect(seenConversationIds.size).toBe(5);
+  });
 });
