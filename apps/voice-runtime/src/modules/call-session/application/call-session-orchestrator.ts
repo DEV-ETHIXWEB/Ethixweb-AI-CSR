@@ -67,17 +67,62 @@ const MAX_TURN_RETRY_ATTEMPTS = 3;
 const TURN_RETRY_DELAY_MS = 500;
 /**
  * How long to wait for onInterimSpeech to confirm a SpeechStarted event
- * before treating it as noise (a breath, a cough, background audio) and
- * never firing the barge-in it would otherwise have triggered. Deepgram's
- * own interim results typically follow real speech onset within a few
- * hundred ms; this is a generous upper bound, not a tuned latency target
- * — safe to be generous because a genuine interruption that somehow
- * skips confirmation entirely is still caught by
- * handleFinalTranscript's own defensive abort-the-previous-turn guard
- * once its finalized transcript arrives, so this timer is never the ONLY
- * thing standing between a real interruption and a stuck response.
+ * before giving up and treating it as noise (a breath, a cough,
+ * background audio) — never firing the barge-in it would otherwise have
+ * triggered. This is a "how long before we give up waiting" ceiling, NOT
+ * a confirmation SLA real speech is expected to beat.
+ *
+ * FOUND LIVE, root-caused from a real ~4m44s call's own structured logs
+ * (Deepgram SpeechStarted at T, first interim result with real content
+ * at T+821ms) after a caller repeatedly complained mid-call — "why you
+ * are not giving time to speak," "i'm speaking and you are like
+ * interrupting me so much," "keep quiet" — this value used to be 500ms,
+ * based on an unverified assumption ("Deepgram's own interim results
+ * typically follow real speech onset within a few hundred ms") that this
+ * exact call disproved: the caller's real, sustained, non-backchannel
+ * speech had its first recognized interim content arrive AFTER the old
+ * 500ms window had already expired and nulled `pendingBargeInTimer` out
+ * — so `handleInterimSpeech`'s `if (!this.pendingBargeInTimer) return`
+ * guard silently discarded it, and every later interim event in the same
+ * episode, until the NEXT raw SpeechStarted fired (which Deepgram does
+ * NOT emit again mid-utterance — only once speech stops and restarts).
+ * The result: Grace's stale TTS kept playing, unaborted, for ~3.8
+ * additional seconds while the caller was audibly already speaking.
+ *
+ * The old comment's second claim — "a genuine interruption that somehow
+ * skips confirmation entirely is still caught by handleFinalTranscript's
+ * own defensive abort-the-previous-turn guard" — was ALSO disproved by
+ * the same call: that guard only ever aborted `activeTurnAbort` (an
+ * in-flight HTTP call), and by the time TTS is actually PLAYING, the
+ * turn's own HTTP call has usually already completed — there was nothing
+ * left for that guard to abort. See `handleFinalTranscript`'s own
+ * updated comment for the fix to THAT gap; the two fixes are independent
+ * layers of the same barge-in path, not duplicates of each other.
+ *
+ * 2000ms is a generous, INFERRED ceiling (not derived from a large
+ * dataset) chosen specifically to clear this real call's own 821ms
+ * worst-case with real margin, while still being short enough that true
+ * silence (nothing ever recognized after a VAD blip) resolves in a
+ * reasonable time. A pure noise event (breath, cough) essentially always
+ * produces ZERO subsequent recognized content at all, at any delay — so
+ * widening this ceiling doesn't reintroduce the ORIGINAL bug this
+ * confirmation mechanism exists to prevent (see `pendingBargeInTimer`'s
+ * own field comment), which was about having NO confirmation requirement
+ * whatsoever, not about a confirmation arriving a bit later than hoped.
+ *
+ * Configurable via `BARGE_IN_CONFIRMATION_TIMEOUT_MS` — same override
+ * pattern as `silenceCheckInTimeoutMs()` below, for the same reason: a
+ * test exercising this path with real (not fake) timers needs a way to
+ * avoid leaving a real, multi-second `setTimeout` dangling past its own
+ * completion.
  */
-const BARGE_IN_CONFIRMATION_TIMEOUT_MS = 500;
+const DEFAULT_BARGE_IN_CONFIRMATION_TIMEOUT_MS = 2000;
+
+function bargeInConfirmationTimeoutMs(): number {
+  const raw = process.env["BARGE_IN_CONFIRMATION_TIMEOUT_MS"];
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_BARGE_IN_CONFIRMATION_TIMEOUT_MS;
+}
 
 /**
  * How long Grace waits with no REAL recognized caller speech — not
@@ -526,24 +571,35 @@ export class CallSessionOrchestrator {
     // caller silence — it re-arms again, correctly, once Grace's
     // response has actually been spoken (below).
     this.disarmSilenceCheckIn();
-    // Defense-in-depth, not a behavior change in the working case: today
-    // this is always already null here, because Deepgram's SpeechStarted
-    // (which drives handleBargeIn) fires before the speech_final event
-    // that reaches this method for the SAME utterance, so the previous
-    // turn is always already aborted by the time a new one starts. But
-    // nothing here actually ENFORCED that — this method just overwrote
-    // `activeTurnAbort` unconditionally, so any future change to the
-    // barge-in trigger path (or an unexpected STT provider event
-    // ordering) could silently let two turns run concurrently, each
-    // eventually calling speak() — the exact overlapping/contradictory
-    // speech class of bug this codebase has otherwise been careful to
-    // rule out by construction. Aborting here too, at the one place that
-    // actually starts a new turn, makes that invariant hold regardless of
-    // whether the barge-in path did its job first.
-    if (this.activeTurnAbort) {
-      this.activeTurnAbort.abort();
-      this.activeTurnAbort = null;
-    }
+    // Defense-in-depth — the absolute, unconditional guarantee behind
+    // this class's own required invariant ("when the caller starts
+    // speaking, the caller takes the floor"): whatever the interim-based
+    // barge-in path did or didn't manage to do, a FINALIZED transcript
+    // arriving here is 100% certain proof the caller actually spoke, so
+    // this is the one place that must, unconditionally, stop anything
+    // stale before the new turn starts.
+    //
+    // FOUND LIVE, in the SAME real call that motivated
+    // BARGE_IN_CONFIRMATION_TIMEOUT_MS's own widened value: this used to
+    // only ever call `this.activeTurnAbort?.abort()` — aborting an
+    // in-flight HTTP call — on the reasoning that "Deepgram's
+    // SpeechStarted (which drives handleBargeIn) fires before the
+    // speech_final event for the SAME utterance, so the previous turn is
+    // always already aborted by the time a new one starts." That
+    // reasoning has a real gap this call exposed: by the time TTS is
+    // actually PLAYING (not still generating), the turn's own HTTP call
+    // has usually already completed successfully — `activeTurnAbort` is
+    // already null, so the old guard silently did nothing, and stale
+    // audio kept playing even once a fully-finalized, unambiguous new
+    // caller utterance had arrived. `handleBargeIn` already contains the
+    // correct, complete cleanup for BOTH cases (mechanism 1: abort an
+    // in-flight turn; mechanism 2: stop TTS that's playing between
+    // turns, including telling voice-orchestrator via `/interrupt` so a
+    // response the caller didn't fully hear is never durably recorded as
+    // fully delivered) — reusing it here, rather than only its narrower
+    // mechanism-1 half, closes the gap regardless of which mechanism (if
+    // either) the interim-speech path already handled.
+    this.handleBargeIn(params, sink);
     const log = this.logger.child({ tenantId: params.tenantId, callId: params.callId });
     const idempotencyKey = randomUUID();
     const conversationId = this.conversationId;
@@ -746,7 +802,7 @@ export class CallSessionOrchestrator {
     }
     this.pendingBargeInTimer = setTimeout(() => {
       this.pendingBargeInTimer = null;
-    }, BARGE_IN_CONFIRMATION_TIMEOUT_MS);
+    }, bargeInConfirmationTimeoutMs());
   }
 
   /**

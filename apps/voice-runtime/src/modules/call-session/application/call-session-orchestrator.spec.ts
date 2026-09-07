@@ -55,6 +55,14 @@ describe("CallSessionOrchestrator", () => {
     // The "silence check-in" describe block below overrides this to a
     // real, meaningful value for the tests that actually exercise it.
     process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = "5";
+    // Same rationale, same fix, for the barge-in confirmation window —
+    // widened to a real 2000ms in production (see
+    // DEFAULT_BARGE_IN_CONFIRMATION_TIMEOUT_MS's own comment for why),
+    // which left a real, dangling setTimeout in every test that goes
+    // through handleSpeechStarted without fake timers or an explicit
+    // onCallEnd. Any test that specifically exercises this window's own
+    // timing overrides it back to a real, meaningful value.
+    process.env["BARGE_IN_CONFIRMATION_TIMEOUT_MS"] = "5";
   });
   afterEach(() => {
     process.env = { ...originalEnv };
@@ -362,6 +370,151 @@ describe("CallSessionOrchestrator", () => {
 
       expect(orchestratorClient.turnCalls).toHaveLength(2);
       expect(firstTurnSignal?.aborted).toBe(true);
+    });
+
+    /**
+     * REAL-CALL REGRESSION: root-caused from a real ~4m44s call's own
+     * structured logs, where the caller repeatedly complained mid-call —
+     * "why you are not giving time to speak," "i'm speaking and you are
+     * like interrupting me so much," "keep quiet." Deepgram's first
+     * interim result with real recognized content arrived 821ms after
+     * its own SpeechStarted event — comfortably past the OLD 500ms
+     * confirmation window, which had already expired and nulled
+     * `pendingBargeInTimer` by the time that content arrived, so
+     * `handleInterimSpeech`'s own guard silently discarded it (and every
+     * later interim event in the same episode) until the NEXT raw
+     * SpeechStarted fired — which Deepgram does not emit again
+     * mid-utterance. Grace's stale TTS kept playing, unaborted, for
+     * roughly 3.8 more seconds while the caller was audibly already
+     * speaking. Runs against the REAL production default (no test
+     * override), with a real delay standing in for that exact
+     * real-world latency, to prove the widened window actually closes
+     * the gap rather than just moving a number around.
+     */
+    it("REAL-CALL REGRESSION: still confirms barge-in when real interim speech arrives ~900ms after SpeechStarted, using the real production default window", async () => {
+      const originalBargeInTimeout = process.env["BARGE_IN_CONFIRMATION_TIMEOUT_MS"];
+      delete process.env["BARGE_IN_CONFIRMATION_TIMEOUT_MS"]; // use the real DEFAULT_BARGE_IN_CONFIRMATION_TIMEOUT_MS (2000ms), not this file's own tiny test override
+      try {
+        const { orchestrator, orchestratorClient, stt } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+        orchestratorClient.hangTurnUntilAborted = true;
+
+        await orchestrator.onCallStart(baseParams(), sink);
+        const session = stt.sessions[0]!;
+        session.emitFinalTranscript("hello", 0.9);
+        await flushMicrotasks();
+        const turnSignal = orchestratorClient.turnCalls[0]?.signal;
+
+        session.emitSpeechStarted();
+        await new Promise((r) => setTimeout(r, 900)); // mirrors the real call's own 821ms gap — the OLD 500ms window would already have expired by now
+        session.emitInterimSpeech("i'm speaking and you are interrupting me so much");
+        await flushMicrotasks();
+
+        expect(turnSignal?.aborted).toBe(true);
+      } finally {
+        if (originalBargeInTimeout === undefined) {
+          delete process.env["BARGE_IN_CONFIRMATION_TIMEOUT_MS"];
+        } else {
+          process.env["BARGE_IN_CONFIRMATION_TIMEOUT_MS"] = originalBargeInTimeout;
+        }
+      }
+    }, 10000);
+
+    /**
+     * REAL-CALL REGRESSION, the second half of the same finding: even
+     * with the confirmation window fixed, a genuine interruption could
+     * still slip through if interim confirmation is delayed past
+     * whatever window is configured. `handleFinalTranscript`'s own
+     * defensive guard used to only ever abort `activeTurnAbort` (an
+     * in-flight HTTP call) — by the time TTS is actually PLAYING, that
+     * call has usually already completed, so the guard did nothing.
+     * This proves the fix: a brand new FINALIZED transcript — the one
+     * signal that's ALWAYS 100% certain proof the caller spoke,
+     * regardless of how the interim path performed — now stops stale
+     * TTS unconditionally, with no prior confirmed interim barge-in
+     * required at all.
+     */
+    it("REAL-CALL REGRESSION: a new finalized transcript stops stale TTS still playing between turns, even with no confirmed interim-speech barge-in first", async () => {
+      const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      tts.chunkDelayMs = 20;
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "You're right, I'm sorry. Go ahead — what's going on with the kitchen?",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+      session.emitFinalTranscript("why you are not giving time to speak", 0.98);
+      // Let the turn complete and TTS start playing (chunkDelayMs keeps
+      // it "playing" for a bit) — mirrors the existing mechanism-2 test's
+      // own timing.
+      await new Promise((r) => setTimeout(r, 5));
+
+      // Deliberately NO emitSpeechStarted()/emitInterimSpeech() at all —
+      // this models the exact real-call gap where the interim-confirmation
+      // path never (yet) fires, but a FINALIZED transcript arrives anyway.
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "You're absolutely right — I'll let you finish. Tell me what's happening.",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+      session.emitFinalTranscript("i'm speaking and you are like interrupting me so much", 0.99);
+      await flushMicrotasks();
+
+      expect(sink.clearCount).toBeGreaterThanOrEqual(1);
+      expect(orchestratorClient.interruptCalls).toHaveLength(1);
+    });
+
+    it("a pure noise blip (SpeechStarted with nothing ever recognized) still eventually gives up once the FULL confirmation window elapses — widening it doesn't reintroduce the original over-triggering bug", async () => {
+      const originalBargeInTimeout = process.env["BARGE_IN_CONFIRMATION_TIMEOUT_MS"];
+      process.env["BARGE_IN_CONFIRMATION_TIMEOUT_MS"] = "50";
+      try {
+        const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+        tts.chunkDelayMs = 20;
+        orchestratorClient.turnResponses = [
+          {
+            conversationId: "conv-1",
+            responseText: "Let me look that up for you, one moment please.",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+        ];
+
+        await orchestrator.onCallStart(baseParams(), sink);
+        const session = stt.sessions[0]!;
+        session.emitFinalTranscript("hello", 0.9);
+        await new Promise((r) => setTimeout(r, 5));
+
+        session.emitSpeechStarted();
+        await new Promise((r) => setTimeout(r, 80)); // past the 50ms window, nothing ever confirmed
+        // A LATE interim event arriving after the window already gave up
+        // must not retroactively fire a barge-in — deliberately NOT a
+        // backchannel phrase, so this proves the timer-expiry gate itself
+        // (not the separate isPureBackchannel gate) is what's blocking it.
+        session.emitInterimSpeech("something completely different happened just now");
+        await flushMicrotasks();
+
+        expect(orchestratorClient.interruptCalls).toHaveLength(0);
+        expect(sink.clearCount).toBe(0);
+      } finally {
+        if (originalBargeInTimeout === undefined) {
+          delete process.env["BARGE_IN_CONFIRMATION_TIMEOUT_MS"];
+        } else {
+          process.env["BARGE_IN_CONFIRMATION_TIMEOUT_MS"] = originalBargeInTimeout;
+        }
+      }
     });
   });
 
