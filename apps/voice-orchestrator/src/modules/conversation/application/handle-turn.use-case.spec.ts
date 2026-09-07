@@ -756,6 +756,89 @@ describe("HandleTurnUseCase", () => {
       expect(sentMessage?.content).toContain("CRM/lead system is not available");
     });
 
+    /**
+     * Found LIVE, on the real freshly-deployed build, while verifying this
+     * session's own C3 fix end-to-end: a real business with genuinely no
+     * CRM integration configured produced the EXACT real-call bug this
+     * fix was supposed to close — "I'm not able to submit this from my
+     * end right now, but a team member will call you right back" — in
+     * the SAME turn createCustomer FIRST failed, not a later one. The
+     * test above only proves the reminder mechanism protects turns AFTER
+     * `crmIntegrationUnavailable` is already known true; nothing proved
+     * the turn where the flag actually FLIPS true is itself protected —
+     * and it wasn't, because `annotateCrmUnavailable` is only applied to
+     * `annotatedTranscript` at the TOP of `runTurn`, before this turn's
+     * own tool calls have run. The fix: push the same honesty rule as a
+     * synthetic `system` message immediately after the failing tool
+     * result, so the VERY NEXT completion — the one that actually
+     * generates this turn's caller-facing response — sees it too.
+     */
+    it("createCustomer failing with 'no CRM configured' for the FIRST time THIS TURN still protects THIS turn's own response, not just later ones", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          {
+            type: "tool_call",
+            toolCall: {
+              id: "call-1",
+              name: "createCustomer",
+              arguments: {
+                name: { first: "Catherine", last: "Lin" },
+                phone: "+15552014477",
+                source: "ai_csr",
+              },
+            },
+          },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [
+          {
+            type: "text_delta",
+            text: "I'm not able to submit this from my end right now.",
+          },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const createCustomerHandler = {
+        execute: jest
+          .fn()
+          .mockRejectedValue(
+            new ToolHandlerError(
+              'core-api POST /internal/customers failed (404): {"statusCode":404,"message":"No active CRM integration is configured for business biz-1.","error":"NoCrmIntegrationConfiguredError"}',
+              false,
+            ),
+          ),
+      };
+      const { useCase, repository: repo } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "createCustomer", handler: createCustomerHandler }],
+      });
+
+      await useCase.execute(
+        baseCommand({ transcript: "that's everything, thanks", allowedTools: ["createCustomer"] }),
+      );
+
+      // The SECOND completion (after the tool result) is the one that
+      // actually generates the caller-facing response this turn — its
+      // OWN request to the model must already carry the honesty rule,
+      // not just conversation.crmIntegrationUnavailable being true
+      // AFTERWARD for some future turn.
+      const secondRequestMessages = aiProvider.requests[1]?.messages ?? [];
+      const systemNote = secondRequestMessages.find(
+        (m) => m.role === "system" && m.content.includes("CRM/lead system is not available"),
+      );
+      expect(systemNote).toBeDefined();
+      expect(systemNote?.content).toContain(
+        "Never tell the caller a team member will call them back",
+      );
+
+      const saved = await repo.findById("tenant-1", "conv-1");
+      expect(saved?.crmIntegrationUnavailable).toBe(true);
+    });
+
     it("createCustomer SUCCEEDS — reminder switches from 'call createCustomer' to 'call createLead', never re-suggests createCustomer again", async () => {
       const repository = new FakeConversationRepository();
       const priorTranscript = fillerTranscript(6);

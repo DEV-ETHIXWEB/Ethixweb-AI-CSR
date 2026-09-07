@@ -536,6 +536,12 @@ export class HandleTurnUseCase {
         break;
       }
 
+      // Set inside the tool-call loop below when a createCustomer/
+      // createLead call newly discovers a permanent CRM outage THIS
+      // iteration — see the flag's own read site (right after the loop)
+      // for why the honesty-rule injection has to wait until every tool
+      // result this iteration has already been pushed.
+      let crmJustBecameUnavailable = false;
       for (const toolCall of toolCalls) {
         toolCallsExecuted.push(toolCall.name);
         if (toolCall.name === "escalateEmergency") {
@@ -564,9 +570,11 @@ export class HandleTurnUseCase {
         );
         if (
           (toolCall.name === "createCustomer" || toolCall.name === "createLead") &&
-          isCrmUnavailableError(output)
+          isCrmUnavailableError(output) &&
+          !conversation.crmIntegrationUnavailable
         ) {
           conversation.crmIntegrationUnavailable = true;
+          crmJustBecameUnavailable = true;
         }
         pushMessage({
           role: "tool",
@@ -579,6 +587,42 @@ export class HandleTurnUseCase {
         if (toolEscalation) {
           escalation = toolEscalation;
         }
+      }
+      if (crmJustBecameUnavailable) {
+        // Found LIVE while verifying this exact fix against the real,
+        // freshly-deployed build — and the FIRST version of this fix
+        // itself broke the turn outright: pushing this system message
+        // BEFORE the tool result (inline in the loop above) put it
+        // BETWEEN the assistant's tool_use and its required tool_result,
+        // which Anthropic's API rejects outright ("tool_use ids were
+        // found without tool_result blocks immediately after") — a real,
+        // live 400 on every affected turn, caught by re-running this
+        // exact scenario against the real API after the first attempt.
+        // Pushed here instead, strictly AFTER every tool result this
+        // iteration has already been appended (never interleaved with
+        // an unresolved tool_use), so the ordering constraint always
+        // holds regardless of how many tool calls happened this batch.
+        //
+        // The reason this needs to exist here at all: a business with
+        // genuinely no CRM integration configured produced the EXACT
+        // real-call bug this session's own C3 fix targets — "I'm not
+        // able to submit this from my end right now, but a team member
+        // will call you right back" — in the SAME turn createCustomer
+        // first failed. The durable-flag annotation
+        // (`annotateCrmUnavailable`, injected into `annotatedTranscript`
+        // at the TOP of `runTurn`) only protects turns AFTER this one,
+        // since it's computed from `conversation.crmIntegrationUnavailable`
+        // BEFORE this turn's own tool calls ever ran — the turn where the
+        // failure is actually discovered had no such protection at all.
+        // Pushing the same honesty rule as a synthetic `system` message
+        // here, before the NEXT completion iteration generates the
+        // caller-facing response, closes that gap for the turn that
+        // needs it most: the one where the false promise actually
+        // happened in the real call.
+        pushMessage({
+          role: "system",
+          content: CRM_UNAVAILABLE_NOTE,
+        });
       }
     }
 
@@ -1335,18 +1379,18 @@ function annotateMissingLead(transcript: string, customerCreated: boolean): stri
  * lesson already applied to escalateEmergency/searchCustomer/the
  * missing-lead reminder itself.
  */
+const CRM_UNAVAILABLE_NOTE =
+  "[this business's CRM/lead system is not available this call — " +
+  "createCustomer and createLead cannot succeed no matter how the " +
+  "arguments are worded. Never tell the caller a team member will " +
+  "call them back, that their information has been submitted, or " +
+  "that anyone will follow up — none of that can actually happen " +
+  "right now. Be honest that you're not able to submit this from " +
+  "your end at the moment; suggest they call back directly if it's " +
+  "urgent, and otherwise keep helping with whatever else they need.]";
+
 function annotateCrmUnavailable(transcript: string): string {
-  return (
-    "[this business's CRM/lead system is not available this call — " +
-    "createCustomer and createLead cannot succeed no matter how the " +
-    "arguments are worded. Never tell the caller a team member will " +
-    "call them back, that their information has been submitted, or " +
-    "that anyone will follow up — none of that can actually happen " +
-    "right now. Be honest that you're not able to submit this from " +
-    "your end at the moment; suggest they call back directly if it's " +
-    "urgent, and otherwise keep helping with whatever else they need.] " +
-    transcript
-  );
+  return `${CRM_UNAVAILABLE_NOTE} ${transcript}`;
 }
 
 /**
