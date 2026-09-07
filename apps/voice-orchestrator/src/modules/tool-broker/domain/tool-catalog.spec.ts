@@ -1,4 +1,4 @@
-import { CreateCustomerInputSchema } from "./tool-catalog";
+import { CreateCustomerInputSchema, TOOL_CATALOG } from "./tool-catalog";
 
 describe("CreateCustomerInputSchema", () => {
   /**
@@ -52,5 +52,61 @@ describe("CreateCustomerInputSchema", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+  /**
+   * M1 (real forensic call finding): the model once sent `name` as a bare
+   * string ("Akash") instead of the required `{first, last}` object, and
+   * separately omitted `phone` entirely on the same call despite a valid
+   * Caller ANI being available the whole time. The mission's own
+   * instruction was explicit: do NOT weaken this schema to work around
+   * that — the fix belongs in the SMALLEST layer that actually caused it
+   * (the tool's own per-field descriptions, see the `TOOL_CATALOG`
+   * describe block below), not in loosened validation. This is the
+   * guardrail that proves that boundary was respected.
+   */
+  it("M1 GUARDRAIL: still rejects `name` as a bare string — the schema fix boundary was never touched", () => {
+    const result = CreateCustomerInputSchema.safeParse({
+      name: "Akash",
+      phone: "+15551234567",
+      source: "ai_csr",
+    });
+
+    expect(result.success).toBe(false);
+  });
+});
+
+/**
+ * M1: the real, traced root cause was that `createCustomer`'s jsonSchema
+ * — the exact structure the model reads at the moment it constructs a
+ * tool call, more local and more direct than the platform prompt's own
+ * (already-extensive, see prompt-layers.ts) general ANI/name guidance —
+ * had a thoughtful per-field `description` on `address` but NONE at all
+ * on `name` or `phone`, the two fields that were actually wrong on the
+ * real call. `address`'s own description already proved this exact
+ * mechanism works (see tool-catalog.ts's own comment on why `address`
+ * became optional); `name`/`phone` simply never got the same treatment.
+ */
+describe("TOOL_CATALOG createCustomer — per-field descriptions (M1)", () => {
+  const createCustomer = TOOL_CATALOG.find((tool) => tool.name === "createCustomer");
+  const nameProperty = (createCustomer?.jsonSchema["properties"] as Record<string, any>)?.["name"];
+  const phoneProperty = (createCustomer?.jsonSchema["properties"] as Record<string, any>)?.[
+    "phone"
+  ];
+
+  it("the `name` property's own description explicitly says it must be an object, never a plain string", () => {
+    expect(nameProperty?.description).toEqual(
+      expect.stringContaining("never a single combined string"),
+    );
+    expect(nameProperty?.description).toEqual(expect.stringContaining("object"));
+  });
+
+  it("the `phone` property's own description explicitly points the model at the caller's ANI instead of leaving it to omit the field", () => {
+    expect(phoneProperty?.description).toEqual(expect.stringContaining("Caller ANI"));
+    expect(phoneProperty?.description).toEqual(expect.stringContaining("E.164"));
+  });
+
+  it("the required array is unchanged — name/phone/source still required, this was a description-only fix", () => {
+    expect(createCustomer?.jsonSchema["required"]).toEqual(["name", "phone", "source"]);
   });
 });

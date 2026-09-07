@@ -126,11 +126,20 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
     name: "searchCustomer",
     version: "v1",
     description:
-      "Look up an existing customer by phone before ever creating one. First tool called on every inbound call.",
+      "Look up an existing customer by phone before ever creating one. First tool called on every " +
+      "inbound call. Use the caller's own Caller ANI already in your context for this — don't ask " +
+      "the caller to read their number out loud just to run this lookup.",
     inputSchema: SearchCustomerInputSchema,
     jsonSchema: {
       type: "object",
-      properties: { phone: { type: "string" } },
+      properties: {
+        phone: {
+          type: "string",
+          description:
+            "The caller's phone number, E.164 format (e.g. +15551234567) — this is the caller's " +
+            "own Caller ANI already in your context, not something to ask them for first.",
+        },
+      },
       required: ["phone"],
     },
     timeoutMs: 2000,
@@ -151,10 +160,20 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
       properties: {
         name: {
           type: "object",
+          description:
+            "REQUIRED as an object with first and last — never a single combined string. " +
+            "Split whatever the caller said the same way you always do: if they gave both in " +
+            "one breath (e.g. 'Akash Kumar'), the first word is first and the rest is last.",
           properties: { first: { type: "string" }, last: { type: "string" } },
           required: ["first", "last"],
         },
-        phone: { type: "string" },
+        phone: {
+          type: "string",
+          description:
+            "The caller's phone number, E.164 format (e.g. +15551234567). Use the caller's own " +
+            "Caller ANI already in your context unless they've explicitly given a different " +
+            "number to use instead — don't omit this waiting for them to read a number aloud.",
+        },
         email: { type: "string" },
         address: {
           type: "object",

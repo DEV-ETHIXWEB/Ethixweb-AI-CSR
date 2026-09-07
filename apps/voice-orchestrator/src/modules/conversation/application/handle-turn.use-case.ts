@@ -376,6 +376,25 @@ export class HandleTurnUseCase {
       // that is — that's exactly where the real false promise was said.
       annotatedTranscript = annotateCrmUnavailable(annotatedTranscript);
     }
+    if (conversation.lastServiceAreaCheck) {
+      // H2: same "inject every remaining turn" reliability rationale as
+      // annotateCrmUnavailable above — the raw getServiceAreas tool
+      // result ages out of visible context once compressMessages
+      // (context-window.ts) drops old `role: "tool"` entries, and a wrong
+      // service-area answer later in a long call (re-guessed instead of
+      // recalled) is a real customer-facing harm, not just a wasted
+      // round-trip.
+      annotatedTranscript = annotateServiceAreaResult(
+        annotatedTranscript,
+        conversation.lastServiceAreaCheck,
+      );
+    }
+    if (conversation.lastBusinessHoursCheck) {
+      annotatedTranscript = annotateBusinessHoursResult(
+        annotatedTranscript,
+        conversation.lastBusinessHoursCheck,
+      );
+    }
     pushMessage({
       role: "user",
       content: annotatedTranscript,
@@ -531,6 +550,12 @@ export class HandleTurnUseCase {
         }
         if (toolCall.name === "createCustomer") {
           conversation.customerCaptureAttempted = true;
+        }
+        if (toolCall.name === "getServiceAreas") {
+          conversation.serviceAreaChecked = true;
+        }
+        if (toolCall.name === "getBusinessHours") {
+          conversation.businessHoursChecked = true;
         }
         const { output, escalation: toolEscalation } = await this.runTool(
           conversation,
@@ -690,6 +715,13 @@ export class HandleTurnUseCase {
       searchCustomerEverChecked: Boolean(
         conversation.searchCustomerEverChecked || fresh.searchCustomerEverChecked,
       ),
+      serviceAreaChecked: Boolean(conversation.serviceAreaChecked || fresh.serviceAreaChecked),
+      businessHoursChecked: Boolean(
+        conversation.businessHoursChecked || fresh.businessHoursChecked,
+      ),
+      lastServiceAreaCheck: conversation.lastServiceAreaCheck ?? fresh.lastServiceAreaCheck ?? null,
+      lastBusinessHoursCheck:
+        conversation.lastBusinessHoursCheck ?? fresh.lastBusinessHoursCheck ?? null,
       ...((conversation.lastEmergencyCheckedTranscript ?? fresh.lastEmergencyCheckedTranscript) !==
       undefined
         ? {
@@ -955,6 +987,7 @@ export class HandleTurnUseCase {
           conversation,
           toolCall.name,
           result.output,
+          toolCall.arguments,
         );
         return { output: result.output, ...(escalation ? { escalation } : {}) };
       }
@@ -988,6 +1021,7 @@ export class HandleTurnUseCase {
     conversation: Conversation,
     toolName: string,
     output: unknown,
+    toolArguments: Record<string, unknown>,
   ): Promise<{ severity: string; action: string; transferDestination: string | null } | undefined> {
     if (
       toolName === "createCustomer" &&
@@ -995,6 +1029,29 @@ export class HandleTurnUseCase {
       typeof output["customer_id"] === "string"
     ) {
       conversation.customerId = output["customer_id"];
+      return undefined;
+    }
+
+    if (
+      toolName === "getServiceAreas" &&
+      isRecord(output) &&
+      typeof output["inServiceArea"] === "boolean"
+    ) {
+      const zip = typeof toolArguments["zip"] === "string" ? toolArguments["zip"] : "";
+      conversation.lastServiceAreaCheck = { zip, inServiceArea: output["inServiceArea"] };
+      return undefined;
+    }
+
+    if (
+      toolName === "getBusinessHours" &&
+      isRecord(output) &&
+      typeof output["isOpen"] === "boolean"
+    ) {
+      conversation.lastBusinessHoursCheck = {
+        isOpen: output["isOpen"],
+        isHoliday: output["isHoliday"] === true,
+        ...(typeof output["opensAt"] === "string" ? { opensAt: output["opensAt"] } : {}),
+      };
       return undefined;
     }
 
@@ -1290,6 +1347,42 @@ function annotateCrmUnavailable(transcript: string): string {
     "urgent, and otherwise keep helping with whatever else they need.] " +
     transcript
   );
+}
+
+/**
+ * H2: durable ground truth for a service-area result already established
+ * this call — see `Conversation.lastServiceAreaCheck`'s own comment for
+ * why this needs an active, every-turn reminder rather than relying on
+ * the model to recall its own earlier narration once that narration ages
+ * out of the compacted message history.
+ */
+function annotateServiceAreaResult(
+  transcript: string,
+  result: { zip: string; inServiceArea: boolean },
+): string {
+  const zipPhrase = result.zip ? `zip ${result.zip}` : "the caller's zip";
+  const note = result.inServiceArea
+    ? `[already confirmed this call: ${zipPhrase} IS within the service area — don't re-ask or contradict this]`
+    : `[already confirmed this call: ${zipPhrase} is NOT within the service area — don't re-ask or contradict this; a DIFFERENT zip the caller gives would need its own fresh getServiceAreas check]`;
+  return `${note} ${transcript}`;
+}
+
+/** H2: same rationale as `annotateServiceAreaResult`, for `getBusinessHours`. */
+function annotateBusinessHoursResult(
+  transcript: string,
+  result: { isOpen: boolean; opensAt?: string | null; isHoliday: boolean },
+): string {
+  let fact: string;
+  if (result.isHoliday) {
+    fact = "closed (holiday)";
+  } else if (result.isOpen) {
+    fact = "open";
+  } else if (result.opensAt) {
+    fact = `closed (reopens ${result.opensAt})`;
+  } else {
+    fact = "closed";
+  }
+  return `[already confirmed this call via getBusinessHours: the business is ${fact} — don't re-ask or contradict this] ${transcript}`;
 }
 
 /**

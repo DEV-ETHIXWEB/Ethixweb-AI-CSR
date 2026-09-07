@@ -71,6 +71,58 @@ describe("compressMessages", () => {
     expect(afterSecondPass).toContain("Akash Kumar");
   });
 
+  /**
+   * H2: `dropped.map(...)` only ever reads `message.content` for a
+   * user/assistant line — never `message.toolCalls` — so a tool call's
+   * own arguments (which can carry a caller's phone number, address, or
+   * other sensitive payload) structurally cannot appear in the compacted
+   * summary text even when the ASSISTANT message that requested it is
+   * itself kept in the fold (only role "tool" — the raw result — is
+   * dropped outright; the requesting assistant message's `content`, not
+   * its `toolCalls`, is what gets folded in). Explicit regression for the
+   * H2 mission requirement that no raw sensitive payload leaks into a
+   * durable, potentially-logged summary string.
+   */
+  it("never leaks a tool call's own structured arguments (a caller's phone number, address, etc.) into the compacted summary — only what the caller/agent actually SAID in plain text is preserved", () => {
+    // Deliberately NOT spoken aloud in any user/assistant text — this
+    // models the realistic case where the caller gave these details over
+    // several EARLIER turns (already summarized away) and the model is
+    // now just submitting the structured record silently, with no new
+    // narration of its own that turn (`content: ""`, tool calls only).
+    const sensitivePhone = "555-201-4477";
+    const sensitiveAddress = "742 Evergreen Terrace";
+    const messages: AiMessage[] = [
+      { role: "user", content: "go ahead and submit that" },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          {
+            id: "call-1",
+            name: "createCustomer",
+            arguments: {
+              name: { first: "Jordan", last: "Ellis" },
+              phone: sensitivePhone,
+              address: { street: sensitiveAddress },
+              source: "ai_csr",
+            },
+          },
+        ],
+      },
+      { role: "tool", toolCallId: "call-1", content: JSON.stringify({ customer_id: "cust-1" }) },
+      { role: "assistant", content: "Got it, you're all set." },
+      ...userMessages(DEFAULT_MAX_MESSAGES),
+    ];
+
+    const result = compressMessages(messages);
+
+    const summary = result[0]?.content ?? "";
+    expect(result[0]?.role).toBe("system");
+    expect(summary).not.toContain(sensitivePhone);
+    expect(summary).not.toContain(sensitiveAddress);
+    expect(summary).not.toContain("cust-1");
+  });
+
   it("never leaves a tool result orphaned from the assistant message that requested it", () => {
     // Build a history whose naive cut point would land exactly on a
     // `tool` message, orphaning it from its assistant tool_call.

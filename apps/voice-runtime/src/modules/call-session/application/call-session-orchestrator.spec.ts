@@ -1012,6 +1012,116 @@ describe("CallSessionOrchestrator", () => {
         jest.useRealTimers();
       }
     });
+
+    it("two concurrent calls each pending a fragment never merge into each other's turn (per-instance state, not shared)", async () => {
+      // Each live call gets its own TRANSIENT CallSessionOrchestrator
+      // instance in production (see call-session-orchestrator.scope.spec.ts
+      // for the DI-scope proof itself) — this test proves the FRAGMENT
+      // fields specifically (pendingFragment/fragmentCoalesceTimer) behave
+      // correctly under that model, using two directly-constructed
+      // instances the same way the existing silence-timer isolation test
+      // above does.
+      jest.useFakeTimers();
+      try {
+        const callA = buildOrchestratorWithSink();
+        const callB = buildOrchestratorWithSink();
+        callA.orchestratorClient.turnResponses = [
+          {
+            conversationId: "conv-a",
+            responseText: "Got it, A.",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+        ];
+        callB.orchestratorClient.turnResponses = [
+          {
+            conversationId: "conv-b",
+            responseText: "Got it, B.",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+        ];
+
+        await callA.orchestrator.onCallStart(baseParams({ callId: "call-a" }), callA.sink);
+        await callB.orchestrator.onCallStart(baseParams({ callId: "call-b" }), callB.sink);
+
+        // Both calls leave a fragment pending at the same moment.
+        callA.stt.sessions[0]!.emitFinalTranscript("can you", 1.0);
+        callB.stt.sessions[0]!.emitFinalTranscript("i was fixing my", 0.9);
+        await jest.advanceTimersByTimeAsync(0);
+        expect(callA.orchestratorClient.turnCalls).toHaveLength(0);
+        expect(callB.orchestratorClient.turnCalls).toHaveLength(0);
+
+        // Only call A's fragment is completed by a follow-up piece.
+        callA.stt.sessions[0]!.emitFinalTranscript("answer my question first", 0.99);
+        await jest.advanceTimersByTimeAsync(1300); // past the window for both
+
+        expect(callA.orchestratorClient.turnCalls).toHaveLength(1);
+        expect(callA.orchestratorClient.turnCalls[0]?.req.transcript).toBe(
+          "can you answer my question first",
+        );
+        // Call B's fragment must commit on its OWN, unmerged with A's text
+        // or A's timer — proving the fields are per-instance, not shared
+        // module-level state.
+        expect(callB.orchestratorClient.turnCalls).toHaveLength(1);
+        expect(callB.orchestratorClient.turnCalls[0]?.req.transcript).toBe("i was fixing my");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("low STT confidence never changes fragment-coalescing behavior — the heuristic reads only transcript shape, not confidence", async () => {
+      // Confidence-driven handling (annotateLowConfidenceTranscript) is a
+      // separate, later concern in voice-orchestrator's own prompt layer —
+      // waiting longer for more audio doesn't make a misheard WORD any
+      // clearer, so fragment coalescing must not treat low confidence as
+      // its own signal to wait, nor skip waiting for a low-confidence
+      // fragment-shaped piece. Both directions are asserted here.
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, orchestratorClient, stt, sink } = buildOrchestratorWithSink();
+        orchestratorClient.turnResponses = [
+          {
+            conversationId: "conv-1",
+            responseText: "Got it.",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+          {
+            conversationId: "conv-1",
+            responseText: "Go ahead.",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+        ];
+        await orchestrator.onCallStart(baseParams(), sink);
+        const session = stt.sessions[0]!;
+
+        // A complete-looking utterance at very LOW confidence still
+        // commits immediately — low confidence alone never triggers a
+        // coalescing wait.
+        session.emitFinalTranscript("yeah", 0.15);
+        await jest.advanceTimersByTimeAsync(0);
+        expect(orchestratorClient.turnCalls).toHaveLength(1);
+        expect(orchestratorClient.turnCalls[0]?.req.transcript).toBe("yeah");
+
+        // A fragment-shaped utterance at very low confidence is still
+        // coalesced exactly like a high-confidence one — no separate
+        // low-confidence code path skips the wait.
+        session.emitFinalTranscript("can you", 0.2);
+        await jest.advanceTimersByTimeAsync(500);
+        expect(orchestratorClient.turnCalls).toHaveLength(1); // still waiting
+        await jest.advanceTimersByTimeAsync(800);
+        expect(orchestratorClient.turnCalls).toHaveLength(2);
+        expect(orchestratorClient.turnCalls[1]?.req.transcript).toBe("can you");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
   });
 
   describe("duplicate turn (idempotency)", () => {

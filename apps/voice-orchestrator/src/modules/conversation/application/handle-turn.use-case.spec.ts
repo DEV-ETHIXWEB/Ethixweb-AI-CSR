@@ -852,6 +852,156 @@ describe("HandleTurnUseCase", () => {
       expect(sentMessage2?.content).toBe("anything else");
     });
 
+    /**
+     * Phase 5 critical re-review gap: every existing test above triggers
+     * `crmIntegrationUnavailable` via `createCustomer` specifically —
+     * `isCrmUnavailableError`'s own check (handle-turn.use-case.ts) is
+     * unconditionally applied to BOTH `createCustomer` and `createLead`,
+     * but nothing proved that for `createLead` on its own (the case where
+     * a customer record already exists — createCustomer already
+     * succeeded — and it's `createLead` itself that hits "no CRM
+     * configured," not createCustomer).
+     */
+    it("createLead (not createCustomer) hitting the exact NoCrmIntegrationConfiguredError shape ALSO sets crmIntegrationUnavailable and triggers the same honesty annotation", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation({ transcript: fillerTranscript(6), customerId: "cust-42" }));
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          {
+            type: "tool_call",
+            toolCall: {
+              id: "call-1",
+              name: "createLead",
+              arguments: {
+                customer_id: "cust-42",
+                problem_summary: "water heater out",
+                priority: "routine",
+                lead_type: "residential",
+              },
+            },
+          },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [
+          { type: "text_delta", text: "Got it." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const createLeadHandler = {
+        execute: jest
+          .fn()
+          .mockRejectedValue(
+            new ToolHandlerError(
+              'core-api POST /internal/leads failed (404): {"statusCode":404,"message":"No active CRM integration is configured for business biz-1.","error":"NoCrmIntegrationConfiguredError"}',
+              false,
+            ),
+          ),
+      };
+      const { useCase, repository: repo } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "createLead", handler: createLeadHandler }],
+      });
+
+      await useCase.execute(
+        baseCommand({ transcript: "yes please submit it", allowedTools: ["createLead"] }),
+      );
+
+      const saved = await repo.findById("tenant-1", "conv-1");
+      expect(saved?.crmIntegrationUnavailable).toBe(true);
+      expect(saved?.leadId).toBeFalsy();
+
+      const aiProvider2 = new FakeAiProvider();
+      aiProvider2.responses = [
+        [
+          { type: "text_delta", text: "I hear you." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const { useCase: useCase2 } = buildUseCase({ aiProvider: aiProvider2, repository: repo });
+      await useCase2.execute(baseCommand({ transcript: "will someone call me back?" }));
+      const sentMessage = aiProvider2.requests[0]?.messages.filter((m) => m.role === "user").pop();
+      expect(sentMessage?.content).toContain("CRM/lead system is not available");
+    });
+
+    /**
+     * The other half of the same distinction: a GENERIC/transient tool
+     * failure (a timeout, a 5xx, anything NOT matching the exact
+     * NoCrmIntegrationConfiguredError shape) must NOT be mistaken for a
+     * permanent CRM outage — `isCrmUnavailableError` matches on an exact
+     * error-class-name substring specifically so a real transient failure
+     * stays retryable (the reminder keeps nudging, matching the
+     * validation-rejection test above) rather than permanently silencing
+     * every future createCustomer/createLead attempt this call over what
+     * might just be a momentary blip.
+     */
+    it("a GENERIC/transient createCustomer failure (not the exact NoCrmIntegrationConfiguredError shape) does NOT set crmIntegrationUnavailable — stays retryable", async () => {
+      const repository = new FakeConversationRepository();
+      const priorTranscript = fillerTranscript(6);
+      repository.seed(baseConversation({ transcript: priorTranscript }));
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          {
+            type: "tool_call",
+            toolCall: {
+              id: "call-1",
+              name: "createCustomer",
+              arguments: {
+                name: { first: "Akash", last: "Kumar" },
+                phone: "+15551234567",
+                source: "ai_csr",
+              },
+            },
+          },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [
+          { type: "text_delta", text: "Let me try that again." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const createCustomerHandler = {
+        execute: jest
+          .fn()
+          .mockRejectedValue(
+            new ToolHandlerError(
+              "core-api POST /internal/customers failed (503): upstream timeout",
+              true,
+            ),
+          ),
+      };
+      const { useCase, repository: repo } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "createCustomer", handler: createCustomerHandler }],
+      });
+
+      await useCase.execute(
+        baseCommand({ transcript: "my name is akash kumar", allowedTools: ["createCustomer"] }),
+      );
+
+      const saved = await repo.findById("tenant-1", "conv-1");
+      expect(saved?.customerCaptureAttempted).toBe(true);
+      expect(saved?.crmIntegrationUnavailable).toBeFalsy();
+
+      // The reminder must still nudge toward retrying — a transient
+      // failure is not a permanent one.
+      const aiProvider2 = new FakeAiProvider();
+      aiProvider2.responses = [
+        [
+          { type: "text_delta", text: "Got it." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const { useCase: useCase2 } = buildUseCase({ aiProvider: aiProvider2, repository: repo });
+      await useCase2.execute(baseCommand({ transcript: "still there?" }));
+      const sentMessage = aiProvider2.requests[0]?.messages.filter((m) => m.role === "user").pop();
+      expect(sentMessage?.content).toContain("call createCustomer now");
+      expect(sentMessage?.content).not.toContain("CRM/lead system is not available");
+    });
+
     it("survives context compaction: crmIntegrationUnavailable, customerId, and customerCaptureAttempted all persist as durable Conversation fields, not message-history-derived state", async () => {
       const repository = new FakeConversationRepository();
       // A long prior message history — enough to force compressMessages
@@ -893,6 +1043,231 @@ describe("HandleTurnUseCase", () => {
       const sentMessage = aiProvider.requests[0]?.messages.filter((m) => m.role === "user").pop();
       expect(sentMessage?.content).toContain("CRM/lead system is not available");
       expect(sentMessage?.content).not.toContain("call createCustomer now");
+    });
+  });
+
+  /**
+   * H2: extends the exact same durable-outcome pattern C2 above already
+   * established for createCustomer/createLead to `getServiceAreas` and
+   * `getBusinessHours` — neither had ANY durable tracking before this:
+   * their raw tool call/result lived only in `messages`, which
+   * `compressMessages` (context-window.ts) silently drops (the "tool"
+   * role) once a long call passes the compaction threshold. A wrong
+   * service-area or business-hours answer later in a long call — guessed
+   * or re-derived instead of recalled — is a real customer-facing harm
+   * (falsely telling a serviceable caller they're out of area, or vice
+   * versa), not just a wasted round-trip.
+   */
+  describe("getServiceAreas / getBusinessHours durable outcome tracking — H2", () => {
+    it("getServiceAreas success sets both the attempt flag and the durable outcome, reading the zip from the tool call's own arguments", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          {
+            type: "tool_call",
+            toolCall: { id: "call-1", name: "getServiceAreas", arguments: { zip: "94107" } },
+          },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [
+          { type: "text_delta", text: "Yep, we cover that area." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const handler = { execute: jest.fn().mockResolvedValue({ inServiceArea: true }) };
+      const { useCase, repository: repo } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "getServiceAreas", handler }],
+      });
+
+      await useCase.execute(
+        baseCommand({ transcript: "my zip is 94107", allowedTools: ["getServiceAreas"] }),
+      );
+
+      const saved = await repo.findById("tenant-1", "conv-1");
+      expect(saved?.serviceAreaChecked).toBe(true);
+      expect(saved?.lastServiceAreaCheck).toEqual({ zip: "94107", inServiceArea: true });
+    });
+
+    it("getServiceAreas success (OUT of area) sets the durable outcome and its own annotation on the NEXT turn never claims the caller IS covered", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          {
+            type: "tool_call",
+            toolCall: { id: "call-1", name: "getServiceAreas", arguments: { zip: "00501" } },
+          },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [
+          { type: "text_delta", text: "Unfortunately we don't cover that area." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const handler = { execute: jest.fn().mockResolvedValue({ inServiceArea: false }) };
+      const { useCase, repository: repo } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "getServiceAreas", handler }],
+      });
+      await useCase.execute(
+        baseCommand({ transcript: "my zip is 00501", allowedTools: ["getServiceAreas"] }),
+      );
+
+      const aiProvider2 = new FakeAiProvider();
+      aiProvider2.responses = [
+        [
+          { type: "text_delta", text: "Right, still can't get out there." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const { useCase: useCase2 } = buildUseCase({ aiProvider: aiProvider2, repository: repo });
+      await useCase2.execute(baseCommand({ transcript: "so can someone come out?" }));
+
+      const sentMessage = aiProvider2.requests[0]?.messages.filter((m) => m.role === "user").pop();
+      expect(sentMessage?.content).toContain("00501");
+      expect(sentMessage?.content).toContain("is NOT within the service area");
+      expect(sentMessage?.content).not.toMatch(/00501 IS within/);
+    });
+
+    it("getBusinessHours success sets both the attempt flag and the durable outcome", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          {
+            type: "tool_call",
+            toolCall: { id: "call-1", name: "getBusinessHours", arguments: {} },
+          },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [
+          { type: "text_delta", text: "We're open right now." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const handler = {
+        execute: jest.fn().mockResolvedValue({ isOpen: true, isHoliday: false }),
+      };
+      const { useCase, repository: repo } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "getBusinessHours", handler }],
+      });
+
+      await useCase.execute(
+        baseCommand({ transcript: "are you open?", allowedTools: ["getBusinessHours"] }),
+      );
+
+      const saved = await repo.findById("tenant-1", "conv-1");
+      expect(saved?.businessHoursChecked).toBe(true);
+      expect(saved?.lastBusinessHoursCheck).toEqual({ isOpen: true, isHoliday: false });
+    });
+
+    it("survives context compaction: lastServiceAreaCheck and lastBusinessHoursCheck persist as durable Conversation fields and are correctly re-injected on a later turn", async () => {
+      const repository = new FakeConversationRepository();
+      const longHistory: Array<{ role: "user" | "assistant"; content: string }> = Array.from(
+        { length: 50 },
+        (_unused, index) => ({
+          role: index % 2 === 0 ? "user" : "assistant",
+          content: `filler message ${index}`,
+        }),
+      );
+      repository.seed(
+        baseConversation({
+          transcript: fillerTranscript(6),
+          messages: longHistory,
+          serviceAreaChecked: true,
+          lastServiceAreaCheck: { zip: "94107", inServiceArea: true },
+          businessHoursChecked: true,
+          lastBusinessHoursCheck: { isOpen: false, isHoliday: false, opensAt: "9:00 AM" },
+        }),
+      );
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          { type: "text_delta", text: "Understood." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const { useCase } = buildUseCase({ aiProvider, repository });
+
+      await useCase.execute(baseCommand({ transcript: "so can you help me or not" }));
+
+      const saved = await repository.findById("tenant-1", "conv-1");
+      expect(saved?.lastServiceAreaCheck).toEqual({ zip: "94107", inServiceArea: true });
+      expect(saved?.lastBusinessHoursCheck).toEqual({
+        isOpen: false,
+        isHoliday: false,
+        opensAt: "9:00 AM",
+      });
+      const sentMessage = aiProvider.requests[0]?.messages.filter((m) => m.role === "user").pop();
+      expect(sentMessage?.content).toContain("94107 IS within the service area");
+      expect(sentMessage?.content).toContain("closed (reopens 9:00 AM)");
+    });
+
+    it("a lost CAS race still merges this turn's OWN new lastServiceAreaCheck onto a concurrent write's OWN lastBusinessHoursCheck — neither clobbers the other", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider1 = new FakeAiProvider();
+      aiProvider1.responses = [
+        [
+          {
+            type: "tool_call",
+            toolCall: { id: "call-1", name: "getServiceAreas", arguments: { zip: "10001" } },
+          },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [
+          { type: "text_delta", text: "We cover that." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const handler = { execute: jest.fn().mockResolvedValue({ inServiceArea: true }) };
+      const { useCase: useCase1 } = buildUseCase({
+        aiProvider: aiProvider1,
+        repository,
+        registeredTools: [{ name: "getServiceAreas", handler }],
+      });
+
+      const originalSave = repository.save.bind(repository);
+      let saveCallCount = 0;
+      repository.save = async (conversation) => {
+        saveCallCount += 1;
+        if (saveCallCount === 2) {
+          // Right before turn 1's OWN final save, a concurrent write lands
+          // first (a second turn's own businessHoursChecked/
+          // lastBusinessHoursCheck, saved directly rather than via a full
+          // turn — models any other concurrent writer touching the same
+          // conversation) — this is the exact lost-CAS shape C4's own
+          // tests already exercise for transcript/messages; this proves
+          // the SAME retry-merge correctness for the two new H2 fields.
+          const fresh = await repository.findById("tenant-1", "conv-1");
+          if (fresh) {
+            await originalSave({
+              ...fresh,
+              businessHoursChecked: true,
+              lastBusinessHoursCheck: { isOpen: true, isHoliday: false },
+            });
+          }
+        }
+        return originalSave(conversation);
+      };
+
+      await useCase1.execute(
+        baseCommand({ transcript: "my zip is 10001", allowedTools: ["getServiceAreas"] }),
+      );
+
+      const saved = await repository.findById("tenant-1", "conv-1");
+      expect(saved?.lastServiceAreaCheck).toEqual({ zip: "10001", inServiceArea: true });
+      expect(saved?.businessHoursChecked).toBe(true);
+      expect(saved?.lastBusinessHoursCheck).toEqual({ isOpen: true, isHoliday: false });
     });
   });
 
@@ -1923,6 +2298,78 @@ describe("HandleTurnUseCase", () => {
       // persisted before the race even began.
       const callerTexts = stored?.transcript.filter((t) => t.speaker === "caller") ?? [];
       expect(callerTexts.filter((t) => t.text === "one last thing")).toHaveLength(1);
+    });
+
+    /**
+     * Phase 4 critical re-review — the mission's own explicit question:
+     * "if a phantom assistant response can still become ordinary
+     * conversation history, fix it." Traced the full abort chain across
+     * both services to answer this: voice-runtime's own
+     * `activeTurnAbort.abort()` (call-session-orchestrator.ts, fired both
+     * on a NEW finalized transcript and on `onCallEnd`) is wired into the
+     * REAL `fetch()` call's `signal` (http-orchestrator-client.ts), which
+     * — once this session's earlier C4 fix wired `reply.raw`'s own
+     * close/error events to an AbortController here
+     * (conversations.controller.ts) — genuinely propagates to abort THIS
+     * side's in-flight generation too, not just the client's local
+     * bookkeeping. `streamOneCompletion` already correctly returns only
+     * the partial text actually generated before that signal fires (see
+     * its own "stops the loop and marks interrupted" test above) — but
+     * nothing previously proved that partial text, and ONLY that partial
+     * text, is what ends up in BOTH the durable transcript AND the
+     * model's own `messages` history, with no divergence between them and
+     * no full/fabricated continuation appearing in either.
+     */
+    it("F/G: after a mid-stream abort, the durable transcript and the model's own messages history agree EXACTLY on the partial text actually generated — no phantom continuation in either", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const controller = new AbortController();
+      const aiProvider = new FakeAiProvider();
+      aiProvider.streamCompletion = async function* (): AsyncIterable<AiCompletionChunk> {
+        yield { type: "text_delta", text: "Sorry, let me check on that wa" };
+        controller.abort();
+        throw new DOMException("aborted", "AbortError");
+      };
+      const { useCase } = buildUseCase({ aiProvider, repository });
+
+      const result = await useCase.execute(
+        baseCommand({ transcript: "my water heater is broken", signal: controller.signal }),
+      );
+
+      expect(result.interrupted).toBe(true);
+      expect(result.responseText).toBe("Sorry, let me check on that wa");
+
+      const saved = await repository.findById("tenant-1", "conv-1");
+      const agentTexts = saved?.transcript.filter((t) => t.speaker === "agent").map((t) => t.text);
+      const assistantMessages = saved?.messages.filter((m) => m.role === "assistant");
+      // Exactly the partial text — never the full sentence it never
+      // finished, and never silently dropped/empty either.
+      expect(agentTexts).toEqual(["Sorry, let me check on that wa"]);
+      expect(assistantMessages).toHaveLength(1);
+      expect(assistantMessages?.[0]?.content).toBe("Sorry, let me check on that wa");
+      // The durable transcript and the model's own memory agree exactly —
+      // neither has MORE than the other (a phantom finished sentence in
+      // one but not the other) nor LESS (silently dropped in one but not
+      // the other).
+      expect(agentTexts?.[0]).toBe(assistantMessages?.[0]?.content);
+
+      // A SUBSEQUENT turn's own request to the model must see that exact
+      // same partial text as history — not a completed sentence it never
+      // actually said, which would let it reference content the caller
+      // never heard ("as I mentioned...").
+      const aiProvider2 = new FakeAiProvider();
+      aiProvider2.responses = [
+        [
+          { type: "text_delta", text: "Go ahead." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const { useCase: useCase2 } = buildUseCase({ aiProvider: aiProvider2, repository });
+      await useCase2.execute(baseCommand({ transcript: "hello?" }));
+      const historySentToModel = aiProvider2.requests[0]?.messages.find(
+        (m) => m.role === "assistant",
+      );
+      expect(historySentToModel?.content).toBe("Sorry, let me check on that wa");
     });
   });
 

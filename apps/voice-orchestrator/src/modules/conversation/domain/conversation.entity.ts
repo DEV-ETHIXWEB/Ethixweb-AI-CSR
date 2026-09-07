@@ -163,6 +163,45 @@ export interface Conversation {
    */
   crmIntegrationUnavailable?: boolean;
   /**
+   * True once `getServiceAreas` has executed at least one time this
+   * conversation (H2 — the same "durable flag survives compaction" shape
+   * as `searchCustomerEverChecked`/`emergencyEverChecked`). `messages`
+   * carries the raw tool call/result, but `compressMessages`
+   * (context-window.ts) deliberately drops `role: "tool"` entries once a
+   * long call passes the compaction threshold — this flag, and
+   * `lastServiceAreaCheck` below, are what's left to answer "did we
+   * already check this" once that's happened.
+   */
+  serviceAreaChecked?: boolean;
+  /**
+   * The actual outcome of the most recent `getServiceAreas` success this
+   * call — the `getServiceAreas` counterpart to `customerId`/`leadId`
+   * (a durable OUTCOME value, not just an attempt flag). Exists so a
+   * caller's own zip/in-area result can't silently flip or get re-guessed
+   * later in a long call purely because the original tool result aged out
+   * of the compacted message history — telling a serviceable caller
+   * they're out of area (or vice versa) after already having the right
+   * answer is a real customer-facing harm, not just a wasted round-trip.
+   * `zip` is read from the tool call's own arguments (the handler's output
+   * doesn't echo it back).
+   */
+  lastServiceAreaCheck?: { zip: string; inServiceArea: boolean } | null;
+  /**
+   * True once `getBusinessHours` has executed at least one time this
+   * conversation — the `getBusinessHours` counterpart to
+   * `serviceAreaChecked`. Distinct from `RuntimeContext.businessHours`
+   * (prompt/domain/runtime-context.ts), which is a "right now" snapshot
+   * baked into `systemPrompt` once at call start and is therefore already
+   * compaction-proof by construction (the system prompt is never
+   * compacted) — this instead covers a LIVE, mid-call `getBusinessHours`
+   * call the model makes for a different day/time than "now" (e.g. "are
+   * you open next Monday"), which goes through the ordinary tool loop and
+   * has no other durable record once its own message ages out of context.
+   */
+  businessHoursChecked?: boolean;
+  /** The actual outcome of the most recent `getBusinessHours` success this call — see `lastServiceAreaCheck`'s own comment for why this is tracked as a durable value, not just an attempt flag. */
+  lastBusinessHoursCheck?: { isOpen: boolean; opensAt?: string | null; isHoliday: boolean } | null;
+  /**
    * Optimistic-concurrency counter, starting at 1 on `create()` — the ONLY
    * field a use case never sets by hand; it travels unmodified from
    * whatever `findById`/`findByCallId` returned through to `save()`, which
