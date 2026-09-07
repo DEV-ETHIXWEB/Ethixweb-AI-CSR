@@ -614,6 +614,406 @@ describe("CallSessionOrchestrator", () => {
     });
   });
 
+  /**
+   * C1 — a real call's ENTIRE model output for one turn was the literal
+   * 7-character string "[pause]", no words at all. `parseDelivery`
+   * correctly recognized nothing was left to speak once the cue was
+   * stripped, but the OLD `speak()` just returned — meaning ~12 real
+   * seconds of total silence, right before the caller said "i'm just
+   * pissed right now." These prove the deterministic code-level guard:
+   * `speak()` never produces true silence, no matter what text it's
+   * given, while a cue immediately followed by real words is completely
+   * unaffected.
+   */
+  describe("silent-response guard — speak() never produces total silence — C1", () => {
+    const FALLBACK_PHRASES = ["I'm here.", "I'm listening.", "Go ahead.", "I'm with you."];
+
+    it("MISSION EXAMPLE: a response that is ONLY '[pause]' — no words at all — speaks a real fallback phrase instead of nothing", async () => {
+      const { orchestrator, orchestratorClient, stt, tts, sink } = buildOrchestratorWithSink();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "[pause]",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+      await orchestrator.onCallStart(baseParams(), sink);
+      stt.sessions[0]!.emitFinalTranscript("i know you are here", 0.9);
+      await flushMicrotasks();
+
+      const turnCalls = tts.synthesizeCalls.slice(1); // drop the greeting
+      expect(turnCalls).toHaveLength(1);
+      expect(FALLBACK_PHRASES).toContain(turnCalls[0]);
+      // Never the literal cue text, in any form.
+      expect(turnCalls[0]).not.toMatch(/[[\]]/);
+    });
+
+    it("a response that is ONLY an emotion cue ('[warmly]', no words) also gets a real fallback, not silence", async () => {
+      const { orchestrator, orchestratorClient, stt, tts, sink } = buildOrchestratorWithSink();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "[warmly]",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+      await orchestrator.onCallStart(baseParams(), sink);
+      stt.sessions[0]!.emitFinalTranscript("hello", 0.9);
+      await flushMicrotasks();
+
+      const turnCalls = tts.synthesizeCalls.slice(1);
+      expect(turnCalls).toHaveLength(1);
+      expect(FALLBACK_PHRASES).toContain(turnCalls[0]);
+    });
+
+    it("a whitespace-only response gets a real fallback, not silence", async () => {
+      const { orchestrator, orchestratorClient, stt, tts, sink } = buildOrchestratorWithSink();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "   \n  ",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+      await orchestrator.onCallStart(baseParams(), sink);
+      stt.sessions[0]!.emitFinalTranscript("hello", 0.9);
+      await flushMicrotasks();
+
+      const turnCalls = tts.synthesizeCalls.slice(1);
+      expect(turnCalls).toHaveLength(1);
+      expect(FALLBACK_PHRASES).toContain(turnCalls[0]);
+    });
+
+    it("markup-only (unsupported tag, no real words) gets a real fallback, not silence", async () => {
+      const { orchestrator, orchestratorClient, stt, tts, sink } = buildOrchestratorWithSink();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "[excitedly]",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+      await orchestrator.onCallStart(baseParams(), sink);
+      stt.sessions[0]!.emitFinalTranscript("hello", 0.9);
+      await flushMicrotasks();
+
+      const turnCalls = tts.synthesizeCalls.slice(1);
+      expect(turnCalls).toHaveLength(1);
+      expect(FALLBACK_PHRASES).toContain(turnCalls[0]);
+    });
+
+    it("does NOT rotate through the same fallback phrase twice in a row — round-robins across repeated silent turns in the same call", async () => {
+      const { orchestrator, orchestratorClient, stt, tts, sink } = buildOrchestratorWithSink();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "[pause]",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+        {
+          conversationId: "conv-1",
+          responseText: "[pause]",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+      await orchestrator.onCallStart(baseParams(), sink);
+      stt.sessions[0]!.emitFinalTranscript("first", 0.9);
+      await flushMicrotasks();
+      stt.sessions[0]!.emitFinalTranscript("second", 0.9);
+      await flushMicrotasks();
+
+      const turnCalls = tts.synthesizeCalls.slice(1);
+      expect(turnCalls).toHaveLength(2);
+      expect(turnCalls[0]).not.toBe(turnCalls[1]);
+    });
+
+    it("REGRESSION: a cue immediately followed by real words is completely unaffected — no fallback substitution, no double-speaking", async () => {
+      const { orchestrator, orchestratorClient, stt, tts, sink } = buildOrchestratorWithSink();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "[sincere] I'm sorry you're dealing with that.",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+      await orchestrator.onCallStart(baseParams(), sink);
+      stt.sessions[0]!.emitFinalTranscript("this is broken", 0.9);
+      await flushMicrotasks();
+
+      const turnCalls = tts.synthesizeCalls.slice(1);
+      expect(turnCalls).toEqual(["I'm sorry you're dealing with that."]);
+      expect(FALLBACK_PHRASES).not.toContain(turnCalls[0]);
+    });
+
+    it("REGRESSION: a normal, plain-text response is completely unaffected", async () => {
+      const { orchestrator, orchestratorClient, stt, tts, sink } = buildOrchestratorWithSink();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "Got it, what's the issue?",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+      await orchestrator.onCallStart(baseParams(), sink);
+      stt.sessions[0]!.emitFinalTranscript("hi", 0.9);
+      await flushMicrotasks();
+
+      const turnCalls = tts.synthesizeCalls.slice(1);
+      expect(turnCalls).toEqual(["Got it, what's the issue?"]);
+    });
+  });
+
+  /**
+   * H1 — a real call showed Deepgram's own endpointing (500ms silence)
+   * correctly, per its own threshold, finalizing a caller's still-forming
+   * thought as its own complete, independent turn — at least 3 confirmed
+   * instances, one directly correlating with the caller's own explicit
+   * complaint about being talked over. `looksLikeIncompleteFragment`
+   * (fragment-detector.ts) plus a bounded coalescing window
+   * (`FRAGMENT_COALESCE_WINDOW_MS`) merges a real continuation into one
+   * turn instead of two, while leaving normal-length and normal-sounding
+   * short utterances exactly as responsive as before.
+   */
+  describe("fragment coalescing (looksLikeIncompleteFragment / FRAGMENT_COALESCE_WINDOW_MS) — H1", () => {
+    // These tests advance fake time by up to a few seconds to exercise
+    // the coalescing window itself — the file's own top-level beforeEach
+    // sets SILENCE_CHECK_IN_TIMEOUT_MS to 5ms (to avoid dangling REAL
+    // timers in tests that don't otherwise care about it), which would
+    // otherwise spuriously fire mid-test here. A large value keeps it
+    // out of the way without disabling it outright.
+    const originalSilenceTimeout = process.env["SILENCE_CHECK_IN_TIMEOUT_MS"];
+    beforeEach(() => {
+      process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = "60000";
+    });
+    afterEach(() => {
+      if (originalSilenceTimeout === undefined) {
+        delete process.env["SILENCE_CHECK_IN_TIMEOUT_MS"];
+      } else {
+        process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = originalSilenceTimeout;
+      }
+    });
+
+    it("MISSION EXAMPLE: 'can you' + 'answer my question first' arriving within the window become ONE turn, not two", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, orchestratorClient, stt, tts, sink } = buildOrchestratorWithSink();
+        orchestratorClient.turnResponses = [
+          {
+            conversationId: "conv-1",
+            responseText: "Sure — go ahead.",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+        ];
+        await orchestrator.onCallStart(baseParams(), sink);
+        const session = stt.sessions[0]!;
+
+        session.emitFinalTranscript("can you", 1.0);
+        await jest.advanceTimersByTimeAsync(600);
+        session.emitFinalTranscript("answer my question first", 0.999);
+        await jest.advanceTimersByTimeAsync(1300);
+
+        expect(orchestratorClient.turnCalls).toHaveLength(1);
+        expect(orchestratorClient.turnCalls[0]?.req.transcript).toBe(
+          "can you answer my question first",
+        );
+        expect(tts.synthesizeCalls.slice(1)).toEqual(["Sure — go ahead."]);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("a fragment-looking utterance with NOTHING following commits alone once the window elapses — never lost, just delayed", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, orchestratorClient, stt, sink } = buildOrchestratorWithSink();
+        orchestratorClient.turnResponses = [
+          {
+            conversationId: "conv-1",
+            responseText: "Go ahead, I'm listening.",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+        ];
+        await orchestrator.onCallStart(baseParams(), sink);
+        const session = stt.sessions[0]!;
+
+        session.emitFinalTranscript("can you", 1.0);
+        await jest.advanceTimersByTimeAsync(500);
+        expect(orchestratorClient.turnCalls).toHaveLength(0); // still waiting
+
+        await jest.advanceTimersByTimeAsync(800); // crosses the 1200ms window
+        expect(orchestratorClient.turnCalls).toHaveLength(1);
+        expect(orchestratorClient.turnCalls[0]?.req.transcript).toBe("can you");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("MISSION EXAMPLE: a genuinely complete short answer ('yeah') is NOT flagged as a fragment — commits immediately, zero added latency", async () => {
+      const { orchestrator, orchestratorClient, stt, sink } = buildOrchestratorWithSink();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "Got it.",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+      await orchestrator.onCallStart(baseParams(), sink);
+      stt.sessions[0]!.emitFinalTranscript("yeah", 0.95);
+      await flushMicrotasks(); // no timer advance at all — proves zero added delay
+
+      expect(orchestratorClient.turnCalls).toHaveLength(1);
+      expect(orchestratorClient.turnCalls[0]?.req.transcript).toBe("yeah");
+      // This describe block's own SILENCE_CHECK_IN_TIMEOUT_MS=60000
+      // override (needed by the other tests here, which advance fake
+      // time by seconds) would otherwise leave a real, dangling 60s
+      // setTimeout armed after this specific test — the only one in
+      // this block that never advances any timer, fake or real.
+      await orchestrator.onCallEnd(baseParams(), "caller_hangup");
+    });
+
+    it("MISSION EXAMPLE: 'yes' now, then a genuinely separate 'what's your address' well after the window, stay TWO separate turns", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, orchestratorClient, stt, sink } = buildOrchestratorWithSink();
+        orchestratorClient.turnResponses = [
+          {
+            conversationId: "conv-1",
+            responseText: "Got it.",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+          {
+            conversationId: "conv-1",
+            responseText: "Thanks.",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+        ];
+        await orchestrator.onCallStart(baseParams(), sink);
+        const session = stt.sessions[0]!;
+
+        session.emitFinalTranscript("yes", 0.95);
+        await jest.advanceTimersByTimeAsync(0);
+        expect(orchestratorClient.turnCalls).toHaveLength(1); // "yes" isn't flagged — commits immediately
+
+        // A real gap, well after any coalescing window, before the caller
+        // asks something new and unrelated.
+        await jest.advanceTimersByTimeAsync(5000);
+        session.emitFinalTranscript("what's your address", 0.98);
+        await jest.advanceTimersByTimeAsync(0);
+
+        expect(orchestratorClient.turnCalls).toHaveLength(2);
+        expect(orchestratorClient.turnCalls[1]?.req.transcript).toBe("what's your address");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("a chain of 3 short fragments arriving close together all merge into ONE turn — the coalescing window re-arms on each new fragment", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, orchestratorClient, stt, sink } = buildOrchestratorWithSink();
+        orchestratorClient.turnResponses = [
+          {
+            conversationId: "conv-1",
+            responseText: "Got it.",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+        ];
+        await orchestrator.onCallStart(baseParams(), sink);
+        const session = stt.sessions[0]!;
+
+        session.emitFinalTranscript("oh sorry like", 0.9);
+        await jest.advanceTimersByTimeAsync(700);
+        session.emitFinalTranscript("i was fixing my", 0.99);
+        await jest.advanceTimersByTimeAsync(700);
+        session.emitFinalTranscript("water heater", 0.95);
+        await jest.advanceTimersByTimeAsync(1300);
+
+        expect(orchestratorClient.turnCalls).toHaveLength(1);
+        expect(orchestratorClient.turnCalls[0]?.req.transcript).toBe(
+          "oh sorry like i was fixing my water heater",
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("barge-in still fires correctly (existing mechanism, untouched) while an UNRELATED fragment coalescing window is pending on the NEXT turn", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, orchestratorClient, stt, tts, sink } = buildOrchestratorWithSink();
+        orchestratorClient.hangTurnUntilAborted = true;
+        await orchestrator.onCallStart(baseParams(), sink);
+        const session = stt.sessions[0]!;
+
+        // A normal (non-fragment) turn starts and hangs, mid-flight.
+        session.emitFinalTranscript("my water heater is broken", 0.95);
+        await jest.advanceTimersByTimeAsync(0);
+        const turnSignal = orchestratorClient.turnCalls[0]?.signal;
+        expect(turnSignal?.aborted).toBe(false);
+
+        // The caller barges in with real confirmed speech — the EXISTING
+        // barge-in mechanism (handleSpeechStarted/handleInterimSpeech),
+        // completely independent of fragment coalescing.
+        session.emitSpeechStarted();
+        session.emitInterimSpeech("wait, hold on");
+        await jest.advanceTimersByTimeAsync(0);
+
+        expect(turnSignal?.aborted).toBe(true);
+        void tts;
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("onCallEnd cleans up a pending fragment safely — no dangling timer, nothing spoken after the call ends", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, orchestratorClient, stt, sink } = buildOrchestratorWithSink();
+        await orchestrator.onCallStart(baseParams(), sink);
+        const session = stt.sessions[0]!;
+
+        session.emitFinalTranscript("can you", 1.0);
+        await jest.advanceTimersByTimeAsync(0);
+        expect(orchestratorClient.turnCalls).toHaveLength(0); // pending, waiting
+
+        await orchestrator.onCallEnd(baseParams(), "caller_hangup");
+        await jest.advanceTimersByTimeAsync(2000); // well past the window
+
+        expect(orchestratorClient.turnCalls).toHaveLength(0); // never committed
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+  });
+
   describe("duplicate turn (idempotency)", () => {
     it("generates a fresh idempotencyKey per distinct finalized transcript, not reused across separate turns", async () => {
       const { orchestrator, orchestratorClient, stt } = buildOrchestratorUnderTest();

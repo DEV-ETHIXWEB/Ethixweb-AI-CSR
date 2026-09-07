@@ -618,4 +618,34 @@ describe("assembleLayeredPrompt", () => {
     expect(prompt).toContain("never stack multiple questions in");
     expect(prompt).toContain("detail nobody asked for");
   });
+
+  /**
+   * v21, C1: a real forensic call found the model's ENTIRE output for one
+   * turn was the literal 7-character string "[pause]" — no words at all,
+   * ~12 seconds of silence immediately before the caller said "i'm just
+   * pissed right now." Nothing previously told the model a cue must
+   * accompany real words, only how to use one correctly.
+   */
+  it("instructs the model that a delivery cue can never BE the entire response — it must always accompany real words", () => {
+    const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+    expect(prompt).toContain("a delivery cue can shape a sentence, but it can never be the");
+    expect(prompt).toContain('a response of just "[pause]"');
+  });
+
+  /**
+   * v21, C3: the same real call had `createCustomer` fail twice (no CRM
+   * integration configured), and Grace told the caller twice anyway that
+   * "a team member will call you back" — confirmed false against the
+   * conversation record itself (`leadId` stayed null the whole call).
+   * `handle-turn.use-case.ts`'s own `crmIntegrationUnavailable` flag
+   * injects the exact runtime marker this rule is keyed to
+   * ("this business's CRM/lead system is flagged as unavailable this
+   * call") — see that file's own `annotateCrmUnavailable`.
+   */
+  it("instructs the model never to promise a callback/follow-up once the CRM/lead system is flagged unavailable this call", () => {
+    const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+    expect(prompt).toContain("crm/lead system is flagged as unavailable this call");
+    expect(prompt).toContain("never tell the caller a team member will call them back");
+    expect(prompt).toContain("not able to submit this from your end right now");
+  });
 });

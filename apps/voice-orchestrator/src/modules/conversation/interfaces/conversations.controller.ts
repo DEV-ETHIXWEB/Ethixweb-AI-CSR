@@ -134,6 +134,26 @@ export class ConversationsController {
     @Body() dto: HandleTurnDto,
     @Res({ passthrough: false }) reply: FastifyReply,
   ): Promise<void> {
+    // FOUND LIVE, source-traced from a real forensic call transcript:
+    // `HandleTurnCommand.signal`'s own doc comment has always claimed
+    // this "aborts the in-flight LLM stream on barge-in" — it never
+    // actually did, because nothing here ever populated it. Voice
+    // Runtime's own client-side abort (on barge-in) only ever closed ITS
+    // OWN fetch; the server kept generating, calling tools, and consuming
+    // real LLM API cost/tokens for a response nobody would ever hear,
+    // completely unaware the client had given up — confirmed directly in
+    // a real call's own logs (a full LLM completion finished, and was
+    // durably saved, for a turn the client had aborted 809ms earlier).
+    // Beyond the wasted cost, this is also the root mechanism that let a
+    // superseded turn's own generation keep mutating `conversation`
+    // concurrently with the turn that replaced it (see
+    // HandleTurnUseCase.saveTurnResult's own comment for the data-loss
+    // that produced, independently fixed there too — this closes the gap
+    // at its source instead of relying only on that fix as defense-in-
+    // depth). `reply.raw`'s own `close` event already exists below for
+    // diagnostic logging; abort the SAME signal from it rather than
+    // adding a second listener.
+    const abortController = new AbortController();
     const command = {
       tenantId: dto.tenantId,
       conversationId: id,
@@ -142,6 +162,7 @@ export class ConversationsController {
       sttConfidence: dto.sttConfidence,
       offsetMs: dto.offsetMs,
       allowedTools: dto.allowedTools,
+      signal: abortController.signal,
     };
 
     // Pre-flight checks — throws normally here, no response committed
@@ -187,6 +208,7 @@ export class ConversationsController {
     // MaxListenersExceededWarning while adding this very diagnostic —
     // see this file's own test suite run).
     reply.raw.once("error", (error: Error) => {
+      abortController.abort();
       this.logger.warn("turn response socket errored", {
         conversationId: id,
         reason: error.message,
@@ -194,6 +216,7 @@ export class ConversationsController {
     });
     reply.raw.once("close", () => {
       if (!reply.raw.writableEnded) {
+        abortController.abort();
         this.logger.warn("turn response connection closed before the response finished", {
           conversationId: id,
         });

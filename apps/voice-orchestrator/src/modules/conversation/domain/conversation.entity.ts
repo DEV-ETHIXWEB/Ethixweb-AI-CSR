@@ -106,8 +106,62 @@ export interface Conversation {
    * lead — never to fabricate the tool call itself with guessed data,
    * only to make sure the model doesn't lose track of a pending action
    * it alone has the real customer data to complete.
+   *
+   * ONLY set by a `createLead` attempt — deliberately NOT by
+   * `createCustomer` (see `customerCaptureAttempted` for that). These
+   * are two different tools with two different preconditions
+   * (`createLead` requires a `customer_id` a successful `createCustomer`
+   * produced first), so conflating "have we tried to capture this
+   * caller at all" into one flag is exactly the bug a real forensic call
+   * transcript found: the "no customer/lead record has been created
+   * yet" reminder (`annotateMissingLead`) kept firing on every single
+   * turn for the rest of a real ~4m50s call, despite `createCustomer`
+   * having already been attempted twice (rejected, then degraded — no
+   * CRM configured), because nothing had ever touched THIS flag.
    */
   leadEverAttempted?: boolean;
+  /**
+   * Set once `createCustomer` succeeds this call — lets `runTurn` tell
+   * the model to call `createLead` NEXT (using this id) instead of
+   * re-injecting the "call createCustomer" reminder once a customer
+   * record already exists, which would be actively wrong/confusing.
+   * Distinct from `leadId` (set by `createLead`, the actual commit
+   * action) — a call can have a `customerId` with no `leadId` for a
+   * long stretch (customer captured, still qualifying) and that's a
+   * normal, not a broken, state.
+   */
+  customerId?: string | null;
+  /**
+   * True once `createCustomer` has executed at least one time this
+   * conversation, any outcome — the `createCustomer` counterpart to
+   * `leadEverAttempted`. Exists so the reminder mechanism (and any
+   * future logic) can distinguish "never even tried" from "tried and
+   * something happened," independently of whether that something was a
+   * success, a self-correctable validation rejection, or a permanent
+   * infrastructure block (see `crmIntegrationUnavailable`).
+   */
+  customerCaptureAttempted?: boolean;
+  /**
+   * True once a `createCustomer` OR `createLead` attempt has failed for
+   * a PERMANENT, infrastructure-level reason this call cannot talk its
+   * way around — currently, specifically, core-api reporting
+   * `NoCrmIntegrationConfiguredError` (no CRM integration configured for
+   * this business at all). Deliberately NOT set for a validation
+   * rejection (malformed arguments — e.g. the real call where the model
+   * first passed `name` as a bare string instead of `{first, last}`):
+   * that class of failure is often genuinely self-correctable on the
+   * model's very next attempt, and DID self-correct in the real call
+   * that surfaced this whole area, so suppressing the reminder for it
+   * too would have cost the real, eventually-successful retry. Once
+   * true: (1) the missing-lead reminder stops firing entirely — nagging
+   * the model to retry an integration that structurally cannot succeed
+   * this call wastes context/attention for zero possible benefit; (2)
+   * `annotateMissingLead`'s own text (when it does still apply, before
+   * this flag is set) never promises the caller a callback that nothing
+   * downstream can actually deliver — see the platform prompt's own
+   * handling of this exact signal.
+   */
+  crmIntegrationUnavailable?: boolean;
   /**
    * Optimistic-concurrency counter, starting at 1 on `create()` — the ONLY
    * field a use case never sets by hand; it travels unmodified from

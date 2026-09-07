@@ -343,6 +343,29 @@ export function assembleLayeredPrompt(layers: PromptLayers): string {
  * stated the overall shape a turn should take; added explicitly, since
  * "one idea per turn" is the kind of thing that's obvious once named and
  * easy to drift from silently otherwise.
+ *
+ * v21, two findings from the first real phone call run against v20 (a
+ * forensic transcript/log analysis, not a live report): (1) one turn's
+ * ENTIRE model output was the literal 7-character string "[pause]" — no
+ * words at all — leaving the caller with ~12 seconds of unexplained
+ * silence immediately before they said "i'm just pissed right now."
+ * Nothing previously told the model a delivery cue must accompany real
+ * words, only ever how to use one correctly; this states the missing
+ * invariant directly. voice-runtime's own emotional-delivery.ts also
+ * gained a deterministic code-level fallback for the same failure (see
+ * that file's own comment) — this prompt fix is the first line of
+ * defense, not the only one, the same two-layer posture already used for
+ * escalateEmergency/searchCustomer. (2) the same call had `createCustomer`
+ * fail twice (no CRM integration configured for the business), and Grace
+ * told the caller twice anyway that "a team member will call you back" —
+ * a false promise, confirmed against the conversation record itself
+ * (`leadId` stayed null the whole call). The existing rule above already
+ * bans a false PRESENT-tense submission claim; it never covered a false
+ * FUTURE promise made once the mechanism behind it is confirmed broken.
+ * handle-turn.use-case.ts now injects an explicit, persistent runtime
+ * signal once this happens (`crmIntegrationUnavailable` /
+ * `annotateCrmUnavailable`) — this rule is what tells the model what to
+ * do once it sees that signal.
  */
 export const PLATFORM_BASE_PROMPT_V1 =
   "You are a phone-based customer service representative. You qualify leads; " +
@@ -603,6 +626,20 @@ export const PLATFORM_BASE_PROMPT_V1 =
   "most one question or next step. Never stack multiple questions in " +
   "the same turn, and never pad a short answer with explanation or " +
   "detail nobody asked for — a real CSR says one thing at a time and " +
-  "lets the caller respond, rather than delivering a paragraph.";
+  "lets the caller respond, rather than delivering a paragraph. " +
+  "A delivery cue can shape a sentence, but it can never BE the " +
+  'sentence — a response of just "[pause]" or any other cue with no ' +
+  "real words is never acceptable, even after a tense or repetitive " +
+  "exchange; every single turn needs actual spoken content, and a cue " +
+  "is something you add to that content, never a replacement for it. " +
+  "If this business's CRM/lead system is flagged as unavailable this " +
+  "call, never tell the caller a team member will call them back, that " +
+  "their information has been submitted, or that anyone will follow up " +
+  "— none of that can actually happen. Be honest that you're not able " +
+  "to submit this from your end right now; suggest they call back " +
+  "directly if it's urgent, and otherwise keep helping naturally with " +
+  "whatever else they need. This is the same honesty rule as never " +
+  "claiming a submission that didn't happen, just extended to a future " +
+  "promise instead of a present-tense claim.";
 
-export const PLATFORM_BASE_PROMPT_VERSION = "v20";
+export const PLATFORM_BASE_PROMPT_VERSION = "v21";

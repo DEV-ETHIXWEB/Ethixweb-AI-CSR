@@ -5,7 +5,7 @@ import { FakeIdempotencyStore } from "../../tool-broker/application/__fakes__/fa
 import { FakeToolAuditLog } from "../../tool-broker/application/__fakes__/fake-tool-audit-log";
 import { createNoopLogger as createNoopToolLogger } from "../../tool-broker/application/__fakes__/fake-logger";
 import { ToolRegistry } from "../../tool-broker/application/tool-registry";
-import type { ToolDefinition } from "../../tool-broker/domain/tool-definition";
+import { ToolHandlerError, type ToolDefinition } from "../../tool-broker/domain/tool-definition";
 import type { Conversation, TranscriptTurn } from "../domain/conversation.entity";
 import {
   ConversationAlreadyEndedError,
@@ -590,6 +590,309 @@ describe("HandleTurnUseCase", () => {
       // test above already proves that a seeded leadEverAttempted: true
       // silences the reminder — this test's own job is just proving a
       // real createLead execution actually SETS that flag.
+    });
+  });
+
+  /**
+   * C2 (real forensic call finding): `leadEverAttempted` was ONLY ever
+   * set by a `createLead` call — never by `createCustomer` — even though
+   * the reminder text itself instructs the model to call `createCustomer`.
+   * A real call had `createCustomer` fail twice (once rejected for bad
+   * arguments, once degraded because no CRM integration is configured for
+   * the business) and the reminder kept re-injecting on every one of the
+   * remaining 12+ turns anyway. These prove the fix: `createCustomer`
+   * attempts are now tracked on their own terms, a validation rejection
+   * stays retryable (the reminder keeps nudging), a genuinely PERMANENT
+   * failure (no CRM configured) silences the reminder entirely instead of
+   * looping forever, a real success switches the reminder to point at
+   * `createLead` instead of re-suggesting `createCustomer`, and none of
+   * this state is lost across a real context-compaction pass.
+   */
+  describe("createCustomer's own attempt tracking (separate from createLead's) — C2", () => {
+    it("createCustomer REJECTED for malformed arguments (a validation error, not a CRM problem) — reminder keeps nudging createCustomer, retry stays possible", async () => {
+      const repository = new FakeConversationRepository();
+      const priorTranscript = fillerTranscript(6);
+      repository.seed(baseConversation({ transcript: priorTranscript }));
+      const aiProvider = new FakeAiProvider();
+      // Real shape from the forensic call: the model passed `name` as a
+      // bare string instead of the required {first, last} object — the
+      // schema itself rejects this at stage 2, before the handler ever
+      // runs (ExecuteToolUseCase's own ToolInputValidationError path).
+      const rejectingSchema = {
+        safeParse: () => ({
+          success: false as const,
+          error: { issues: [{ path: ["name"], message: "Expected object, received string" }] },
+        }),
+      };
+      aiProvider.responses = [
+        [
+          {
+            type: "tool_call",
+            toolCall: { id: "call-1", name: "createCustomer", arguments: { name: "Akash" } },
+          },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [
+          { type: "text_delta", text: "Thanks — what's your last name?" },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const toolRegistry = new ToolRegistry();
+      toolRegistry.register(
+        { ...fakeToolDefinition("createCustomer"), inputSchema: rejectingSchema as any },
+        { execute: jest.fn() },
+      );
+      const executeTool = new ExecuteToolUseCase(
+        toolRegistry,
+        new FakeIdempotencyStore(),
+        new FakeToolAuditLog(),
+        createNoopToolLogger(),
+      );
+      const useCase = new HandleTurnUseCase(
+        repository,
+        aiProvider,
+        executeTool,
+        toolRegistry,
+        new FakeEventBus(),
+        new FakeIdempotencyStore(),
+        createNoopLogger(),
+      );
+
+      await useCase.execute(
+        baseCommand({ transcript: "my name is akash", allowedTools: ["createCustomer"] }),
+      );
+
+      const saved = await repository.findById("tenant-1", "conv-1");
+      expect(saved?.customerCaptureAttempted).toBe(true);
+      expect(saved?.crmIntegrationUnavailable).toBeFalsy();
+      expect(saved?.customerId).toBeFalsy();
+
+      // A LATER turn, past the reminder threshold, still nudges toward
+      // createCustomer — a validation rejection must not permanently
+      // suppress the retry that, in the real call, went on to succeed.
+      const aiProvider2 = new FakeAiProvider();
+      aiProvider2.responses = [
+        [
+          { type: "text_delta", text: "Got it, Akash Kumar." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const { useCase: useCase2 } = buildUseCase({ aiProvider: aiProvider2, repository });
+      await useCase2.execute(baseCommand({ transcript: "it's akash kumar" }));
+      const sentMessage = aiProvider2.requests[0]?.messages.filter((m) => m.role === "user").pop();
+      expect(sentMessage?.content).toContain("call createCustomer now");
+    });
+
+    it("createCustomer PERMANENTLY unavailable (no CRM configured) — reminder stops entirely instead of looping forever", async () => {
+      const repository = new FakeConversationRepository();
+      const priorTranscript = fillerTranscript(6);
+      repository.seed(baseConversation({ transcript: priorTranscript }));
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          {
+            type: "tool_call",
+            toolCall: {
+              id: "call-1",
+              name: "createCustomer",
+              arguments: {
+                name: { first: "Akash", last: "Kumar" },
+                phone: "+91123",
+                source: "ai_csr",
+              },
+            },
+          },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [
+          { type: "text_delta", text: "Got it — so what's going on with the water heater?" },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      // The REAL shape core-api returns, verbatim, per the forensic call's
+      // own log evidence — ToolHandlerError so ExecuteToolUseCase reports
+      // status "degraded" (never throws out of the tool broker), matching
+      // production's real-tool-ran-but-failed path.
+      const createCustomerHandler = {
+        execute: jest
+          .fn()
+          .mockRejectedValue(
+            new ToolHandlerError(
+              'core-api POST /internal/customers failed (404): {"statusCode":404,"message":"No active CRM integration is configured for business biz-1.","error":"NoCrmIntegrationConfiguredError"}',
+              false,
+            ),
+          ),
+      };
+      const { useCase, repository: repo } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "createCustomer", handler: createCustomerHandler }],
+      });
+
+      await useCase.execute(
+        baseCommand({ transcript: "my name is akash kumar", allowedTools: ["createCustomer"] }),
+      );
+
+      const saved = await repo.findById("tenant-1", "conv-1");
+      expect(saved?.customerCaptureAttempted).toBe(true);
+      expect(saved?.crmIntegrationUnavailable).toBe(true);
+
+      // A LATER turn must NOT re-inject the missing-lead reminder at
+      // all — this is the exact confirmed real-call bug: 12+ repeated
+      // "call createCustomer now" injections despite it being permanently
+      // blocked. Also proves the CRM-unavailable honesty annotation IS
+      // injected instead (C3).
+      const aiProvider2 = new FakeAiProvider();
+      aiProvider2.responses = [
+        [
+          { type: "text_delta", text: "Let me get someone to help you." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const { useCase: useCase2 } = buildUseCase({ aiProvider: aiProvider2, repository });
+      await useCase2.execute(baseCommand({ transcript: "can you help me" }));
+      const sentMessage = aiProvider2.requests[0]?.messages.filter((m) => m.role === "user").pop();
+      expect(sentMessage?.content).not.toContain("call createCustomer now");
+      expect(sentMessage?.content).toContain("CRM/lead system is not available");
+    });
+
+    it("createCustomer SUCCEEDS — reminder switches from 'call createCustomer' to 'call createLead', never re-suggests createCustomer again", async () => {
+      const repository = new FakeConversationRepository();
+      const priorTranscript = fillerTranscript(6);
+      repository.seed(baseConversation({ transcript: priorTranscript }));
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          {
+            type: "tool_call",
+            toolCall: {
+              id: "call-1",
+              name: "createCustomer",
+              arguments: {
+                name: { first: "Akash", last: "Kumar" },
+                phone: "+91123",
+                source: "ai_csr",
+              },
+            },
+          },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [
+          { type: "text_delta", text: "Got it — so what's going on with the water heater?" },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const createCustomerHandler = {
+        execute: jest.fn().mockResolvedValue({ customer_id: "cust-42", created: true }),
+      };
+      const { useCase, repository: repo } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "createCustomer", handler: createCustomerHandler }],
+      });
+
+      await useCase.execute(
+        baseCommand({ transcript: "my name is akash kumar", allowedTools: ["createCustomer"] }),
+      );
+
+      const saved = await repo.findById("tenant-1", "conv-1");
+      expect(saved?.customerId).toBe("cust-42");
+      expect(saved?.crmIntegrationUnavailable).toBeFalsy();
+
+      const aiProvider2 = new FakeAiProvider();
+      aiProvider2.responses = [
+        [
+          { type: "text_delta", text: "Sure." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const { useCase: useCase2 } = buildUseCase({ aiProvider: aiProvider2, repository });
+      await useCase2.execute(baseCommand({ transcript: "yes please submit it" }));
+      const sentMessage = aiProvider2.requests[0]?.messages.filter((m) => m.role === "user").pop();
+      expect(sentMessage?.content).toContain("call createLead now");
+      expect(sentMessage?.content).not.toContain("call createCustomer now");
+    });
+
+    it("createLead SUCCEEDS after createCustomer — leadId set, no reminder of either kind", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(
+        baseConversation({
+          transcript: fillerTranscript(6),
+          customerId: "cust-42",
+          customerCaptureAttempted: true,
+        }),
+      );
+      const aiProvider = new FakeAiProvider();
+      const { useCase } = buildUseCase({ aiProvider, repository });
+
+      await useCase.execute(baseCommand({ transcript: "anything else" }));
+
+      const sentMessage = aiProvider.requests[0]?.messages[0];
+      // customerCaptureAttempted alone (no crmIntegrationUnavailable, no
+      // leadEverAttempted, no leadId) still nudges toward createLead —
+      // seed leadId to prove that's what actually silences it.
+      expect(sentMessage?.content).toContain("call createLead now");
+
+      const repository2 = new FakeConversationRepository();
+      repository2.seed(
+        baseConversation({
+          transcript: fillerTranscript(6),
+          customerId: "cust-42",
+          leadId: "lead-99",
+          leadEverAttempted: true,
+        }),
+      );
+      const aiProvider2 = new FakeAiProvider();
+      const { useCase: useCase2 } = buildUseCase({
+        aiProvider: aiProvider2,
+        repository: repository2,
+      });
+      await useCase2.execute(baseCommand({ transcript: "anything else" }));
+      const sentMessage2 = aiProvider2.requests[0]?.messages.filter((m) => m.role === "user").pop();
+      expect(sentMessage2?.content).toBe("anything else");
+    });
+
+    it("survives context compaction: crmIntegrationUnavailable, customerId, and customerCaptureAttempted all persist as durable Conversation fields, not message-history-derived state", async () => {
+      const repository = new FakeConversationRepository();
+      // A long prior message history — enough to force compressMessages
+      // to actually fire (DEFAULT_MAX_MESSAGES) — with the durable flags
+      // already set, exactly as a real multi-compaction call would carry
+      // them forward (these fields live on Conversation itself, never
+      // inside `messages`, so they can't be dropped by compaction the
+      // way `context-window.ts`'s own tool-message exclusion drops raw
+      // tool call/result detail).
+      const longHistory: Array<{ role: "user" | "assistant"; content: string }> = Array.from(
+        { length: 50 },
+        (_unused, index) => ({
+          role: index % 2 === 0 ? "user" : "assistant",
+          content: `filler message ${index}`,
+        }),
+      );
+      repository.seed(
+        baseConversation({
+          transcript: fillerTranscript(6),
+          messages: longHistory,
+          crmIntegrationUnavailable: true,
+          customerCaptureAttempted: true,
+        }),
+      );
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          { type: "text_delta", text: "Understood." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const { useCase } = buildUseCase({ aiProvider, repository });
+
+      await useCase.execute(baseCommand({ transcript: "one more thing" }));
+
+      const saved = await repository.findById("tenant-1", "conv-1");
+      expect(saved?.crmIntegrationUnavailable).toBe(true);
+      expect(saved?.customerCaptureAttempted).toBe(true);
+      const sentMessage = aiProvider.requests[0]?.messages.filter((m) => m.role === "user").pop();
+      expect(sentMessage?.content).toContain("CRM/lead system is not available");
+      expect(sentMessage?.content).not.toContain("call createCustomer now");
     });
   });
 
@@ -1456,6 +1759,173 @@ describe("HandleTurnUseCase", () => {
     });
   });
 
+  /**
+   * C4 — the most technically severe forensic finding: a real caller
+   * utterance ("you're still interrupting me when i'm talking") was
+   * durably lost with ZERO trace anywhere (not the transcript, not the
+   * message history), traced to this exact mechanism — `runTurn` used to
+   * call `saveTurnResult` exactly ONCE, at the very end, with the
+   * conversation's own full (possibly stale) `transcript`/`messages`. A
+   * second, faster turn racing the same conversation could save FIRST;
+   * this turn's own later save then lost its CAS check, and the OLD
+   * retry logic replayed this turn's STALE copy on top of the fresher
+   * version — silently discarding whatever the other turn had already
+   * durably written. These prove the fix: the caller's own utterance is
+   * now persisted immediately (before the model is ever even called),
+   * and any later CAS retry MERGES this turn's own new entries onto the
+   * freshest state rather than overwriting it.
+   */
+  describe("caller-transcript durability under concurrent/aborted turns — C4", () => {
+    it("A: the caller's finalized transcript is durably persisted even when the LLM call fails outright and produces nothing", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [[]];
+      aiProvider.throwAfterChunks = [new Error("connection reset — turn produced nothing")];
+      const { useCase } = buildUseCase({ aiProvider, repository });
+
+      await expect(
+        useCase.execute(baseCommand({ transcript: "you're still interrupting me" })),
+      ).rejects.toThrow(/connection reset/);
+
+      const saved = await repository.findById("tenant-1", "conv-1");
+      expect(saved?.transcript.map((t) => t.text)).toContain("you're still interrupting me");
+    });
+
+    it("B-E: two overlapping turns — the second one's own save lands first, but the FIRST turn's own caller utterance (and eventual response) both survive the CAS retry, not clobbered by the second's", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+
+      // Turn 1: "you're still interrupting me when i'm talking" — its own
+      // LLM completion is slow to resolve (models the real call's
+      // orphaned, never-aborted server-side generation — see
+      // conversations.controller.ts's own AbortSignal-wiring fix; this
+      // test proves persistence correctness independent of whether that
+      // signal ever fires).
+      const aiProvider1 = new FakeAiProvider();
+      aiProvider1.responses = [
+        [
+          { type: "text_delta", text: "Got it, go ahead." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const { useCase: useCase1 } = buildUseCase({ aiProvider: aiProvider1, repository });
+
+      // Turn 2: "i think" — a second, independent finalized transcript,
+      // exactly like voice-runtime's own defensive guard (a NEW
+      // finalized transcript always starts its own turn) produces live.
+      const aiProvider2 = new FakeAiProvider();
+      aiProvider2.responses = [
+        [
+          { type: "text_delta", text: "I'm here." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const { useCase: useCase2 } = buildUseCase({ aiProvider: aiProvider2, repository });
+
+      // Simulate the exact real-call interleaving: turn 1 begins (its own
+      // EARLY save durably records its caller utterance first — real
+      // save, no override needed yet), then — before turn 1's LLM call
+      // resolves — turn 2 starts and runs to COMPLETE, successful
+      // completion (its own early + final saves both land normally,
+      // advancing the version). Only THEN does turn 1's own LLM call
+      // resolve and its FINAL save run, now genuinely racing a real,
+      // already-advanced version — exercising the real CAS retry path,
+      // not a mocked failure.
+      const originalSave = repository.save.bind(repository);
+      let saveCallCount = 0;
+      repository.save = async (conversation) => {
+        saveCallCount += 1;
+        if (saveCallCount === 2) {
+          // This is turn 1's FINAL save about to run. Interleave turn 2's
+          // ENTIRE lifecycle (its own early + final saves) first.
+          await useCase2.execute(baseCommand({ transcript: "i think" }));
+        }
+        return originalSave(conversation);
+      };
+
+      const result1 = await useCase1.execute(
+        baseCommand({ transcript: "you're still interrupting me when i'm talking" }),
+      );
+
+      expect(result1.responseText).toBe("Got it, go ahead.");
+
+      const saved = await repository.findById("tenant-1", "conv-1");
+      const texts = saved?.transcript.map((t) => t.text) ?? [];
+      // E: turn 1's own caller utterance survives.
+      expect(texts).toContain("you're still interrupting me when i'm talking");
+      // Turn 2's own caller utterance AND response also survive — neither
+      // turn's work was discarded by the other's.
+      expect(texts).toContain("i think");
+      expect(texts).toContain("I'm here.");
+      // F/G: turn 1's own response is present too — the model's own
+      // memory of the call and the durable transcript agree with each
+      // other; nothing was silently dropped on either side.
+      expect(texts).toContain("Got it, go ahead.");
+      // No entry was duplicated by the merge.
+      expect(
+        texts.filter((t) => t === "you're still interrupting me when i'm talking"),
+      ).toHaveLength(1);
+    });
+
+    it("H: a normal, non-racing turn still persists exactly as before — no regression for the common case", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const { useCase } = buildUseCase({ repository });
+
+      const result = await useCase.execute(
+        baseCommand({ transcript: "Hi, my water heater is broken" }),
+      );
+
+      expect(result.responseText).toBe("hi");
+      const saved = await repository.findById("tenant-1", "conv-1");
+      expect(saved?.transcript.map((t) => t.speaker)).toEqual(["caller", "agent"]);
+      expect(saved?.transcript[0]?.text).toBe("Hi, my water heater is broken");
+      expect(saved?.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+    });
+
+    it("I: the conversation ending mid-turn (EndConversationUseCase wins the race) still discards ONLY this turn's own update, without throwing, exactly as before — the caller's utterance from THIS turn's own early save (already durably recorded before the hangup) is not resurrected/duplicated either", async () => {
+      const repository = new FakeConversationRepository();
+      const seeded = baseConversation();
+      repository.seed(seeded);
+      const { useCase } = buildUseCase({ repository });
+      const originalSave = repository.save.bind(repository);
+      let saveCallCount = 0;
+      repository.save = async (conversation) => {
+        saveCallCount += 1;
+        if (saveCallCount === 2) {
+          // The hangup lands between this turn's own early save (call 1,
+          // which succeeds normally) and its final save (call 2) —
+          // modeled the same well-behaved way EndConversationUseCase
+          // itself actually saves (read fresh, then only touch the
+          // fields it owns), not a blind overwrite from a stale copy.
+          const fresh = await repository.findById("tenant-1", "conv-1");
+          await originalSave({
+            ...(fresh ?? seeded),
+            state: "ended",
+            endedAt: "2026-01-01T00:00:00.000Z",
+            endReason: "caller_hangup",
+          });
+        }
+        return originalSave(conversation);
+      };
+
+      const result = await useCase.execute(baseCommand({ transcript: "one last thing" }));
+      expect(result.responseText).toBe("hi");
+
+      const stored = await repository.findById("tenant-1", "conv-1");
+      expect(stored?.endedAt).toBe("2026-01-01T00:00:00.000Z");
+      expect(stored?.state).toBe("ended");
+      // The caller's own utterance from THIS turn's early save already
+      // landed before the hangup raced it, so it's still there exactly
+      // once — the ended conversation isn't resurrected, but it also
+      // isn't silently missing the one thing that was already safely
+      // persisted before the race even began.
+      const callerTexts = stored?.transcript.filter((t) => t.speaker === "caller") ?? [];
+      expect(callerTexts.filter((t) => t.text === "one last thing")).toHaveLength(1);
+    });
+  });
+
   describe("turn-level idempotency", () => {
     it("replaying the same idempotencyKey returns the cached result without re-invoking the AI provider", async () => {
       const repository = new FakeConversationRepository();
@@ -1548,12 +2018,20 @@ describe("HandleTurnUseCase", () => {
 
       await expect(useCase.execute(command)).rejects.toThrow(saveError);
       expect(releaseSpy).toHaveBeenCalledWith(failingKey);
+      // C4's own fix (persistProgress's EARLY save — see saveTurnResult's
+      // own comment): the caller's transcript is now persisted BEFORE the
+      // model is ever called, not just at the very end of the turn — so a
+      // save failure this early correctly fails the turn WITHOUT wasting
+      // an LLM call at all, unlike the old single-end-of-turn-save shape
+      // this test originally encoded (which always paid for the model
+      // call even on an attempt doomed to fail on its own save).
+      expect(aiProvider.requests).toHaveLength(0);
 
       // The reservation was released, so this retry proceeds and re-invokes
       // the model rather than hanging behind a permanently in-flight key.
       const result = await useCase.execute(command);
       expect(result.responseText).toBe("hi");
-      expect(aiProvider.requests).toHaveLength(2);
+      expect(aiProvider.requests).toHaveLength(1);
     });
   });
 });

@@ -7,6 +7,7 @@ import { IDEMPOTENCY_STORE } from "../../../shared/idempotency/idempotency-store
 import {
   AI_PROVIDER_ROUTER,
   type AiCompletionChunk,
+  type AiMessage,
   type AiProviderPort,
   type AiToolCallRequest,
 } from "../../ai-provider/domain/ai-provider.port";
@@ -269,6 +270,46 @@ export class HandleTurnUseCase {
       at: new Date().toISOString(),
     });
 
+    // FOUND LIVE, source-traced from a real forensic call transcript: a
+    // caller utterance ("you're still interrupting me when i'm talking")
+    // was aborted by voice-runtime client-side (a NEWER finalized
+    // transcript superseded it ~0.8s later) but had ALREADY started
+    // processing server-side, since nothing here previously checked an
+    // abort signal at all — the HTTP controller never actually wired one
+    // through (see conversations.controller.ts's own fix). By the time
+    // this method's single END-of-turn `saveTurnResult` call ran, the
+    // NEXT turn had ALREADY read-mutated-saved its own independent copy
+    // of `conversation` first, so this turn's save lost the optimistic-
+    // concurrency check — and the OLD retry logic just overwrote Redis
+    // with this turn's own STALE `transcript`/`messages` arrays, silently
+    // discarding the other turn's already-persisted work. The caller's
+    // own words were never durably recorded anywhere. `persistProgress`
+    // below is called TWICE per turn specifically to close this: once
+    // immediately after the caller's own utterance is appended (so it
+    // survives regardless of anything that happens afterward — an abort,
+    // a race, a crash, the call ending), and once again at the very end
+    // for everything else. Both calls go through the SAME now-merge-aware
+    // `saveTurnResult` (see its own comment) rather than a distinct
+    // mechanism, so a concurrent turn's own progress is appended onto,
+    // never clobbered by, this one's.
+    let transcriptSavedThrough = conversation.transcript.length;
+    let pendingNewMessages: AiMessage[] = [];
+    const pushMessage = (message: AiMessage): void => {
+      conversation.messages.push(message);
+      pendingNewMessages.push(message);
+    };
+    const persistProgress = async (): Promise<void> => {
+      const newTranscriptEntries = conversation.transcript.slice(transcriptSavedThrough);
+      await this.saveTurnResult(conversation, newTranscriptEntries, pendingNewMessages);
+      // `saveTurnResult` mutates `conversation` in place to match whatever
+      // actually ended up durably saved (its own copy on the happy path,
+      // or a merge of its own delta onto a fresher concurrent write) —
+      // resetting the trackers here keeps the NEXT delta disjoint from
+      // this one, so nothing already-saved is ever resent/reappended.
+      transcriptSavedThrough = conversation.transcript.length;
+      pendingNewMessages = [];
+    };
+
     this.appendTranscript(conversation, {
       turnIndex,
       speaker: "caller",
@@ -286,6 +327,7 @@ export class HandleTurnUseCase {
     );
     if (
       !conversation.leadEverAttempted &&
+      !conversation.crmIntegrationUnavailable &&
       conversation.transcript.length >= LEAD_REMINDER_AFTER_TURNS
     ) {
       // Found live on a real ~21-minute call, then reproduced fresh in a
@@ -298,12 +340,51 @@ export class HandleTurnUseCase {
       // attention doesn't drift away from a pending action it alone has
       // the real customer data to complete, the longer a call runs
       // without one.
-      annotatedTranscript = annotateMissingLead(annotatedTranscript);
+      //
+      // `!conversation.crmIntegrationUnavailable`: a SECOND, precisely
+      // root-caused real-call bug this same reminder was found causing —
+      // `createCustomer` (not `createLead`) is what this reminder tells
+      // the model to call, but only `createLead` ever set
+      // `leadEverAttempted`, so on a real call where `createCustomer` was
+      // attempted twice (once rejected for bad arguments, once degraded
+      // because no CRM integration is configured for the business) this
+      // reminder kept re-injecting on every remaining turn — 12+ times —
+      // nagging the model to retry an integration that structurally
+      // cannot succeed this call. `customerCaptureAttempted` deliberately
+      // does NOT gate this on its own (a validation rejection is often
+      // self-correctable, and DID self-correct in that exact real call —
+      // suppressing the reminder for that case would have cost the
+      // eventually-successful retry); only a genuinely PERMANENT failure
+      // does.
+      annotatedTranscript = annotateMissingLead(
+        annotatedTranscript,
+        Boolean(conversation.customerId),
+      );
     }
-    conversation.messages.push({
+    if (conversation.crmIntegrationUnavailable) {
+      // Confirmed real-call bug, separate from the reminder above: once
+      // createCustomer/createLead has genuinely failed with "no CRM
+      // configured," a real call kept promising the caller "a team
+      // member will call you back" / "someone will follow up" for the
+      // rest of the call anyway — the model had no reliable, persistent
+      // signal that the mechanism behind that promise was confirmed
+      // broken (the tool result itself ages out of visible context after
+      // compaction — see context-window.ts's own tool-message exclusion).
+      // Injected on EVERY remaining turn (not gated by turn count, unlike
+      // the reminder above) specifically so it's still present at
+      // whatever turn the call actually closes on, however much later
+      // that is — that's exactly where the real false promise was said.
+      annotatedTranscript = annotateCrmUnavailable(annotatedTranscript);
+    }
+    pushMessage({
       role: "user",
       content: annotatedTranscript,
     });
+    // EARLY, DEDICATED save — see this method's own top comment for why:
+    // guarantees the caller's own finalized utterance is durably recorded
+    // before any LLM call, tool call, or abort has a chance to happen at
+    // all, independent of however the rest of this turn plays out.
+    await persistProgress();
 
     const tools = this.toolRegistry
       .list()
@@ -425,7 +506,7 @@ export class HandleTurnUseCase {
       }
 
       if (turn.text || toolCalls.length > 0) {
-        conversation.messages.push({
+        pushMessage({
           role: "assistant",
           content: turn.text,
           ...(toolCalls.length > 0 ? { toolCalls } : {}),
@@ -448,12 +529,21 @@ export class HandleTurnUseCase {
         if (toolCall.name === "createLead") {
           conversation.leadEverAttempted = true;
         }
+        if (toolCall.name === "createCustomer") {
+          conversation.customerCaptureAttempted = true;
+        }
         const { output, escalation: toolEscalation } = await this.runTool(
           conversation,
           toolCall,
           command.allowedTools,
         );
-        conversation.messages.push({
+        if (
+          (toolCall.name === "createCustomer" || toolCall.name === "createLead") &&
+          isCrmUnavailableError(output)
+        ) {
+          conversation.crmIntegrationUnavailable = true;
+        }
+        pushMessage({
           role: "tool",
           toolCallId: toolCall.id,
           content: JSON.stringify(output),
@@ -478,7 +568,7 @@ export class HandleTurnUseCase {
       });
     }
 
-    await this.saveTurnResult(conversation);
+    await persistProgress();
 
     const durationMs = Date.now() - startedAt;
     // Voice-pipeline latency investigation — the ONE number that tells
@@ -514,37 +604,55 @@ export class HandleTurnUseCase {
   }
 
   /**
-   * `conversation` here already carries this whole turn's mutations
-   * (transcript/messages pushes, `leadId`, etc. — all applied in place
-   * during `runTurn`), read at a `version` that may now be stale: a turn
-   * can run for seconds (LLM streaming, tool calls), long enough for the
-   * caller to hang up mid-turn and EndConversationUseCase's `save()` to
-   * land first — a real race, not a hypothetical one (see that use case's
-   * own `resolveLostRace` comment). If the CAS is lost specifically
-   * because the conversation ended in the meantime, this turn's state
-   * update is deliberately DISCARDED rather than retried — replaying it
-   * on top of the newer version would silently resurrect an ended
-   * conversation (clobber `endedAt` back to null), corrupting exactly the
-   * state EndConversationUseCase just correctly wrote. The turn's response
-   * text was very likely already streamed to the caller before the hangup
-   * was processed, so this method still lets that response return to the
-   * Voice Runtime — only the Redis-side transcript/message persistence for
-   * this turn is lost, not the live conversation the caller already heard.
-   * Any other lost-CAS cause (e.g. a concurrent `POST /:id/interrupt`
-   * transitioning `state`, or two turns genuinely overlapping) gets a
-   * single retry on the freshly-read version, same "one re-read is enough,
-   * don't loop for a third writer" discipline used throughout this module —
-   * but the retry keeps `fresh.state`, not `conversation`'s own (stale)
-   * copy of it: this use case never legitimately owns `state` (only
-   * TransitionConversationStateUseCase and EndConversationUseCase do), so
-   * blindly replaying `conversation` wholesale would silently clobber
-   * whatever the concurrent writer changed it to — the exact same class of
-   * silent-corruption bug this whole CAS mechanism exists to prevent, just
-   * relocated to a different field.
+   * `conversation` here carries this call's own accumulated mutations
+   * in-memory (`leadId`, `customerId`, the various *EverAttempted/
+   * *Unavailable flags, and whatever `runTurn` has pushed onto
+   * `transcript`/`messages` so far), read at a `version` that may now be
+   * stale — `runTurn` calls this TWICE per turn (see its own top comment):
+   * once right after the caller's own utterance is recorded, once again
+   * at the end. Either call can lose the optimistic-concurrency check: a
+   * turn can run for seconds (LLM streaming, tool calls), long enough for
+   * another turn's OWN save to land first (two turns genuinely
+   * overlapping — the exact real, forensically-traced scenario that
+   * exposed this method's previous bug), or for the caller to hang up and
+   * EndConversationUseCase's `save()` to land first.
+   *
+   * `newTranscriptEntries`/`newMessages`: ONLY the entries THIS call is
+   * trying to add, not `conversation`'s own full (possibly stale) arrays
+   * — the previous version of this method retried a lost CAS by replaying
+   * `conversation`'s ENTIRE stale `transcript`/`messages` on top of a
+   * freshly-read version, which silently DISCARDED whatever a concurrent
+   * writer had already durably saved in between (confirmed root cause of
+   * a real caller utterance vanishing with zero trace in a real call).
+   * The fix: on a lost CAS, build the retry from `fresh` (the concurrent
+   * writer's own already-saved state) and APPEND only this call's own new
+   * entries onto it — never overwrite.
+   *
+   * If the CAS is lost specifically because the conversation ended in the
+   * meantime, this call's own update is deliberately DISCARDED rather
+   * than retried — replaying it on top of the newer version would
+   * silently resurrect an ended conversation (clobber `endedAt` back to
+   * null), corrupting exactly the state EndConversationUseCase just
+   * correctly wrote. Any other lost-CAS cause gets a single retry, same
+   * "one re-read is enough, don't loop for a third writer" discipline
+   * used throughout this module — the retry keeps `fresh.state`, not
+   * `conversation`'s own (stale) copy of it: this use case never
+   * legitimately owns `state` (only TransitionConversationStateUseCase
+   * and EndConversationUseCase do).
+   *
+   * On ANY successful save (direct or via retry), `conversation` is
+   * synced in place to exactly what's now durably persisted — `runTurn`
+   * depends on this to keep its own delta-tracking correct across the
+   * two `persistProgress()` calls in the same turn (see its own comment).
    */
-  private async saveTurnResult(conversation: Conversation): Promise<void> {
+  private async saveTurnResult(
+    conversation: Conversation,
+    newTranscriptEntries: TranscriptTurn[],
+    newMessages: AiMessage[],
+  ): Promise<void> {
     const saved = await this.repository.save(conversation);
     if (saved) {
+      Object.assign(conversation, saved);
       return;
     }
     const fresh = await this.repository.findById(conversation.tenantId, conversation.id);
@@ -558,14 +666,47 @@ export class HandleTurnUseCase {
       );
       return;
     }
-    const retry: Conversation = { ...conversation, version: fresh.version, state: fresh.state };
+    const retry: Conversation = {
+      ...fresh,
+      transcript: [...fresh.transcript, ...newTranscriptEntries],
+      messages: [...fresh.messages, ...newMessages],
+      // Turn-owned scalar/boolean fields: merge THIS call's own value onto
+      // whatever the fresher concurrent write already established, never
+      // blindly overwrite it — a concurrent turn's own successfully
+      // captured customer/lead/emergency-check state must survive even
+      // when THIS turn also happened to touch the same flag.
+      leadId: conversation.leadId ?? fresh.leadId,
+      customerId: conversation.customerId ?? fresh.customerId ?? null,
+      customerCaptureAttempted: Boolean(
+        conversation.customerCaptureAttempted || fresh.customerCaptureAttempted,
+      ),
+      crmIntegrationUnavailable: Boolean(
+        conversation.crmIntegrationUnavailable || fresh.crmIntegrationUnavailable,
+      ),
+      leadEverAttempted: Boolean(conversation.leadEverAttempted || fresh.leadEverAttempted),
+      emergencyEverChecked: Boolean(
+        conversation.emergencyEverChecked || fresh.emergencyEverChecked,
+      ),
+      searchCustomerEverChecked: Boolean(
+        conversation.searchCustomerEverChecked || fresh.searchCustomerEverChecked,
+      ),
+      ...((conversation.lastEmergencyCheckedTranscript ?? fresh.lastEmergencyCheckedTranscript) !==
+      undefined
+        ? {
+            lastEmergencyCheckedTranscript:
+              conversation.lastEmergencyCheckedTranscript ?? fresh.lastEmergencyCheckedTranscript,
+          }
+        : {}),
+    };
     const retrySaved = await this.repository.save(retry);
     if (!retrySaved) {
       this.logger.warn(
         "conversation lost a concurrent-write race twice in a row while saving a turn — this turn's state update was discarded",
         { tenantId: conversation.tenantId, conversationId: conversation.id },
       );
+      return;
     }
+    Object.assign(conversation, retrySaved);
   }
 
   /**
@@ -848,6 +989,15 @@ export class HandleTurnUseCase {
     toolName: string,
     output: unknown,
   ): Promise<{ severity: string; action: string; transferDestination: string | null } | undefined> {
+    if (
+      toolName === "createCustomer" &&
+      isRecord(output) &&
+      typeof output["customer_id"] === "string"
+    ) {
+      conversation.customerId = output["customer_id"];
+      return undefined;
+    }
+
     if (toolName === "createLead" && isRecord(output) && typeof output["lead_id"] === "string") {
       conversation.leadId = output["lead_id"];
       await this.eventBus.publish({
@@ -1084,14 +1234,83 @@ function buildSearchCustomerBackstopCall(phone: string): AiToolCallRequest {
   };
 }
 
-/** See `LEAD_REMINDER_AFTER_TURNS`'s own comment for when this applies. */
-function annotateMissingLead(transcript: string): string {
+/**
+ * See `LEAD_REMINDER_AFTER_TURNS`'s own comment for when this applies.
+ *
+ * `customerCreated`: once `createCustomer` has already succeeded this
+ * call (`conversation.customerId` set), telling the model to "call
+ * createCustomer now" again is actively wrong — the correct next action
+ * is `createLead`, using the customer record that already exists. A real
+ * call never actually reached this branch (it never got a customer
+ * created before hanging up), but the ORIGINAL reminder text was written
+ * as if `createCustomer` were always the missing step, which stops being
+ * true the moment it succeeds — this keeps the reminder accurate instead
+ * of nagging the model toward a call it's already made.
+ */
+function annotateMissingLead(transcript: string, customerCreated: boolean): string {
+  const instruction = customerCreated
+    ? "[a customer record already exists for this caller but no lead has " +
+      "been created yet this call — call createLead now using that " +
+      "customer's id; don't wait for an address or zip code first]"
+    : "[no customer/lead record has been created yet this call — if you " +
+      "have the caller's name, call createCustomer now with that name and " +
+      "the caller's own phone number already known from this call; don't " +
+      "wait for an address or zip code first]";
+  return `${instruction} ${transcript}`;
+}
+
+/**
+ * Confirmed real-call bug this closes: Grace told a caller, twice, "a
+ * team member will call you back" / "someone from the dispatch side
+ * will call you back" — but `createCustomer` had already failed both
+ * times it was tried (once rejected for bad arguments, once because no
+ * CRM integration is configured for the business), so `leadId` stayed
+ * null the entire call. No lead existed for anyone to ever call the
+ * caller back about. The platform prompt's existing honesty rule
+ * ("never say the sentence that implies you just did [submit]... UNLESS
+ * calling createCustomer/createLead in that exact same turn") already
+ * bans a false PRESENT-tense claim ("your info has been sent") — it
+ * never covered a false FUTURE promise ("someone WILL call you back")
+ * made when the mechanism behind it is confirmed, permanently broken
+ * for this call. This is the deterministic signal that makes the
+ * prompt's own corresponding rule (prompt-layers.ts) actually
+ * enforceable turn over turn, the same "don't rely on wording alone"
+ * lesson already applied to escalateEmergency/searchCustomer/the
+ * missing-lead reminder itself.
+ */
+function annotateCrmUnavailable(transcript: string): string {
   return (
-    "[no customer/lead record has been created yet this call — if you " +
-    "have the caller's name, call createCustomer now with that name and " +
-    "the caller's own phone number already known from this call; don't " +
-    "wait for an address or zip code first] " +
+    "[this business's CRM/lead system is not available this call — " +
+    "createCustomer and createLead cannot succeed no matter how the " +
+    "arguments are worded. Never tell the caller a team member will " +
+    "call them back, that their information has been submitted, or " +
+    "that anyone will follow up — none of that can actually happen " +
+    "right now. Be honest that you're not able to submit this from " +
+    "your end at the moment; suggest they call back directly if it's " +
+    "urgent, and otherwise keep helping with whatever else they need.] " +
     transcript
+  );
+}
+
+/**
+ * Distinguishes a PERMANENT, infrastructure-level tool failure (this
+ * business has no CRM integration configured at all — retrying changes
+ * nothing) from every other failure shape (a validation rejection, a
+ * transient network error) that's often genuinely retryable or
+ * self-correctable. Matches on core-api's own error class name — an
+ * exact, existing, stable piece of vocabulary already shared between the
+ * two services, not a guessed substring. See `crmIntegrationUnavailable`'s
+ * own comment on the `Conversation` entity for what this gates.
+ */
+function isCrmUnavailableError(output: unknown): boolean {
+  if (typeof output !== "object" || output === null) {
+    return false;
+  }
+  const record = output as Record<string, unknown>;
+  return (
+    record["error"] === "tool_unavailable" &&
+    typeof record["detail"] === "string" &&
+    record["detail"].includes("NoCrmIntegrationConfiguredError")
   );
 }
 

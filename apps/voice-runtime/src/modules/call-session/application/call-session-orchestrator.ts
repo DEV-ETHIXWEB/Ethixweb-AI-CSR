@@ -30,7 +30,35 @@ import {
   TWILIO_MEDIA_SAMPLE_RATE_HZ,
 } from "../../telephony/domain/twilio-media-stream.types";
 import { isPureBackchannel } from "./backchannel-detector";
-import { parseDelivery, silenceBuffer } from "./emotional-delivery";
+import { parseDelivery, silenceBuffer, type DeliverySegment } from "./emotional-delivery";
+import { looksLikeIncompleteFragment } from "./fragment-detector";
+
+/**
+ * H1 — how long to wait, for a SHORT finalized transcript that
+ * `looksLikeIncompleteFragment` flags as likely-still-forming, before
+ * committing to starting a turn with it — see that function's own
+ * comment for the full linguistic reasoning. 1200ms, not a doubling of
+ * `ENDPOINTING_MS` (deepgram-stt.provider.ts) and not applied to every
+ * turn — deliberately a DIFFERENT, narrower mechanism from raising that
+ * global constant. Honest limitation, not glossed over: the real gaps
+ * this was traced against ("can you" → "answer my question first,"
+ * ~2.5s later; "oh sorry like" → "i was fixing my," ~2.6s later) are
+ * LONGER than this single window fully bridges — this does not claim to
+ * catch every real fragmentation gap, only to catch a meaningful,
+ * evidence-based subset (any continuation landing within ~1.2s, and any
+ * chain of fragments each arriving within ~1.2s of the last, since the
+ * window re-arms on every new fragment merged in — see
+ * `handleFinalTranscriptCandidate`'s own comment) without paying the
+ * cost a much longer universal wait would impose on every short,
+ * genuinely-complete utterance. INFERRED, not a measured optimum —
+ * chosen as long enough to read as a deliberate, generous pause rather
+ * than a glitch, short enough that a truly complete short answer
+ * ("yes," "no," a name) that happens to trip the heuristic still
+ * resolves well under typical perceived turn latency (this codebase's
+ * own measured LLM first-token time is ~900-1200ms on top of whatever
+ * STT/network latency already exists).
+ */
+const FRAGMENT_COALESCE_WINDOW_MS = 1200;
 
 /** Bounds a capacity-429 wait loop — a caller genuinely on hold this long has almost certainly already hung up or should hit the tenant's configured overflowNumber instead of waiting forever. Not a documented constant, an INFERRED safety limit (same honesty convention as voice-orchestrator's own MAX_TOOL_ITERATIONS). */
 const MAX_CAPACITY_RETRY_ATTEMPTS = 3;
@@ -193,6 +221,11 @@ export class CallSessionOrchestrator {
   private pendingBargeInTimer: ReturnType<typeof setTimeout> | null = null;
   /** See `DEFAULT_SILENCE_CHECK_IN_TIMEOUT_MS`'s own comment for the full design. */
   private silenceCheckInTimer: ReturnType<typeof setTimeout> | null = null;
+  /** See `buildSilentTurnFallback`'s own comment — round-robins so a call that happens to hit this fallback more than once doesn't repeat the exact same line. */
+  private silentTurnFallbackIndex = 0;
+  /** See `handleFinalTranscriptCandidate`'s own comment — a finalized transcript flagged as a likely fragment, accumulated here while waiting to see if more follows, instead of starting a turn immediately. */
+  private pendingFragment: { transcript: string; confidence: number } | null = null;
+  private fragmentCoalesceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     @Inject(ORCHESTRATOR_CLIENT) private readonly orchestrator: OrchestratorClientPort,
@@ -300,11 +333,7 @@ export class CallSessionOrchestrator {
     }
 
     this.sttSession.onFinalTranscript((result) => {
-      this.handleFinalTranscript(params, sink, result).catch((error: unknown) => {
-        log.error("unhandled error processing finalized transcript", {
-          reason: error instanceof Error ? error.message : String(error),
-        });
-      });
+      this.handleFinalTranscriptCandidate(params, sink, result, log);
     });
     this.sttSession.onSpeechStarted(() => this.handleSpeechStarted());
     this.sttSession.onInterimSpeech((transcript) =>
@@ -363,6 +392,82 @@ export class CallSessionOrchestrator {
   /** Forwards one inbound Twilio Media Stream audio frame into the live STT session. No-op if the session never opened (start already failed and the call is being torn down). */
   onAudioFrame(frame: Buffer): void {
     this.sttSession?.sendAudio(frame);
+  }
+
+  /**
+   * H1 — every finalized transcript passes through here FIRST, before
+   * `handleFinalTranscript` ever starts a turn with it. See
+   * `fragment-detector.ts`'s own comment for the full real-call evidence
+   * and linguistic reasoning; see `FRAGMENT_COALESCE_WINDOW_MS`'s own
+   * comment for why this is a bounded, narrow mechanism, not a global
+   * responsiveness tradeoff.
+   *
+   * A transcript NOT flagged as a likely fragment (the overwhelming
+   * majority — any normal-length utterance, and any short one that
+   * doesn't match the linguistic signals) commits immediately, with
+   * ZERO added latency — byte-for-byte the same behavior as before this
+   * existed. A flagged transcript is buffered and a short timer starts;
+   * if ANOTHER finalized transcript arrives before it fires, the two are
+   * merged (with a space) and re-evaluated as one — this is what lets a
+   * caller's own continuation ("can you" + "answer my question first")
+   * land as a single turn instead of two. Once the timer fires with
+   * nothing more having arrived, whatever's accumulated commits as one
+   * normal turn, exactly the same call `handleFinalTranscript` would
+   * have received directly before this existed.
+   */
+  private handleFinalTranscriptCandidate(
+    params: CallSessionParams,
+    sink: MediaStreamSink,
+    result: { transcript: string; confidence: number },
+    log: StructuredLogger,
+  ): void {
+    this.pendingFragment = this.pendingFragment
+      ? {
+          transcript: `${this.pendingFragment.transcript} ${result.transcript}`.trim(),
+          confidence: Math.min(this.pendingFragment.confidence, result.confidence),
+        }
+      : { transcript: result.transcript, confidence: result.confidence };
+    if (this.fragmentCoalesceTimer) {
+      clearTimeout(this.fragmentCoalesceTimer);
+      this.fragmentCoalesceTimer = null;
+    }
+    // Deliberately checked against THIS newly-arrived piece alone, not
+    // the (possibly already long) accumulated `pendingFragment.transcript`
+    // — found live in this file's own test suite: checking the merged
+    // whole meant a genuine 3-fragment chain ("oh sorry like" + "i was
+    // fixing my" + "water heater") committed TWO WAY too early, because
+    // the merged text crossed FRAGMENT_WORD_COUNT_MAX and no longer read
+    // as "short" to the word-count gate, even though the piece that had
+    // JUST arrived ("i was fixing my") still ended in a clearly
+    // incomplete word. What matters for "should I keep waiting" is
+    // whether the caller's latest words sound unfinished, not how long
+    // the conversation-so-far has gotten.
+    if (!looksLikeIncompleteFragment(result.transcript)) {
+      this.commitPendingFragment(params, sink, log);
+      return;
+    }
+    this.fragmentCoalesceTimer = setTimeout(() => {
+      this.fragmentCoalesceTimer = null;
+      this.commitPendingFragment(params, sink, log);
+    }, FRAGMENT_COALESCE_WINDOW_MS);
+  }
+
+  /** Sends whatever's currently buffered in `pendingFragment` (if anything) to `handleFinalTranscript` as one ordinary turn, and clears the buffer. A no-op if nothing is pending (defensive — every real caller of this method only calls it when it knows something's there). */
+  private commitPendingFragment(
+    params: CallSessionParams,
+    sink: MediaStreamSink,
+    log: StructuredLogger,
+  ): void {
+    const committed = this.pendingFragment;
+    this.pendingFragment = null;
+    if (!committed) {
+      return;
+    }
+    this.handleFinalTranscript(params, sink, committed).catch((error: unknown) => {
+      log.error("unhandled error processing finalized transcript", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 
   /**
@@ -855,6 +960,11 @@ export class CallSessionOrchestrator {
       clearTimeout(this.pendingBargeInTimer);
       this.pendingBargeInTimer = null;
     }
+    if (this.fragmentCoalesceTimer) {
+      clearTimeout(this.fragmentCoalesceTimer);
+      this.fragmentCoalesceTimer = null;
+    }
+    this.pendingFragment = null;
     this.disarmSilenceCheckIn();
     await this.sttSession?.close().catch(() => undefined);
 
@@ -961,9 +1071,33 @@ export class CallSessionOrchestrator {
    * mechanism 2 path.
    */
   private async speak(text: string, sink: MediaStreamSink): Promise<void> {
-    const { voiceSettings, segments } = parseDelivery(text);
+    const { voiceSettings, segments: parsedSegments } = parseDelivery(text);
+    // C1, found live on a real call, source-confirmed: a turn's ENTIRE
+    // LLM output was the literal 7-character string "[pause]" — no words
+    // at all. parseDelivery correctly recognized there was nothing left
+    // to SPEAK once the cue was stripped (segments: []) and this method
+    // used to just `return` — technically correct (never sends a bare
+    // cue to TTS as garbled text) but the net result was ~12 seconds of
+    // total silence immediately before the caller said "i'm just pissed
+    // right now." A delivery cue can shape a sentence; it can never BE
+    // the sentence, at the code level as well as the prompt level
+    // (prompt-layers.ts v21's own matching rule) — this codebase's own
+    // established pattern for exactly this class of "prompt wording
+    // alone has a reliability ceiling" problem (escalateEmergency/
+    // searchCustomer's backstops, the missing-lead reminder) is a
+    // deterministic code-level guard as the real backstop, not the
+    // prompt alone. Applies uniformly to every caller of `speak()` —
+    // empty text, whitespace-only text, and markup-only text all resolve
+    // to the same `segments: []` here, and none of them should ever
+    // produce total silence.
+    let segments = parsedSegments;
     if (segments.length === 0) {
-      return;
+      const fallback = this.buildSilentTurnFallback();
+      this.logger.warn(
+        "speak() received text with nothing left to say after stripping delivery cues — substituting a safe fallback instead of total silence",
+        { conversationId: this.conversationId, rawText: text, fallbackText: fallback.text },
+      );
+      segments = [fallback];
     }
     const abortController = new AbortController();
     this.ttsAbort = abortController;
@@ -1018,6 +1152,28 @@ export class CallSessionOrchestrator {
         aborted: abortController.signal.aborted,
       });
     }
+  }
+
+  /**
+   * The deterministic, code-level half of C1's fix (the prompt-level half
+   * is prompt-layers.ts v21's own new rule) — see `speak()`'s own comment
+   * for the real-call evidence. Deliberately a small, FIXED, neutral
+   * rotation, not randomized and not an attempt at real "context
+   * awareness": this only fires when upstream text generation has
+   * already failed to produce real words, so there is no reliable
+   * context signal left to reason from at this point — the honest, safe
+   * thing to do is sound like an ordinary person briefly present on the
+   * line, nothing more elaborate. Round-robin (not random) keeps this
+   * testable/deterministic, matching this codebase's own stated
+   * preference elsewhere; every entry is short, calm, and not emotional
+   * on its own, since a cue-only response is by definition not a context
+   * this fallback can safely read as warranting one.
+   */
+  private buildSilentTurnFallback(): DeliverySegment {
+    const fallbackPhrases = ["I'm here.", "I'm listening.", "Go ahead.", "I'm with you."];
+    const text = fallbackPhrases[this.silentTurnFallbackIndex % fallbackPhrases.length]!;
+    this.silentTurnFallbackIndex += 1;
+    return { text, pauseBeforeMs: 0 };
   }
 
   private async speakApologyAndClose(sink: MediaStreamSink): Promise<void> {
