@@ -1,21 +1,24 @@
 import { Injectable } from "@nestjs/common";
 import type { AgentProfile, AgentProfileProvider } from "../domain/agent-profile";
 import { DEFAULT_CLOSING_TEMPLATE } from "../domain/closing-script";
+import { DEFAULT_GRACE_PERSONA, formatPersonaPrompt } from "../domain/grace-persona";
 
 export const DEFAULT_LLM_MODEL = "gpt-4o";
 /**
- * `Your name is Grace` lives here (tenant-level), not in
- * PLATFORM_BASE_PROMPT_V1 — a personal name is per-tenant
- * customization (docs/03 §1's own layering: platform base is
- * shared/versioned, tenant default is where brand-voice-shaped
+ * Persona facts (`Your name is Grace`, gender presentation, persona
+ * age/birthday) live here (tenant-level), not in PLATFORM_BASE_PROMPT_V1
+ * — per-tenant customization (docs/03 §1's own layering: platform base
+ * is shared/versioned, tenant default is where brand-voice-shaped
  * choices belong), not something every tenant on this platform
- * necessarily wants. The platform base's own v14 addition makes the
- * self-introduction instruction CONDITIONAL on a name actually being
- * given here — no name in this layer, no invented one, no greeting
- * mention either.
+ * necessarily wants configured the same way. The platform base's own
+ * v14/v22 additions make each self-introduction/persona instruction
+ * CONDITIONAL on that fact actually being given here — no persona fact
+ * in this layer, no invented one, per `grace-persona.ts`'s own comment.
+ * See that file for the structured `GracePersonaConfig` this is built
+ * from, rather than a bare hardcoded string.
  */
 export const DEFAULT_BRAND_VOICE_PROMPT =
-  "Your name is Grace. " +
+  `${formatPersonaPrompt(DEFAULT_GRACE_PERSONA)} ` +
   "Brand voice: warm, direct, no corporate filler. Avoid the words " +
   '"unfortunately" and "I apologize for the inconvenience" — use plain ' +
   'human phrasing instead ("ah, that\'s rough" / "let\'s get that sorted").';

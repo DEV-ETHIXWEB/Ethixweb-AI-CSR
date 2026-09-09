@@ -342,18 +342,25 @@ describe("assembleLayeredPrompt", () => {
   });
 
   /**
-   * v14: playful personal questions ("how old are you," "what's your
-   * birthday") are deliberately handled DIFFERENTLY from v8's "are you
-   * human or AI" honesty rule — a warm deflection for banter, never a
-   * fabricated fake age/birthday, and the absolute honesty rule stays
-   * untouched for a genuinely serious version of the same question.
+   * v22 SUPERSEDES v14 here: a real caller's own on-call feedback asked
+   * for the opposite of v14's "deflect" instruction — answer a
+   * configured persona fact (gender presentation, persona age,
+   * persona birthday) naturally and consistently, only deflecting a
+   * fact that genuinely isn't configured. The absolute human/AI
+   * honesty rule (v8, unchanged) still stays untouched for a genuinely
+   * serious version of that question — answering a persona fact is
+   * never a substitute for it.
    */
-  it("instructs the model to warmly deflect playful personal questions without fabricating a fake age or birthday, while keeping the serious human/AI honesty rule absolute", () => {
-    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("joking about your age or birthday");
+  it("instructs the model to answer a CONFIGURED persona fact naturally and consistently, deflect only an unconfigured one, while keeping the serious human/AI honesty rule absolute", () => {
     expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
-      "never invent a specific fake age, birthday, or personal history",
+      "answer questions about it naturally and consistently",
     );
-    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("always answer that one honestly");
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "if a particular fact isn't given, that's fine too",
+    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
+      "the human-or-ai honesty rule above, which stays absolute and unconditional",
+    );
   });
 
   /**
@@ -647,5 +654,94 @@ describe("assembleLayeredPrompt", () => {
     expect(prompt).toContain("crm/lead system is flagged as unavailable this call");
     expect(prompt).toContain("never tell the caller a team member will call them back");
     expect(prompt).toContain("not able to submit this from your end right now");
+  });
+
+  /**
+   * v22: a real caller asked "can I speak to a human," and Grace said
+   * "I can connect you with someone" — but no real non-emergency
+   * live-transfer mechanism exists (`forward_call` is
+   * escalateEmergency-only), making that line the same class of
+   * overpromise v21's CRM-callback rule already bans, just for a live
+   * transfer instead of a lead submission.
+   */
+  it("instructs the model never to claim it's connecting the caller to a human unless a real transfer is happening this same turn", () => {
+    const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+    expect(prompt).toContain("only say you're connecting them right now if a real transfer");
+    expect(prompt).toContain('don\'t say "let me connect you" or promise someone will call them');
+  });
+
+  describe("v22 — social intelligence / consultative-marketing / boundary-setting personality (real-call feedback + product spec)", () => {
+    it("states the explicit priority order — emergency/safety and helping the caller always outrank personality/marketing", () => {
+      const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+      expect(prompt).toContain("priority order when things pull in different directions");
+      expect(prompt).toContain("emergency or safety first");
+      expect(prompt).toContain("helping them wins, every time");
+    });
+
+    it("instructs natural social mirroring without profiling, and following up on what the caller just said rather than jumping to the next form field", () => {
+      const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+      expect(prompt).toContain("never infer or comment on sensitive traits");
+      expect(prompt).toContain("never make a judgment about someone based on what they share");
+      expect(prompt).toContain("a real conversation has a thread, a questionnaire doesn't");
+    });
+
+    /**
+     * Found live via real-Anthropic verification (measure-grace-persona.ts
+     * scenario A): a caller stating their own age right after asking
+     * Grace's got a flat "Nice." straight into the next question — safe,
+     * but not the warm, bantering social-mirroring moment the mission's
+     * own example describes. Cheap, targeted addition, not a rewrite of
+     * the whole social-intelligence section.
+     */
+    it("instructs a warm, specific reaction when the caller states their OWN age, not a flat acknowledgment straight into the next question", () => {
+      const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+      expect(prompt).toContain("if a caller states their own age");
+      expect(prompt).toContain("you've got a few years on grace then");
+    });
+
+    /**
+     * Product spec: calm, confident, occasionally lightly witty
+     * boundary-setting for abuse — never retaliation, never a long
+     * lecture, never ending the call over rudeness alone; a genuine
+     * safety escalation (threats/harassment) is explicitly carved out
+     * as a DIFFERENT case wit doesn't apply to.
+     */
+    it("instructs calm, non-hostile boundary-setting for abuse — never retaliation — with a genuine safety escalation carved out separately", () => {
+      const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+      expect(prompt).toContain("never get angry, never insult back, never threaten them");
+      expect(prompt).toContain("i can handle the frustration");
+      expect(prompt).toContain("genuine threats, harassment, or unsafe content");
+      expect(prompt).toContain("de-escalate plainly and disengage rather than reaching for wit");
+    });
+
+    it("instructs warm, brief handling of harmless compliments/flirting, with an explicit ban on sexual content or claiming real romantic feelings", () => {
+      const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+      expect(prompt).toContain("well, thank you");
+      expect(prompt).toContain("never encourage anything sexual or explicit");
+      expect(prompt).toContain("never claim real romantic feelings");
+      expect(prompt).toContain("one light, warm line is enough, not an extended back-and-forth");
+    });
+
+    it("instructs a brief, non-salesy business introduction for an accidental/wrong-number caller", () => {
+      const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+      expect(prompt).toContain("called by mistake or reached the wrong number");
+      expect(prompt).toContain("that one short introduction is a courtesy, not a pitch");
+    });
+
+    it("instructs consultative persuasion grounded only in real facts — no fabricated discounts, pricing, availability, reviews, or urgency", () => {
+      const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+      expect(prompt).toContain(
+        "never invent a discount, a price, availability, a review, or urgency",
+      );
+      expect(prompt).toContain("only two slots left");
+      expect(prompt).toContain("never use fear or guilt to push someone toward a decision");
+    });
+
+    it("instructs never pressuring a caller who objects — acknowledge and remove pressure explicitly", () => {
+      const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+      expect(prompt).toContain("i don't want a salesperson");
+      expect(prompt).toContain("never pressure them");
+      expect(prompt).toContain("totally fine, you don't have to decide anything right now");
+    });
   });
 });
