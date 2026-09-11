@@ -44,19 +44,37 @@ describe("assembleLayeredPrompt", () => {
   });
 
   /**
-   * Regression coverage for a real bug found live against an actual
-   * transcript: v2 of this prompt said "Always confirm spelled names ...
-   * back to the caller" — an ordinary name got spelled back twice in one
-   * response, exactly the "robotic, current HCP behavior this platform
-   * must not repeat" docs/03 §5 itself already names as the anti-pattern.
-   * v3 makes name-spelling conditional (uncommon/foreign/low-confidence
-   * only) and explicitly bans repeating a confirmation already given.
+   * v24 SUPERSEDES v3 here: v3's own real finding (an ordinary name
+   * spelled back TWICE in one response, on a real call) is still
+   * respected — spell it back only ONCE, never repeat an already-
+   * confirmed spelling — but the product owner explicitly asked, twice,
+   * for every name (not just uncommon/foreign/low-confidence ones) to be
+   * spelled back to confirm it, prioritizing accuracy on the real
+   * customer record. v3's own "Only spell a name back when..." CONDITION
+   * is gone; the "don't repeat an already-confirmed spelling" discipline
+   * survives as the new rule's own "exactly once per name" wording.
    */
-  it("makes name-spelling CONDITIONAL (uncommon/foreign/low-confidence), not an unconditional rule — the found-live HCP anti-pattern docs/03 §5 names", () => {
-    expect(PLATFORM_BASE_PROMPT_V1).toContain("Only spell a name back");
-    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("uncommon");
-    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("low-confidence");
-    expect(PLATFORM_BASE_PROMPT_V1).not.toContain("Always confirm spelled names");
+  it("spells EVERY caller name back once to confirm it, delivered naturally, never repeated after it's confirmed", () => {
+    const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+    expect(prompt).toContain("always spell a caller's name back letter by letter once");
+    expect(prompt).toContain("whether it looks ordinary or not");
+    expect(prompt).toContain("don't spell it back again later in the same call");
+    expect(PLATFORM_BASE_PROMPT_V1).not.toContain("Only spell a name back");
+  });
+
+  /**
+   * Same v24 direction change, for numbers: a caller-given zip code,
+   * phone number, or street number is now always read back digit by
+   * digit, even if the caller said it as one whole number rather than
+   * spelling it out themselves — previously conditional on how the
+   * caller themselves said it ("especially digit by digit").
+   */
+  it("reads EVERY zip code/phone/street number back digit by digit to confirm it, even when the caller said it as one whole number", () => {
+    const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+    expect(prompt).toContain(
+      "always read a zip code, phone number, or street number back digit by",
+    );
+    expect(prompt).toContain("even if the caller said the whole number naturally");
   });
 
   it("instructs the model never to repeat an already-answered confirmation in the same response", () => {
@@ -534,7 +552,7 @@ describe("assembleLayeredPrompt", () => {
    */
   it("instructs the model to read back a spoken number for confirmation rather than guessing or silently dropping unclear digits", () => {
     expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
-      "read it back exactly the way you heard it",
+      "always read a zip code, phone number, or street number back digit by",
     );
     expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
       "never silently substitute a different, more 'normal-looking' number",
