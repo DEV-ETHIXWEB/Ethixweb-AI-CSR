@@ -47,7 +47,28 @@
  * unchanged — this can only ever make fragmentation handling BETTER than
  * before, never worse, since it only ever adds a bounded wait to a
  * narrow subset of turns that would otherwise have committed immediately.
+ *
+ * 3. PHONETIC SPELLING ("k for kite", "a for apple") — found on a real
+ *    call forensically reviewed after the caller directly complained,
+ *    live, that Grace wasn't waiting for him to finish. He was spelling
+ *    his name out letter by letter using the common "LETTER for WORD"
+ *    convention (itself now far more common precisely because this
+ *    platform's own prompt rule, prompt-layers.ts's v24, asks Grace to
+ *    read spellings back and ask callers to confirm them). "k for kite"
+ *    is grammatically a complete phrase — neither of the two signals
+ *    above catches it — but a caller who has just spelled ONE letter
+ *    this way is virtually always about to spell MORE; treating it as
+ *    a finished, standalone turn is exactly backwards. In the real call,
+ *    "k for kite" finalized, then "yeah" finalized 1106ms later — inside
+ *    `FRAGMENT_COALESCE_WINDOW_MS` (1200ms) — meaning correctly flagging
+ *    "k for kite" here would have coalesced the two into one turn
+ *    instead of two separate ~4s process-then-abort cycles, which is the
+ *    actual mechanism behind what the caller experienced as Grace
+ *    talking over him: each short fragment independently triggered a
+ *    full turn, and his own next word barged in on it before it could
+ *    finish, again and again.
  */
+const PHONETIC_SPELLING_PATTERN = /^[a-z]\s+for\s+[a-z']+[.!?]?$/i;
 const OPENING_WORD_COUNT_MAX = 4;
 
 const OPENING_WORDS = new Set([
@@ -100,6 +121,9 @@ export function looksLikeIncompleteFragment(transcript: string): boolean {
     .filter((word) => word.length > 0);
   if (words.length === 0) {
     return false;
+  }
+  if (PHONETIC_SPELLING_PATTERN.test(transcript.trim())) {
+    return true;
   }
   const last = normalizeWord(words[words.length - 1]!);
   if (TRAILING_WORDS.has(last)) {

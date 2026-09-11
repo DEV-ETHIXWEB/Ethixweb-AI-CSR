@@ -101,4 +101,28 @@ describe("looksLikeIncompleteFragment", () => {
     expect(looksLikeIncompleteFragment("oh sorry, like")).toBe(true);
     expect(looksLikeIncompleteFragment("Oh sorry LIKE.")).toBe(true);
   });
+
+  /**
+   * REAL-CALL FINDING: forensic review of a real call where the caller
+   * directly, verbally complained that Grace wasn't waiting for him to
+   * finish. He was spelling "Akash" using the "LETTER for WORD" phonetic
+   * convention — "k for kite", "a for apple" — each one finalized by
+   * Deepgram as its own complete-sounding utterance (neither the
+   * trailing- nor opening-word signal catches it) and immediately
+   * committed as a standalone turn. His very next word then barged in on
+   * that turn before it could finish processing, over and over. See
+   * `PHONETIC_SPELLING_PATTERN`'s own comment in fragment-detector.ts.
+   */
+  it.each([["k for kite"], ["a for apple"], ["s for sam"], ["B for boy"], ["Z for zebra."]])(
+    "REAL-CALL FINDING: %p (phonetic spelling of one letter) is flagged as a likely-incomplete fragment",
+    (transcript) => {
+      expect(looksLikeIncompleteFragment(transcript)).toBe(true);
+    },
+  );
+
+  it("does NOT flag an ordinary sentence that happens to contain the word 'for' in the middle — only the exact single-letter 'LETTER for WORD' shape matches", () => {
+    expect(looksLikeIncompleteFragment("this is for a person")).toBe(false);
+    expect(looksLikeIncompleteFragment("thanks for waiting")).toBe(false);
+    expect(looksLikeIncompleteFragment("looking for the water heater")).toBe(false);
+  });
 });
