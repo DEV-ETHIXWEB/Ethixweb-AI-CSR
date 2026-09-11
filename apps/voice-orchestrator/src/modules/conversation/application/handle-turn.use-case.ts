@@ -503,9 +503,14 @@ export class HandleTurnUseCase {
       // case is a real caller-ID-unavailable scenario, not a bug this
       // backstop should paper over.
       let toolCalls = turn.toolCalls;
-      if (!turn.interrupted && turn.toolCalls.length === 0) {
+      if (turn.toolCalls.length === 0) {
         const backstops: AiToolCallRequest[] = [];
+        // Gated on `!turn.interrupted` — unlike escalateEmergency's own
+        // backstop below, there's no safety cost to simply skipping this
+        // on an interrupted turn and letting a later, uninterrupted turn
+        // pick it up.
         if (
+          !turn.interrupted &&
           command.allowedTools.includes("searchCustomer") &&
           conversation.callerAni &&
           !hasCalledSearchCustomer(conversation)
@@ -532,6 +537,27 @@ export class HandleTurnUseCase {
         // unrelated check. Over-triggering costs one harmless extra
         // round-trip; under-triggering is the one this real call proved
         // costs an actual missed emergency.
+        //
+        // Deliberately NOT gated on `!turn.interrupted`, unlike
+        // searchCustomer's own backstop just above — found on a SECOND
+        // real call, forensically reviewed after the caller directly,
+        // separately reported he was being talked over. Rapid caller
+        // interjections caused THIS turn (the one where he said "the
+        // pipe is leaking right now") to be interrupted mid-generation —
+        // confirmed from the raw stored messages, not inferred: the
+        // assistant's own content for that turn was the literal
+        // degenerate string "[", a cut-off partial. Because the whole
+        // backstop block used to be skipped outright whenever
+        // `turn.interrupted` was true, this exact turn's emergency
+        // content was never even considered for re-checking, and the
+        // caller's NEXT utterance ("fix can you help me with that") has
+        // no trigger words of its own to catch it a second time — the
+        // real leak statement was lost for good. A skipped safety check
+        // is a materially different, worse failure than a skipped
+        // searchCustomer lookup, so this one still fires even when the
+        // turn that surfaced it got interrupted; the loop still breaks
+        // right after (see below) rather than generating more text for
+        // a turn the caller has already moved on from.
         if (
           command.allowedTools.includes("escalateEmergency") &&
           (!hasCalledEscalateEmergency(conversation) ||
@@ -553,7 +579,7 @@ export class HandleTurnUseCase {
         });
       }
 
-      if (turn.interrupted || toolCalls.length === 0) {
+      if (toolCalls.length === 0) {
         break;
       }
 
@@ -644,6 +670,15 @@ export class HandleTurnUseCase {
           role: "system",
           content: CRM_UNAVAILABLE_NOTE,
         });
+      }
+      // The escalateEmergency backstop above deliberately still runs
+      // (and its tool_use/tool_result pair is now durably in the message
+      // history) even when THIS turn was interrupted — but the turn
+      // itself is still over: the caller has already moved on to a new
+      // utterance, so no further completion iteration should run to
+      // generate more text for a turn no one is listening to anymore.
+      if (turn.interrupted) {
+        break;
       }
     }
 

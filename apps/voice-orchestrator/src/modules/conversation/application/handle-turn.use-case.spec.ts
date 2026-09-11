@@ -1820,6 +1820,84 @@ describe("HandleTurnUseCase", () => {
     expect(result.toolCallsExecuted).toEqual(["escalateEmergency"]);
   });
 
+  /**
+   * Found forensically reviewing a SECOND real call, minutes after the
+   * caller separately, live, complained about being talked over: rapid
+   * interjections interrupted the exact turn where he said "the pipe is
+   * leaking right now" mid-generation (confirmed from the raw stored
+   * messages — that turn's own assistant content was the literal
+   * degenerate string "["). Before this fix, the whole backstop block
+   * was skipped outright whenever `turn.interrupted` was true, so this
+   * turn's real emergency content was never even considered for a
+   * re-check — and his next utterance had no trigger words of its own to
+   * catch it a second time. The leak statement was lost for good even
+   * though `looksEmergencyAdjacent` would have matched it immediately.
+   */
+  it("still fires the escalateEmergency backstop on an INTERRUPTED turn whose transcript looks emergency-adjacent — a missed safety check is worse than one extra tool call", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const controller = new AbortController();
+    const aiProvider = new FakeAiProvider();
+    // Turn 1: unrelated, satisfies the old "ever checked" gate — mirrors
+    // the real call, where turn 1's own greeting already checked once.
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "Hey, doing well! What's going on?" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const escalateHandler = {
+      execute: jest.fn().mockResolvedValue({
+        isEmergency: true,
+        severity: "critical",
+        action: "forward_call",
+        transferDestination: "+15550001111",
+      }),
+    };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "escalateEmergency", handler: escalateHandler }],
+    });
+    await useCase.execute(
+      baseCommand({
+        transcript: "hi grace how you",
+        idempotencyKey: "turn-1",
+        allowedTools: ["escalateEmergency"],
+      }),
+    );
+    expect(escalateHandler.execute).toHaveBeenCalledTimes(1);
+
+    // Turn 2: the caller describes an active leak, but this turn gets
+    // interrupted mid-generation — same shape as "stops the loop and
+    // marks interrupted when the abort signal fires mid-stream" above.
+    aiProvider.streamCompletion = async function* (): AsyncIterable<AiCompletionChunk> {
+      yield { type: "text_delta", text: "[" };
+      controller.abort();
+      throw new DOMException("aborted", "AbortError");
+    };
+
+    const result = await useCase.execute(
+      baseCommand({
+        transcript: "so the pipe is leaking right now",
+        idempotencyKey: "turn-2",
+        allowedTools: ["escalateEmergency"],
+        signal: controller.signal,
+      }),
+    );
+
+    expect(result.interrupted).toBe(true);
+    expect(escalateHandler.execute).toHaveBeenCalledTimes(2);
+    expect(escalateHandler.execute.mock.calls[1]?.[0]).toEqual({
+      description: "so the pipe is leaking right now",
+    });
+    expect(result.toolCallsExecuted).toEqual(["escalateEmergency"]);
+    expect(result.escalation?.action).toBe("forward_call");
+
+    const saved = await repository.findById("tenant-1", "conv-1");
+    expect(saved?.lastEmergencyCheckedTranscript).toBe("so the pipe is leaking right now");
+  });
+
   it("does NOT re-fire the backstop a second time within the SAME turn's own multiple completion iterations, even though that turn's own transcript looks emergency-adjacent", async () => {
     const repository = new FakeConversationRepository();
     repository.seed(baseConversation());
