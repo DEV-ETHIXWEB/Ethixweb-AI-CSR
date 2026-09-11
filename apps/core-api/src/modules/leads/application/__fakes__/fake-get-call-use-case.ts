@@ -5,23 +5,28 @@ import type { Call } from "../../../calls/domain/call.entity";
  * Stands in for CallsModule's GetCallUseCase — CreateLeadUseCase's own
  * comment explains why this is a real dependency now (the cross-tenant
  * callId vulnerability fix). Defaults to a call matching create-lead.use-case.spec.ts's
- * own `baseCommand()` fixture (tenant-1/business-1/call-1) so every
- * existing test in that file keeps passing unchanged; tests that need a
- * missing or wrong-business call seed/override explicitly.
+ * own `baseCommand()` fixture (tenant-1/business-1, telephonyCallSid
+ * "call-1") so every existing test in that file keeps passing unchanged;
+ * tests that need a missing or wrong-business call seed/override
+ * explicitly. `id` ("call-1-internal-id") is DELIBERATELY a different
+ * string from `telephonyCallSid` ("call-1") — see
+ * `executeByTelephonyCallSid`'s own real-code comment: conflating the two
+ * is exactly the bug this fake now exists to catch, not paper over by
+ * making them the same string.
  */
 export class FakeGetCallUseCase {
   private readonly calls = new Map<string, Call>();
 
   constructor() {
     this.seed({
-      id: "call-1",
+      id: "call-1-internal-id",
       tenantId: "tenant-1",
       businessId: "business-1",
       customerId: "customer-1",
       direction: "inbound",
       fromNumber: "+15551234567",
       toNumber: "+15559876543",
-      telephonyCallSid: "CAfake1",
+      telephonyCallSid: "call-1",
       status: "in_progress",
       endReason: null,
       durationSeconds: null,
@@ -38,12 +43,21 @@ export class FakeGetCallUseCase {
     return call;
   }
 
+  /** Mirrors the real GetCallUseCase.executeByTelephonyCallSid — a DIFFERENT lookup key from `execute` above, not an alias. */
+  async executeByTelephonyCallSid(tenantId: string, telephonyCallSid: string): Promise<Call> {
+    const call = [...this.calls.values()].find((c) => c.telephonyCallSid === telephonyCallSid);
+    if (!call || call.tenantId !== tenantId) {
+      throw new CallNotFoundError(telephonyCallSid);
+    }
+    return call;
+  }
+
   /** Test helper — seed or overwrite a call directly. */
   seed(call: Call): void {
     this.calls.set(call.id, call);
   }
 
-  /** Test helper — remove a call, simulating "never started". */
+  /** Test helper — remove a call, simulating "never started". Keyed by the call's own internal `id`, same as `seed`. */
   remove(callId: string): void {
     this.calls.delete(callId);
   }

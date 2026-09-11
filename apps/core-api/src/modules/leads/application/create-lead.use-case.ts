@@ -106,14 +106,15 @@ export class CreateLeadUseCase {
     // but the RLS-scoped recovery read finds nothing (the existing row
     // belongs to tenant A, invisible under tenant B's RLS context), which
     // surfaced as an unhandled 500 rather than a clean rejection.
-    // GetCallUseCase.findById is already tenant-scoped
-    // (`WHERE id = ? AND tenantId = ?`) — reused here rather than
-    // duplicating that query, the same pattern CallsModule's own comment
-    // already anticipated ("exported... for the future Voice AI module to
-    // inject").
+    // `command.callId` is voice-orchestrator's own telephony-level call
+    // id — the only "callId" concept that exists anywhere in the voice
+    // pipeline — never the Call row's own internal `id`. Resolving it via
+    // `executeByTelephonyCallSid` (tenant-scoped, same as `execute`) is
+    // the correctly-keyed equivalent of the by-id lookup this used to do;
+    // see that method's own comment for the real-call bug this closes.
     let call;
     try {
-      call = await this.getCallUseCase.execute(command.tenantId, command.callId);
+      call = await this.getCallUseCase.executeByTelephonyCallSid(command.tenantId, command.callId);
     } catch (error) {
       if (error instanceof CallNotFoundError) {
         throw new CallNotFoundForLeadError(command.callId);
@@ -131,7 +132,12 @@ export class CreateLeadUseCase {
     const crmLeadId = await this.attemptCrmSync(command, customer.crmCustomerId);
 
     return this.tenantContext.run(command.tenantId, async (db) => {
-      const { lead, created } = await this.upsertByCallId(db, command, crmLeadId);
+      // `Lead.callId` is a real FK/UNIQUE constraint against `Call.id`
+      // (the internal primary key resolved above as `call.id`) — NOT
+      // `command.callId` (the telephony sid used only to look it up).
+      // Passing `command.callId` straight through here was the second
+      // half of the same bug `executeByTelephonyCallSid` fixes above.
+      const { lead, created } = await this.upsertByCallId(db, command, call.id, crmLeadId);
 
       if (created) {
         await this.outboxWriterFactory.forDb(db).write({
@@ -198,6 +204,7 @@ export class CreateLeadUseCase {
   private async upsertByCallId(
     db: Db,
     command: CreateLeadCommand,
+    callId: string,
     crmLeadId: string | null,
   ): Promise<{ lead: Lead; created: boolean }> {
     // A SAVEPOINT taken immediately before the insert attempt — Postgres
@@ -215,7 +222,7 @@ export class CreateLeadUseCase {
         tenantId: command.tenantId,
         businessId: command.businessId,
         customerId: command.customerId,
-        callId: command.callId,
+        callId,
         crmLeadId,
         problemSummary: command.problemSummary,
         priority: command.priority,
@@ -230,10 +237,10 @@ export class CreateLeadUseCase {
       // Un-poisons the transaction so the recovery read below can actually
       // run — see the SAVEPOINT comment above.
       await db.$executeRaw`ROLLBACK TO SAVEPOINT create_lead_attempt`;
-      let existing = await this.leadRepository.findByCallId(db, command.tenantId, command.callId);
+      let existing = await this.leadRepository.findByCallId(db, command.tenantId, callId);
       if (!existing) {
         throw new Error(
-          `CreateLeadUseCase: constraint violation for call ${command.callId} but no row found on re-fetch`,
+          `CreateLeadUseCase: constraint violation for call ${callId} but no row found on re-fetch`,
         );
       }
       // Salvage: this losing attempt's own CRM sync may have succeeded even

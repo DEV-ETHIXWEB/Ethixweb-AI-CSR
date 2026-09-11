@@ -124,14 +124,18 @@ describe("CreateLeadUseCase", () => {
       seedCustomer(customerLookupPort);
       const getCallUseCase = new FakeGetCallUseCase();
       getCallUseCase.seed({
-        id: "call-1",
+        // Same `id` as FakeGetCallUseCase's own default seed — deliberately
+        // OVERWRITES it (both keyed by the same telephonyCallSid too), so
+        // this call is the only one `executeByTelephonyCallSid("call-1")`
+        // can find, not a second, shadowed entry behind the default.
+        id: "call-1-internal-id",
         tenantId: "some-other-tenant",
         businessId: "business-1",
         customerId: "customer-1",
         direction: "inbound",
         fromNumber: "+15551234567",
         toNumber: "+15559876543",
-        telephonyCallSid: "CAfake-other-tenant",
+        telephonyCallSid: "call-1",
         status: "in_progress",
         endReason: null,
         durationSeconds: null,
@@ -159,14 +163,16 @@ describe("CreateLeadUseCase", () => {
       seedCustomer(customerLookupPort);
       const getCallUseCase = new FakeGetCallUseCase();
       getCallUseCase.seed({
-        id: "call-1",
+        // Same reasoning as the cross-tenant test above — overwrite the
+        // default seed's id so this is the only "call-1" match.
+        id: "call-1-internal-id",
         tenantId: "tenant-1",
         businessId: "some-other-business",
         customerId: "customer-1",
         direction: "inbound",
         fromNumber: "+15551234567",
         toNumber: "+15559876543",
-        telephonyCallSid: "CAfake-other-business",
+        telephonyCallSid: "call-1",
         status: "in_progress",
         endReason: null,
         durationSeconds: null,
@@ -184,6 +190,62 @@ describe("CreateLeadUseCase", () => {
       await expect(useCase.execute(baseCommand())).rejects.toThrow(CallNotFoundForLeadError);
     },
   );
+
+  /**
+   * REAL-CALL FINDING: forensically reviewing a real prospective client's
+   * test call, his lead never got created despite a full qualifying
+   * conversation — core-api's own log showed createLead failing with "No
+   * call found for callId <voice-orchestrator's telephony id>". Traced to
+   * GetCallUseCase.execute looking up by the Call row's internal `id`
+   * (its own DB primary key, `@default(uuid())`), while
+   * StartConversationUseCase awaits `POST /internal/calls` but discards
+   * the response — so `command.callId`, threaded through voice-orchestrator
+   * and every AI tool call, is ALWAYS the telephony-level id
+   * (`telephonyCallSid`), never the real `Call.id`. The lookup compared
+   * two disjoint UUID spaces and 404'd on every single real call, not
+   * intermittently. This proves the fix directly: `id` and
+   * `telephonyCallSid` are DELIBERATELY different strings here, and the
+   * resulting Lead.callId must be the real internal `id` — using the
+   * telephony sid instead would violate the real FK constraint against
+   * `Call.id` on an actual database, exactly what silently 404'd instead
+   * of erroring here (a fake repository doesn't enforce FKs, so getting
+   * this wrong would otherwise pass silently).
+   */
+  it("REAL-CALL FINDING: resolves the caller's telephony-level callId to the Call row's own internal id, and that internal id — not the telephony id — becomes Lead.callId", async () => {
+    const customerLookupPort = new FakeCustomerLookupPort();
+    seedCustomer(customerLookupPort);
+    const getCallUseCase = new FakeGetCallUseCase();
+    getCallUseCase.seed({
+      id: "call-1-internal-id",
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      customerId: "customer-1",
+      direction: "inbound",
+      fromNumber: "+15551234567",
+      toNumber: "+15559876543",
+      telephonyCallSid: "call-1",
+      status: "in_progress",
+      endReason: null,
+      durationSeconds: null,
+      startedAt: new Date().toISOString(),
+      endedAt: null,
+    });
+    const leadRepository = new FakeLeadRepository();
+    const useCase = buildUseCase(
+      leadRepository,
+      customerLookupPort,
+      new FakeCrmLeadSyncPort(),
+      new FakeOutboxWriterFactory(),
+      getCallUseCase,
+    );
+
+    // baseCommand().callId is "call-1" — the TELEPHONY id, deliberately
+    // NOT equal to the seeded call's own internal "call-1-internal-id".
+    const lead = await useCase.execute(baseCommand());
+
+    expect(lead.callId).toBe("call-1-internal-id");
+    expect(lead.callId).not.toBe("call-1");
+  });
 
   it("never blocks lead creation when the CRM sync fails — records a local-only lead with crmLeadId null", async () => {
     const customerLookupPort = new FakeCustomerLookupPort();
