@@ -738,10 +738,28 @@ export class CallSessionOrchestrator {
       // The response text has already been spoken above (awaited via
       // speakQueue) — the caller hears SOMETHING before the line hands
       // off, rather than silence during the transfer's own connection
-      // setup latency, without speaking it twice. Best-effort: if the
-      // transfer itself fails, the call continues normally rather than
-      // dropping silently.
-      await this.executeEmergencyTransfer(params, log, turnResult.escalation.transferDestination);
+      // setup latency, without speaking it twice.
+      const transferred = await this.executeEmergencyTransfer(
+        params,
+        log,
+        turnResult.escalation.transferDestination,
+      );
+      if (!transferred && !this.ended) {
+        // FOUND LIVE via a full-stack audit: this branch used to be a
+        // comment claiming "the call continues normally rather than
+        // dropping silently" — it didn't; nothing here actually spoke to
+        // the caller or re-armed anything, so a failed transfer left a
+        // real emergency call in indefinite silence. Speak an honest
+        // fallback (never claim a transfer that didn't happen) and
+        // re-arm the silence check-in — the caller is back in Grace's
+        // hands, the same as if forward_call had never fired, so the
+        // same "now waiting on the caller" checkpoint applies.
+        await this.speak(
+          "[concerned] I wasn't able to connect you directly — let me get your information so we can get someone out to you as fast as possible.",
+          sink,
+        );
+        this.armSilenceCheckIn(sink);
+      }
     } else {
       // Grace just finished speaking her real response and isn't being
       // handed off — this IS the "now waiting on the caller" checkpoint.
@@ -1080,11 +1098,33 @@ export class CallSessionOrchestrator {
    * only adds a better destination when one is available, it never
    * removes the existing guaranteed fallback.
    */
+  /**
+   * Returns whether the transfer actually succeeded — see this method's
+   * own call site (`handleFinalTranscript`) for why that matters. FOUND
+   * LIVE via a full-stack audit (no real report; verified the real
+   * Twilio call-modification REST call is correctly authenticated/
+   * formed against the live API, then traced what happens if it — or
+   * Twilio itself — fails for any reason): both failure paths here
+   * (`destination` unconfigured, `transferCall` throwing) used to just
+   * log and return, with NOTHING telling the caller anything went
+   * wrong. Combined with `handleFinalTranscript` deliberately NOT
+   * arming the silence check-in for a transfer in progress (correct
+   * when the transfer succeeds — the caller is about to be talking to
+   * someone else, mid-transfer isn't a moment to check in on), a FAILED
+   * transfer left a caller in the middle of a real emergency (the
+   * docs' own example: a gas leak) in total, indefinite silence — no
+   * fallback message, no safety-net check-in, nothing. This is the same
+   * "never abandon the caller in dead air on a degraded/failed
+   * operation" principle already enforced elsewhere in this codebase
+   * (FallbackAiProvider's own silent-dead-air fix, voice-orchestrator's
+   * ProviderCompletionError), just missing on the single most
+   * safety-critical path in the whole system.
+   */
   private async executeEmergencyTransfer(
     params: CallSessionParams,
     log: StructuredLogger,
     resolvedOnCallDestination: string | null,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const destination =
       resolvedOnCallDestination ||
       process.env["EMERGENCY_TRANSFER_NUMBER"] ||
@@ -1094,15 +1134,17 @@ export class CallSessionOrchestrator {
         "escalateEmergency signaled forward_call but neither EMERGENCY_TRANSFER_NUMBER nor HUMAN_FALLBACK_NUMBER is configured — cannot execute transfer",
         { conversationId: this.conversationId },
       );
-      return;
+      return false;
     }
     try {
       await this.callTransfer.transferCall(params.callSid, destination);
+      return true;
     } catch (error) {
       log.error("emergency call transfer failed", {
         conversationId: this.conversationId,
         reason: error instanceof Error ? error.message : String(error),
       });
+      return false;
     }
   }
 

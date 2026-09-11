@@ -1553,6 +1553,85 @@ describe("CallSessionOrchestrator", () => {
       expect(callTransfer.transferCalls).toHaveLength(0);
     });
 
+    /**
+     * FOUND LIVE via a full-stack audit (verified the real Twilio
+     * call-modification REST call is correctly authenticated/formed
+     * against the live API, then traced the failure path): neither this
+     * case (no destination configured) nor a genuinely thrown
+     * `transferCall` error used to speak anything to the caller or
+     * re-arm the silence check-in — a failed transfer during a REAL
+     * emergency (the docs' own example: a gas leak) left the caller in
+     * indefinite silence with no fallback and no safety net. This and
+     * the next test prove the fix for both failure paths.
+     */
+    it("speaks an honest fallback and re-arms the silence check-in when no transfer destination is configured at all — never leaves the caller in silence during a real emergency", async () => {
+      delete process.env["EMERGENCY_TRANSFER_NUMBER"];
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, orchestratorClient, stt, callTransfer, tts } =
+          buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+        orchestratorClient.turnResponses = [
+          {
+            conversationId: "conv-1",
+            responseText: "Connecting you now.",
+            toolCallsExecuted: ["escalateEmergency"],
+            interrupted: false,
+            state: "emergency_transfer",
+            escalation: { severity: "critical", action: "forward_call", transferDestination: null },
+          },
+        ];
+
+        await orchestrator.onCallStart(baseParams(), sink);
+        const session = stt.sessions[0]!;
+        session.emitFinalTranscript("burst pipe", 0.9);
+        await jest.advanceTimersByTimeAsync(0);
+
+        expect(callTransfer.transferCalls).toHaveLength(0);
+        expect(tts.synthesizeCalls).toContain(
+          "I wasn't able to connect you directly — let me get your information so we can get someone out to you as fast as possible.",
+        );
+        // The silence check-in is now armed — the same real safety net a
+        // normal (non-transfer) turn already gets, proving the caller
+        // isn't stranded with no way for the system to ever check in again.
+        process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = "5";
+        await jest.advanceTimersByTimeAsync(10);
+        expect(tts.synthesizeCalls).toContain("Take your time. I'm still here.");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("speaks an honest fallback and re-arms the silence check-in when the real Twilio transfer call itself throws", async () => {
+      const { orchestrator, orchestratorClient, stt, callTransfer, tts } =
+        buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      process.env["EMERGENCY_TRANSFER_NUMBER"] = "+15559990000";
+      callTransfer.failNextWith = new Error("Twilio call-transfer failed (500): internal error");
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "Connecting you now.",
+          toolCallsExecuted: ["escalateEmergency"],
+          interrupted: false,
+          state: "emergency_transfer",
+          escalation: { severity: "critical", action: "forward_call", transferDestination: null },
+        },
+      ];
+
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+      session.emitFinalTranscript("gas smell near the water heater", 0.9);
+      await flushMicrotasks();
+
+      expect(callTransfer.transferCalls).toHaveLength(1); // the attempt WAS made, it just failed
+      expect(tts.synthesizeCalls).toContain(
+        "I wasn't able to connect you directly — let me get your information so we can get someone out to you as fast as possible.",
+      );
+      // Never claims a transfer that didn't happen.
+      expect(tts.synthesizeCalls).not.toContain("Connecting you directly now.");
+    });
+
     it("falls back to HUMAN_FALLBACK_NUMBER when EMERGENCY_TRANSFER_NUMBER specifically is not configured — some real human destination beats silently continuing the AI conversation", async () => {
       delete process.env["EMERGENCY_TRANSFER_NUMBER"];
       process.env["HUMAN_FALLBACK_NUMBER"] = "+15550001111";
