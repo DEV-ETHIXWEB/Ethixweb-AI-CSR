@@ -395,6 +395,27 @@ export class HandleTurnUseCase {
         conversation.lastBusinessHoursCheck,
       );
     }
+    if (
+      !conversation.leadId &&
+      !conversation.crmIntegrationUnavailable &&
+      command.allowedTools.includes("createLead") &&
+      looksLikeCloseConsent(command.transcript)
+    ) {
+      // Found with scripts/measure-mood-conversion.ts, and NOT fixed by
+      // prompt wording alone (v25 in prompt-layers.ts) — the same
+      // "reliability ceiling" already true of escalateEmergency,
+      // searchCustomer, and the missing-lead reminder above. Across ten
+      // real-model mood scenarios, a caller saying an explicit "go
+      // ahead, submit it" (sometimes twice) still didn't reliably stop
+      // the model from re-asking the same unanswered diagnostic
+      // question instead of calling createCustomer/createLead with what
+      // it already had. `looksLikeCloseConsent` is a deliberately
+      // liberal, LOCAL heuristic — same posture as `looksEmergencyAdjacent`
+      // — over-triggering here just costs one harmless extra nudge the
+      // model was likely to follow anyway, while under-triggering is the
+      // exact, real conversion loss this was found causing.
+      annotatedTranscript = annotateCloseConsent(annotatedTranscript);
+    }
     pushMessage({
       role: "user",
       content: annotatedTranscript,
@@ -1317,6 +1338,36 @@ function looksEmergencyAdjacent(transcript: string): boolean {
   return triggers.some((trigger) => lower.includes(trigger));
 }
 
+/**
+ * Same "deliberately liberal, LOCAL heuristic" posture as
+ * `looksEmergencyAdjacent` — a plain substring check on explicit action
+ * phrases, not an attempt at general sentiment analysis. Scoped tightly
+ * to phrases that are already unambiguous consent to proceed in a
+ * qualifying-call context (see prompt-layers.ts's own v25 comment for
+ * the real-model evidence this was found from) — not softer, more
+ * ambiguous phrasing like "that sounds good" or "okay," which are
+ * common enough in ordinary back-and-forth that matching them here
+ * would nudge on nearly every turn.
+ */
+function looksLikeCloseConsent(transcript: string): boolean {
+  const lower = transcript.toLowerCase();
+  const triggers = [
+    "go ahead",
+    "submit it",
+    "submit that",
+    "submit away",
+    "let's do it",
+    "lets do it",
+    "do that",
+    "set that up",
+    "set it up",
+    "get that set up",
+    "yes, submit",
+    "please submit",
+  ];
+  return triggers.some((trigger) => lower.includes(trigger));
+}
+
 /** Same rationale as `hasCalledEscalateEmergency` — checks the durable flag first, falls back to a live message-history scan. */
 function hasCalledSearchCustomer(conversation: Conversation): boolean {
   if (conversation.searchCustomerEverChecked === true) {
@@ -1391,6 +1442,28 @@ const CRM_UNAVAILABLE_NOTE =
 
 function annotateCrmUnavailable(transcript: string): string {
   return `${CRM_UNAVAILABLE_NOTE} ${transcript}`;
+}
+
+/**
+ * See `looksLikeCloseConsent`'s own comment for the real-model evidence
+ * this closes. Deliberately does NOT name a specific missing field —
+ * unlike `annotateMissingLead`, which knows exactly what's missing
+ * (a customer record), this fires on the caller's own words alone, so
+ * the actual gap (an unanswered diagnostic question, a hesitant
+ * qualifier, nothing at all) could be anything; naming the wrong one
+ * explicitly would just be a different way of misleading the model.
+ */
+const CLOSE_CONSENT_NOTE =
+  "[the caller just gave an explicit go-ahead to submit/proceed — call " +
+  "createCustomer/createLead THIS turn using whatever you already know " +
+  "about the problem, even if it's approximate, a diagnostic detail is " +
+  "still unanswered, or all you really have is the general category of " +
+  "the issue (e.g. 'sink problem, caller couldn't describe specifics') " +
+  "— that's still a complete, honest problem_summary; don't ask another " +
+  "question first. A technician assesses the specifics in person.]";
+
+function annotateCloseConsent(transcript: string): string {
+  return `${CLOSE_CONSENT_NOTE} ${transcript}`;
 }
 
 /**

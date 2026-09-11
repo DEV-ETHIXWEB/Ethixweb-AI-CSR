@@ -59,6 +59,7 @@ export default tseslint.config(
             "apps/voice-orchestrator/scripts/measure-create-customer-args.ts",
             "apps/voice-orchestrator/scripts/measure-grace-persona.ts",
             "apps/voice-orchestrator/scripts/measure-full-stack-audit.ts",
+            "apps/voice-orchestrator/scripts/measure-mood-conversion.ts",
             "apps/voice-runtime/scripts/measure-tts-latency.ts",
             "apps/core-api/scripts/seed-all-phase-knowledge.ts",
             "apps/core-api/scripts/check-tenant-readiness.ts",

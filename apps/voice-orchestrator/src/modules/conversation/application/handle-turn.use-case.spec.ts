@@ -594,6 +594,108 @@ describe("HandleTurnUseCase", () => {
   });
 
   /**
+   * Found with scripts/measure-mood-conversion.ts, and NOT fixed by
+   * prompt wording alone (prompt-layers.ts's v25) — same "reliability
+   * ceiling" already true of escalateEmergency/searchCustomer/the
+   * missing-lead reminder above. Across ten real-model mood scenarios, a
+   * caller saying an explicit "go ahead, submit it" (sometimes twice)
+   * still didn't reliably stop the model re-asking the same unanswered
+   * diagnostic question instead of calling createCustomer/createLead
+   * with what it already had.
+   */
+  describe("close-consent backstop (looksLikeCloseConsent)", () => {
+    it("annotates the caller's message when they give an explicit go-ahead and no lead exists yet", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      const { useCase } = buildUseCase({ aiProvider, repository });
+
+      await useCase.execute(
+        baseCommand({
+          transcript: "yeah go ahead and submit it",
+          allowedTools: ["createLead"],
+        }),
+      );
+
+      const sentMessage = aiProvider.requests[0]?.messages[0];
+      expect(sentMessage?.content).toContain(
+        "the caller just gave an explicit go-ahead to submit/proceed",
+      );
+      expect(sentMessage?.content).toContain("yeah go ahead and submit it");
+    });
+
+    it("does NOT annotate a soft, ambiguous phrase like 'that sounds good' or plain 'okay'", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      const { useCase } = buildUseCase({ aiProvider, repository });
+
+      await useCase.execute(
+        baseCommand({ transcript: "okay, that sounds good", allowedTools: ["createLead"] }),
+      );
+
+      const sentMessage = aiProvider.requests[0]?.messages[0];
+      expect(sentMessage?.content).toBe("okay, that sounds good");
+    });
+
+    it("does NOT annotate once a lead has already been created this call", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation({ leadId: "lead-already-created" }));
+      const aiProvider = new FakeAiProvider();
+      const { useCase } = buildUseCase({ aiProvider, repository });
+
+      await useCase.execute(
+        baseCommand({ transcript: "go ahead, submit it", allowedTools: ["createLead"] }),
+      );
+
+      const sentMessage = aiProvider.requests[0]?.messages[0];
+      expect(sentMessage?.content).toBe("go ahead, submit it");
+    });
+
+    it("does NOT annotate when the CRM/lead system is already known unavailable this call — would contradict the honesty note", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation({ crmIntegrationUnavailable: true }));
+      const aiProvider = new FakeAiProvider();
+      const { useCase } = buildUseCase({ aiProvider, repository });
+
+      await useCase.execute(
+        baseCommand({ transcript: "go ahead, submit it", allowedTools: ["createLead"] }),
+      );
+
+      const sentMessage = aiProvider.requests[0]?.messages[0];
+      expect(sentMessage?.content).not.toContain(
+        "the caller just gave an explicit go-ahead to submit/proceed",
+      );
+    });
+
+    it("does NOT annotate when createLead isn't even an allowed tool for this call", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      const { useCase } = buildUseCase({ aiProvider, repository });
+
+      await useCase.execute(baseCommand({ transcript: "go ahead, submit it", allowedTools: [] }));
+
+      const sentMessage = aiProvider.requests[0]?.messages[0];
+      expect(sentMessage?.content).toBe("go ahead, submit it");
+    });
+
+    it("never leaks the close-consent annotation into the DURABLE transcript record — only the model-facing copy", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const { useCase } = buildUseCase({ repository });
+
+      await useCase.execute(
+        baseCommand({ transcript: "go ahead, submit it", allowedTools: ["createLead"] }),
+      );
+
+      const saved = await repository.findById("tenant-1", "conv-1");
+      const lastCallerTurn = saved?.transcript.filter((t) => t.speaker === "caller").pop();
+      expect(lastCallerTurn?.text).toBe("go ahead, submit it");
+    });
+  });
+
+  /**
    * C2 (real forensic call finding): `leadEverAttempted` was ONLY ever
    * set by a `createLead` call — never by `createCustomer` — even though
    * the reminder text itself instructs the model to call `createCustomer`.

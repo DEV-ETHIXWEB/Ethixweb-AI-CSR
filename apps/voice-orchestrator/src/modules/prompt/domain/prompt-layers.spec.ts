@@ -785,4 +785,44 @@ describe("assembleLayeredPrompt", () => {
       expect(prompt).toContain("totally fine, you don't have to decide anything right now");
     });
   });
+
+  /**
+   * v25, found with scripts/measure-mood-conversion.ts across ten
+   * real-model mood scenarios: tone adaptation per mood was already
+   * strong, but in 5 of 10 the caller explicitly said "go ahead, submit
+   * it" (twice, in two of those five) and the model kept re-asking the
+   * same unanswered diagnostic follow-up instead of calling
+   * createCustomer/createLead with what it already had — the same
+   * self-imposed-blocking-field pattern v15/v19 already fixed for
+   * contact-info fields, recurring one field class over (the problem
+   * description itself), because neither the existing close-signal rule
+   * nor its examples had ever been shown to cover that case explicitly.
+   */
+  describe("v25 — explicit caller consent to close overrides an unanswered diagnostic follow-up (real-model mood-conversion audit)", () => {
+    it("names an explicit action phrase as an even stronger close signal than a soft one, effective the first time it's said", () => {
+      const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+      expect(prompt).toContain("an even stronger signal than a soft close");
+      expect(prompt).toContain("already unambiguous the first time");
+    });
+
+    it("extends the no-self-imposed-blocking-field rule explicitly to the model's OWN diagnostic questions about the problem, not just contact-info fields", () => {
+      const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+      expect(prompt).toContain("this applies just as much to your own follow-up questions");
+      expect(prompt).toContain(
+        "a diagnostic detail you'd like to know is never a gate on createcustomer/createlead",
+      );
+    });
+
+    it("instructs that an approximate, honest problem_summary is complete on its own — full diagnosis is the technician's job, not a phone-call prerequisite", () => {
+      const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+      expect(prompt).toContain("problem_summary doesn't need every detail nailed down");
+      expect(prompt).toContain("a technician assesses the specifics in person");
+    });
+
+    it("instructs calling createCustomer/createLead the same turn a caller repeats their consent instead of answering one more clarifying question", () => {
+      const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+      expect(prompt).toContain("that's the caller telling you twice");
+      expect(prompt).toContain("don't ask a third time");
+    });
+  });
 });

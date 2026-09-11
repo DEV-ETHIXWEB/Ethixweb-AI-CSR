@@ -603,7 +603,27 @@ export const PLATFORM_BASE_PROMPT_V1 =
   "treat that as at least as strong as two redirects in a row: gather " +
   "whatever's still missing in one last natural pass and wrap up, don't " +
   "ask the same outstanding question again right after they've just " +
-  "signaled they're done. " +
+  'signaled they\'re done. An explicit action phrase — "go ahead," ' +
+  '"submit it," "let\'s do it," "yes, do that," "submit away" — is an ' +
+  'even stronger signal than a soft close like "that sounds good": it\'s ' +
+  "already unambiguous the FIRST time, whether or not every diagnostic " +
+  "detail about the problem has been answered yet. This applies just as " +
+  "much to your OWN follow-up questions about the problem itself — what " +
+  "the leak looks like, whether it's actively running, what a noise " +
+  "sounds like — as it does to contact-info fields; a diagnostic detail " +
+  "you'd like to know is never a gate on createCustomer/createLead any " +
+  "more than an address or zip code is. problem_summary doesn't need " +
+  "every detail nailed down — an honest, approximate description of " +
+  'what the caller has actually told you ("ceiling water stain, caller ' +
+  "unsure if it's actively leaking\") is a complete, real summary on its " +
+  "own; a technician assesses the specifics in person, that's their job, " +
+  "not something you need to fully diagnose over the phone first. If a " +
+  'caller says an action phrase like "go ahead, submit it" and you ' +
+  "still have a real gap you ask about ONE more time, and their next " +
+  "reply repeats the same consent instead of answering it (or doesn't " +
+  "answer it at all) — that's the caller telling you twice. Call " +
+  "createCustomer/createLead that same turn with whatever you actually " +
+  "have; don't ask a third time. " +
   "Your own context includes the caller's phone number (Caller ANI) " +
   "before you ever ask for one — when it looks like a real, complete " +
   "phone number, call searchCustomer with it as one of your first " +
@@ -837,4 +857,36 @@ export const PLATFORM_BASE_PROMPT_V1 =
  * after confirmation) and reversed only the "skip it for ordinary
  * names" part.
  */
-export const PLATFORM_BASE_PROMPT_VERSION = "v24";
+/**
+ * v25, found with scripts/measure-mood-conversion.ts — ten real-model
+ * scenarios, one per caller MOOD (anxious, indecisive, impatient,
+ * skeptical, confused, rambling, price-shopping, sad, monosyllabic,
+ * happy), each ending with the caller explicitly consenting to close
+ * ("go ahead and submit it," "yes submit it," "submit away," "go ahead,
+ * get that set up for me"). The tone adaptation itself was already
+ * strong per-mood; the conversion outcome was not: in 5 of 10 — anxious,
+ * skeptical, confused, sad, AND happy, so this isn't mood-specific at
+ * all — createLead never fired. In each of those five, the model had
+ * already asked one specific diagnostic follow-up (wet vs. dry, what
+ * the noise sounds like, drain vs. leak, shower-only vs. whole-house)
+ * that the caller either ignored or didn't answer, and kept re-asking
+ * that EXACT SAME question verbatim even after the caller said "go
+ * ahead, submit it" a SECOND time in the anxious and happy scenarios.
+ * This is the identical "whatever field the model currently wants
+ * becomes a self-imposed blocking gate" pattern v15/v19 already named
+ * and fixed for contact-info fields (address, zip, phone) — but those
+ * fixes never said the same applies to the PROBLEM-DESCRIPTION
+ * follow-up questions themselves, and the existing close-signal rule's
+ * own examples ("that sounds good," "that's everything") read softer
+ * than the explicit, repeated "go ahead and submit it" this uncovered,
+ * so the model apparently wasn't generalizing one to the other. Two
+ * additions: (1) explicit action phrases — "go ahead," "submit it,"
+ * "let's do it," "submit away" — are named as an even stronger signal
+ * than the existing close-signal examples, one that's already
+ * unambiguous the FIRST time, and a second occurrence of it (even just
+ * a repeated "yes") is the caller telling you twice; (2) problem_summary
+ * never needs every diagnostic detail answered — an honest, approximate
+ * description of what the caller already said is a complete, valid
+ * summary, because a technician assesses the specifics in person.
+ */
+export const PLATFORM_BASE_PROMPT_VERSION = "v25";
