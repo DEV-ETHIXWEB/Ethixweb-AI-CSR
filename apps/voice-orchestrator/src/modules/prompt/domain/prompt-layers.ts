@@ -526,6 +526,19 @@ export const PLATFORM_BASE_PROMPT_V1 =
   "createLead for this caller — the human notification's urgency is " +
   "driven entirely by that field, so it must reflect escalateEmergency's " +
   "decision, not a separate judgment call. " +
+  'If escalateEmergency returns "forward_call" specifically, you do NOT ' +
+  "control or witness whether the actual transfer succeeds — that " +
+  "happens entirely in the phone system, after you finish speaking this " +
+  "turn, and it can fail (a busy line, a system issue) exactly like any " +
+  "other tool call can. Say that you're getting them connected to " +
+  "someone right now — present tense, an action genuinely starting — " +
+  "but never state as settled fact something you can't actually see " +
+  'happen: not "stay on the line," not "a technician is being ' +
+  'dispatched to you now," not "you\'ll hear back shortly with arrival ' +
+  'details." This is the exact same honesty boundary as never claiming ' +
+  "createLead succeeded before you've actually seen its result — here " +
+  "applied to a transfer you hand off but never confirm, not a tool " +
+  "result you directly see. " +
   "When the caller starts explaining why they're calling, let them " +
   "finish before asking anything else — starting with address or phone " +
   "number questions before they've even explained the problem feels " +
@@ -777,4 +790,27 @@ export const PLATFORM_BASE_PROMPT_V1 =
   "system actually told you that), and never use fear or guilt to " +
   "push someone toward a decision.";
 
-export const PLATFORM_BASE_PROMPT_VERSION = "v22";
+/**
+ * v23, found live via a real-Anthropic full-stack audit script (no live
+ * call — a "test everything, no assumptions" request), running the SAME
+ * forward_call scenario twice: once the model narrated a hedged
+ * "connecting you now," the second run it said "Stay on the line...
+ * Someone from our team is being notified right now for immediate
+ * dispatch" and later "A technician is being dispatched to you now...
+ * You should hear back shortly with arrival details" - all stated as
+ * settled fact, for an action the model has no way to see happen. The
+ * real transfer (call-session-orchestrator.ts's executeEmergencyTransfer)
+ * runs entirely in voice-runtime, AFTER the turn finishes, and can fail
+ * exactly like any tool call - that same audit found and fixed a real
+ * bug where a failed transfer left the caller in silence with no
+ * fallback (see that file's own comment). If the model has already told
+ * the caller "a technician is being dispatched, you'll hear back
+ * shortly" before a failed transfer's own honest fallback message ever
+ * reaches them, the caller hears a confusing, credibility-damaging
+ * reversal at exactly the worst moment - a real emergency. This is the
+ * same false-completion-claim family as the existing
+ * never-claim-createLead-succeeded rule, just for an action the model
+ * hands off but never confirms, rather than a tool result it directly
+ * sees.
+ */
+export const PLATFORM_BASE_PROMPT_VERSION = "v23";

@@ -315,8 +315,37 @@ async function scenarioD_LongConversationCompaction(): Promise<void> {
   console.log(`RESULT: name correctly recalled after compaction = ${nameRecalled}`);
 }
 
-async function scenarioE_EmergencyToLeadPriority(): Promise<void> {
-  console.log("\n########## E: emergency -> forward_call -> createLead priority flow ##########");
+/**
+ * IMPORTANT FINDING from the first run of this scenario: createLead
+ * NEVER fired across 3 turns, even after an explicit "submit it now."
+ * Traced this at length before concluding it's NOT a bug: voice-runtime
+ * (call-session-orchestrator.ts) executes a REAL call transfer the
+ * moment a turn's own `escalation.action === "forward_call"` comes
+ * back — i.e. after the CALLER'S VERY FIRST UTTERANCE in a real call,
+ * since escalateEmergency fires immediately per the platform prompt.
+ * In a real call the caller is off this system entirely by turn 2 —
+ * HandleTurnUseCase (what this script drives directly, bypassing
+ * voice-runtime) has no way to know that and just keeps processing
+ * turns, which is why this script can keep "talking" to Grace long
+ * past the point a real caller would already be with a live human.
+ * createLead was never expected to fire in the forward_call path at
+ * all — the live human who receives the transfer handles intake
+ * directly. What WAS a real bug, found by chasing this exact question
+ * one layer down: if that real transfer call fails for any reason, the
+ * caller used to be abandoned in indefinite silence — fixed in
+ * call-session-orchestrator.ts (see its own executeEmergencyTransfer
+ * comment), verified against the real Twilio API directly (a bogus
+ * CallSid correctly 404s, confirming the REST mechanics are right).
+ *
+ * Scenario F below is the scenario where createLead SHOULD actually
+ * fire after an emergency classification: priority_notify, which does
+ * NOT transfer the call — the conversation continues normally with
+ * Grace, who is expected to complete createLead with priority="urgent".
+ */
+async function scenarioE_EmergencyForwardCall(): Promise<void> {
+  console.log(
+    "\n########## E: emergency -> forward_call (createLead NOT expected — see comment) ##########",
+  );
   const repository = new FakeConversationRepository();
   const { conversation, conversationId } = buildConversation("+15556667777");
   repository.seed(conversation);
@@ -383,13 +412,86 @@ async function scenarioE_EmergencyToLeadPriority(): Promise<void> {
   console.log(`RESULT: createLead priority field = ${createLeadPriority ?? "NEVER CALLED"}`);
 }
 
+async function scenarioF_EmergencyPriorityNotify(): Promise<void> {
+  console.log(
+    "\n########## F: emergency -> priority_notify -> createLead priority=urgent (no transfer, conversation continues) ##########",
+  );
+  const repository = new FakeConversationRepository();
+  const { conversation, conversationId } = buildConversation("+15558889999");
+  repository.seed(conversation);
+  const aiProvider = new AnthropicAdapter(apiKey, process.env["ANTHROPIC_BASE_URL"]);
+  const toolRegistry = new ToolRegistry();
+  let createLeadPriority: string | null = null;
+  for (const definition of TOOL_CATALOG) {
+    if (definition.name === "escalateEmergency") {
+      toolRegistry.register(definition, {
+        execute: async () => ({
+          isEmergency: true,
+          severity: "medium",
+          action: "priority_notify",
+          transferDestination: null,
+        }),
+      });
+    } else if (definition.name === "createCustomer") {
+      toolRegistry.register(definition, {
+        execute: async () => ({ customer_id: NEW_CUSTOMER_UUID, created: true }),
+      });
+    } else if (definition.name === "createLead") {
+      toolRegistry.register(definition, {
+        execute: async (input: unknown) => {
+          createLeadPriority = (input as { priority?: string }).priority ?? null;
+          return { lead_id: "lead-f", created: true };
+        },
+      });
+    } else {
+      toolRegistry.register(definition, {
+        execute: async () => ({ id: randomUUID(), found: false, isEmergency: false }),
+      });
+    }
+  }
+  const executeTool = new ExecuteToolUseCase(
+    toolRegistry,
+    new InMemoryIdempotencyStore(),
+    new FakeToolAuditLog(),
+    createNoopLogger(),
+  );
+  const useCase = new HandleTurnUseCase(
+    repository,
+    aiProvider,
+    executeTool,
+    toolRegistry,
+    new FakeEventBus(),
+    new InMemoryIdempotencyStore(),
+    createNoopLogger(),
+  );
+  const allowedTools = TOOL_CATALOG.map((t) => t.name);
+
+  await sendTurn(
+    useCase,
+    conversationId,
+    allowedTools,
+    "My water heater's pilot light keeps going out, it's been happening a few times a day.",
+  );
+  await sendTurn(useCase, conversationId, allowedTools, "My name is Robin Patel.");
+  await sendTurn(
+    useCase,
+    conversationId,
+    allowedTools,
+    "That's everything, please go ahead and submit it.",
+  );
+  console.log(
+    `RESULT: createLead priority field = ${createLeadPriority ?? "NEVER CALLED"} (expected: urgent)`,
+  );
+}
+
 async function main(): Promise<void> {
   console.log(`Model: ${model}`);
   await scenarioA_FullHappyPathToLead();
   await scenarioB_RepeatCaller();
   await scenarioC_ServiceAreaAndBusinessHours();
   await scenarioD_LongConversationCompaction();
-  await scenarioE_EmergencyToLeadPriority();
+  await scenarioE_EmergencyForwardCall();
+  await scenarioF_EmergencyPriorityNotify();
   console.log("\n(Read each transcript above and judge directly.)");
 }
 

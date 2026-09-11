@@ -670,6 +670,29 @@ describe("assembleLayeredPrompt", () => {
     expect(prompt).toContain('don\'t say "let me connect you" or promise someone will call them');
   });
 
+  /**
+   * v23: found live via a real-Anthropic full-stack audit (no live
+   * call), running the SAME forward_call emergency scenario twice — the
+   * model told the caller "Stay on the line... a technician is being
+   * dispatched to you now... you'll hear back shortly with arrival
+   * details," all stated as settled fact, for a real Twilio transfer
+   * that executes entirely in voice-runtime AFTER the turn finishes and
+   * can fail (the same audit found and fixed a real bug where a failed
+   * transfer left the caller in silence with no fallback — see
+   * call-session-orchestrator.ts's own executeEmergencyTransfer
+   * comment). If the model has already promised a dispatched technician
+   * before a failed transfer's own honest fallback ever reaches the
+   * caller, that's a confusing, credibility-damaging reversal at
+   * exactly the worst moment — a real emergency.
+   */
+  it("instructs the model never to state a forward_call transfer as settled fact — it doesn't control or witness whether the real transfer succeeds", () => {
+    const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+    expect(prompt).toContain("you do not control or witness whether the actual transfer succeeds");
+    expect(prompt).toContain('not "stay on the line,"');
+    expect(prompt).toContain("a technician is being");
+    expect(prompt).toContain("you'll hear back shortly with arrival");
+  });
+
   describe("v22 — social intelligence / consultative-marketing / boundary-setting personality (real-call feedback + product spec)", () => {
     it("states the explicit priority order — emergency/safety and helping the caller always outrank personality/marketing", () => {
       const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
