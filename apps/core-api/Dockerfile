@@ -50,7 +50,19 @@ COPY --from=pruner /repo/out/full/ .
 # imports via @ethixweb/database — must exist before the build (typecheck
 # needs its generated types) and must be present in node_modules when copied
 # into the runner stage below (it lands inside node_modules, not dist).
-RUN pnpm --filter @ethixweb/database run generate
+# The placeholder URL is deliberate. prisma.config.ts resolves
+# `env("MIGRATION_DATABASE_URL")` eagerly when the config is loaded, and
+# `prisma generate` loads that config even though generating the client
+# only reads prisma/schema.prisma and never opens a connection. Without
+# this, the image build fails with "Cannot resolve environment variable:
+# MIGRATION_DATABASE_URL" — found by actually building this image.
+#
+# Scoped to this single RUN, so it is never baked into the image env, and
+# it is a fake value regardless: the real MIGRATION_DATABASE_URL (the
+# table-owning role, per ADR-013/014) is supplied at deploy time and is
+# only ever used by `prisma migrate`, which is not run here.
+RUN MIGRATION_DATABASE_URL="postgresql://placeholder:placeholder@localhost:5432/placeholder" \
+    pnpm --filter @ethixweb/database run generate
 RUN npx turbo run build --filter=@ethixweb/core-api
 
 FROM base AS runner
