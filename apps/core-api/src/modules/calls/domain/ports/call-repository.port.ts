@@ -70,6 +70,40 @@ export interface CallRepository {
     businessId: string,
     options: ListCallsOptions,
   ): Promise<ListCallsResult>;
+  /**
+   * Writes the conversation transcript for a finished call.
+   *
+   * IDEMPOTENT, but by an existence check rather than a unique
+   * constraint: `Transcript` has only an INDEX on (call_id, turn_index),
+   * not a UNIQUE, so `skipDuplicates` has nothing to key on. Adding that
+   * constraint would mean another migration, and this schema's migrations
+   * cannot run unmodified against Fly Managed Postgres (see
+   * packages/database/scripts/fly-rls-policies.sql) — not a good trade
+   * for a table written exactly once, wholesale, at end of call.
+   *
+   * The existence check is sufficient precisely because of that write
+   * pattern: there is no partial-transcript case to merge. Matters
+   * because the Voice Runtime may legitimately signal call-ended more
+   * than once (retry, or both a caller-hangup and a call-ended event),
+   * and EndCallUseCase is already idempotent for that same reason — the
+   * transcript write must not be the one part of that path that
+   * duplicates rows. Returns how many turns were newly written, so a
+   * genuine no-op logs distinctly from a real save.
+   */
+  saveTranscript(
+    db: Db,
+    tenantId: string,
+    callId: string,
+    turns: TranscriptTurn[],
+  ): Promise<number>;
+}
+
+export interface TranscriptTurn {
+  turnIndex: number;
+  speaker: string;
+  text: string;
+  confidence?: number | undefined;
+  offsetMs?: number | undefined;
 }
 
 export const CALL_REPOSITORY = Symbol("CALL_REPOSITORY");

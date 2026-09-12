@@ -77,6 +77,7 @@ export class CallsToolController {
       status: dto.status,
       endReason: dto.endReason,
       endedAt: dto.endedAt,
+      transcript: dto.transcript,
     });
     return CallResponseDto.fromDomain(call);
   }

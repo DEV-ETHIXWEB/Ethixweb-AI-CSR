@@ -184,4 +184,83 @@ describe("EndCallUseCase", () => {
       }),
     ).rejects.toThrow(CallNotFoundError);
   });
+
+  /**
+   * Regression coverage for a silent, ongoing data loss found by a QA
+   * pass: the `transcripts` table had 0 rows after four real production
+   * calls, because nothing in the codebase ever wrote to it. The
+   * conversation existed only in Redis, under a TTL — so once it expired
+   * there was no record of what was said on a call.
+   */
+  describe("transcript persistence", () => {
+    const turns = [
+      { turnIndex: 0, speaker: "caller", text: "my sink is leaking", confidence: 0.94 },
+      { turnIndex: 1, speaker: "agent", text: "Got it — let me help with that." },
+    ];
+
+    it("persists the transcript turns handed to it when a call ends", async () => {
+      const { useCase, callRepository } = buildUseCase();
+      seedInProgressCall(callRepository);
+
+      await useCase.execute({
+        tenantId: "tenant-1",
+        telephonyCallSid: "CA-abc123",
+        status: "completed",
+        endedAt: "2026-01-15T12:05:00.000Z",
+        transcript: turns,
+      });
+
+      expect(callRepository.savedTranscripts.get("call-1")).toEqual(turns);
+    });
+
+    it("is idempotent across a repeated end-call delivery — no duplicate turns", async () => {
+      const { useCase, callRepository } = buildUseCase();
+      seedInProgressCall(callRepository);
+      const command = {
+        tenantId: "tenant-1",
+        telephonyCallSid: "CA-abc123",
+        status: "completed" as const,
+        endedAt: "2026-01-15T12:05:00.000Z",
+        transcript: turns,
+      };
+
+      await useCase.execute(command);
+      await useCase.execute(command); // the runtime may signal call-ended twice
+
+      expect(callRepository.savedTranscripts.get("call-1")).toHaveLength(2);
+    });
+
+    it("still ends the call when the transcript write throws — a lost transcript must never hold a call open", async () => {
+      const { useCase, callRepository } = buildUseCase();
+      seedInProgressCall(callRepository);
+      callRepository.saveTranscript = async () => {
+        throw new Error("transcripts table unavailable");
+      };
+
+      const result = await useCase.execute({
+        tenantId: "tenant-1",
+        telephonyCallSid: "CA-abc123",
+        status: "completed",
+        endedAt: "2026-01-15T12:05:00.000Z",
+        transcript: turns,
+      });
+
+      expect(result.status).toBe("completed");
+    });
+
+    it("ends the call normally when no transcript is supplied at all", async () => {
+      const { useCase, callRepository } = buildUseCase();
+      seedInProgressCall(callRepository);
+
+      const result = await useCase.execute({
+        tenantId: "tenant-1",
+        telephonyCallSid: "CA-abc123",
+        status: "completed",
+        endedAt: "2026-01-15T12:05:00.000Z",
+      });
+
+      expect(result.status).toBe("completed");
+      expect(callRepository.savedTranscripts.size).toBe(0);
+    });
+  });
 });

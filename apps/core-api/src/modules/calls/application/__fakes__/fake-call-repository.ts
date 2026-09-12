@@ -7,6 +7,7 @@ import type {
   Db,
   ListCallsOptions,
   ListCallsResult,
+  TranscriptTurn,
 } from "../../domain/ports/call-repository.port";
 
 export class FakeCallRepository implements CallRepository {
@@ -121,5 +122,21 @@ export class FakeCallRepository implements CallRepository {
   /** Test helper. */
   seed(call: Call): void {
     this.calls.set(call.id, call);
+  }
+
+  /** Mirrors PrismaCallRepository.saveTranscript's idempotency: a second delivery for a call that already has turns writes nothing. */
+  savedTranscripts = new Map<string, TranscriptTurn[]>();
+
+  async saveTranscript(
+    _db: Db,
+    _tenantId: string,
+    callId: string,
+    turns: TranscriptTurn[],
+  ): Promise<number> {
+    if (turns.length === 0 || this.savedTranscripts.has(callId)) {
+      return 0;
+    }
+    this.savedTranscripts.set(callId, turns);
+    return turns.length;
   }
 }

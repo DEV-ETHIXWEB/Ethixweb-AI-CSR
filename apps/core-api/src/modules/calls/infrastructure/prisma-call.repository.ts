@@ -8,6 +8,7 @@ import type {
   Db,
   ListCallsOptions,
   ListCallsResult,
+  TranscriptTurn,
 } from "../domain/ports/call-repository.port";
 
 const UNIQUE_CONSTRAINT_VIOLATION = "P2002";
@@ -184,5 +185,43 @@ export class PrismaCallRepository implements CallRepository {
     ]);
 
     return { items: rows.map(toEntity), total };
+  }
+
+  async saveTranscript(
+    db: Db,
+    tenantId: string,
+    callId: string,
+    turns: TranscriptTurn[],
+  ): Promise<number> {
+    if (turns.length === 0) {
+      return 0;
+    }
+
+    // See CallRepository.saveTranscript's own comment for why this is an
+    // existence check and not an upsert: the transcript is written once,
+    // wholesale, at end of call, so "some rows already here" can only
+    // mean a repeat delivery — never a partial transcript to merge.
+    const existing = await db.transcript.count({ where: { tenantId, callId } });
+    if (existing > 0) {
+      return 0;
+    }
+
+    const created = await db.transcript.createMany({
+      data: turns.map((turn) => ({
+        tenantId,
+        callId,
+        turnIndex: turn.turnIndex,
+        speaker: turn.speaker,
+        text: turn.text,
+        // `offset_ms` is NOT NULL in the schema, and the orchestrator does
+        // not currently populate a real per-turn offset — 0 is an honest
+        // "unknown", and turnIndex already carries the ordering the
+        // column would otherwise be read for.
+        offsetMs: turn.offsetMs ?? 0,
+        ...(turn.confidence === undefined ? {} : { confidence: turn.confidence }),
+      })),
+    });
+
+    return created.count;
   }
 }

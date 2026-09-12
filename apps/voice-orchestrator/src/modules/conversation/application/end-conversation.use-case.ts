@@ -178,6 +178,23 @@ export class EndConversationUseCase {
         status: conversation.leadId ? "completed" : "abandoned",
         endReason,
         endedAt,
+        // Sent here, at end of call, rather than per-turn: the whole
+        // transcript is already in hand, this request is already being
+        // made, and a per-turn write would put a core-api round-trip on
+        // the live speech path for data nothing reads until afterwards.
+        //
+        // Until this existed the `transcripts` table was never written to
+        // by anything — the conversation survived only in Redis, under a
+        // TTL, so once it expired there was no record of what was said on
+        // a call at all. core-api caps this at 2000 turns and treats the
+        // field as optional, so an oversized or rejected transcript still
+        // lets the call be marked ended.
+        transcript: conversation.transcript.map((turn, index) => ({
+          turnIndex: index,
+          speaker: turn.speaker,
+          text: turn.text,
+          ...(typeof turn.confidence === "number" ? { confidence: turn.confidence } : {}),
+        })),
       });
     } catch (error) {
       this.logger.warn("failed to end the corresponding Call row in core-api — non-fatal", {

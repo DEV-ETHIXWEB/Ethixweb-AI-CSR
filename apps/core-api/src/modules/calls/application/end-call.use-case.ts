@@ -10,6 +10,7 @@ import {
   CALL_REPOSITORY,
   type CallRepository,
   type Db,
+  type TranscriptTurn,
 } from "../domain/ports/call-repository.port";
 
 export interface EndCallCommand {
@@ -19,6 +20,8 @@ export interface EndCallCommand {
   status: Extract<CallStatus, "completed" | "abandoned">;
   endReason?: string | undefined;
   endedAt: string;
+  /** Optional — see EndCallUseCase.persistTranscriptBestEffort for why a missing or failing transcript never blocks the call from ending. */
+  transcript?: TranscriptTurn[] | undefined;
 }
 
 /**
@@ -70,6 +73,11 @@ export class EndCallUseCase {
       if (!call) {
         throw new CallNotFoundError(command.telephonyCallSid);
       }
+      // Before the early-return below: a repeat end-call delivery that
+      // carries a transcript the first one didn't should still persist it.
+      // saveTranscript is idempotent, so attempting it on every delivery
+      // is safe and strictly better than only ever trying once.
+      await this.persistTranscriptBestEffort(db, command, call.id);
       if (call.status === command.status) {
         return call;
       }
@@ -96,6 +104,49 @@ export class EndCallUseCase {
       });
       return updated;
     });
+  }
+
+  /**
+   * BEST-EFFORT, and deliberately so: a transcript that fails to save
+   * must never stop a call being marked ended. An unended call keeps its
+   * capacity reservation held (up to the 4h TTL backstop) and leaves its
+   * lifecycle open, which is a materially worse outcome than losing the
+   * text of a conversation that has already happened.
+   *
+   * Logged at warn with the turn count so a silent, ongoing loss is
+   * visible in logs rather than invisible — this table sat empty across
+   * every real call before this path existed, and the only reason that
+   * went unnoticed is that nothing ever complained.
+   */
+  private async persistTranscriptBestEffort(
+    db: Db,
+    command: EndCallCommand,
+    callId: string,
+  ): Promise<void> {
+    if (!command.transcript || command.transcript.length === 0) {
+      return;
+    }
+    try {
+      const written = await this.callRepository.saveTranscript(
+        db,
+        command.tenantId,
+        callId,
+        command.transcript,
+      );
+      this.logger.info("call transcript persisted", {
+        tenantId: command.tenantId,
+        callId,
+        turnsReceived: command.transcript.length,
+        turnsWritten: written,
+      });
+    } catch (error) {
+      this.logger.warn("call transcript failed to persist — ending the call regardless", {
+        tenantId: command.tenantId,
+        callId,
+        turnsReceived: command.transcript.length,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**
