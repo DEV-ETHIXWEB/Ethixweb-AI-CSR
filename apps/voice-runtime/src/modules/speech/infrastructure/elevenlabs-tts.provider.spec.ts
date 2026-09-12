@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { DEFAULT_VOICE_DELIVERY_SETTINGS } from "../domain/text-to-speech.port";
 
 /**
  * No live ElevenLabs key in this environment (this provider's own comment
@@ -116,7 +117,12 @@ describe("ElevenLabsTtsProvider", () => {
     expect(lastSocket!.sent).toEqual([
       JSON.stringify({
         text: " ",
-        voice_settings: { stability: 0.5, similarity_boost: 0.75, style: 0, speed: 1 },
+        voice_settings: {
+          stability: DEFAULT_VOICE_DELIVERY_SETTINGS.stability,
+          similarity_boost: DEFAULT_VOICE_DELIVERY_SETTINGS.similarityBoost,
+          style: DEFAULT_VOICE_DELIVERY_SETTINGS.style,
+          speed: DEFAULT_VOICE_DELIVERY_SETTINGS.speed,
+        },
         xi_api_key: "test-elevenlabs-key",
       }),
       JSON.stringify({ text: "Connecting you now. ", flush: true }),

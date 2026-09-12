@@ -161,6 +161,20 @@ function bargeInConfirmationTimeoutMs(): number {
  * INFERRED, not a measured constant — a real "let me think" pause is
  * typically well under this; by the time this long has passed with
  * nothing recognizable said, it reads as dead air, not thinking time.
+ * History, because it has moved in both directions on real evidence:
+ * started at 10s; raised to 15s when the product owner said it jumped in
+ * too soon after Grace asked a question (reading as an automated system
+ * rather than a person waiting); then cut to 7s after a real prospect's
+ * test call, where the opposite failure proved far more costly. His
+ * speech was finalizing with EMPTY transcripts (bad line quality), so
+ * Grace never heard a turn at all and said nothing — and with a 15s
+ * one-shot check-in, "nothing" is what he got for 30 seconds before
+ * asking "can you hear me grace" and hanging up. A caller who is
+ * genuinely mid-thought loses little from a gentle 7s "still here"; a
+ * caller who thinks the line is dead loses the entire call. The
+ * "jumping in too soon" concern is now handled by the phrasing being
+ * soft and by REPEATS escalating to name the real problem, rather than
+ * by making the first one arrive late.
  *
  * Read from `process.env` at call time (raw, not the validated `Env`
  * object — same convention `executeEmergencyTransfer` already uses in
@@ -171,7 +185,7 @@ function bargeInConfirmationTimeoutMs(): number {
  * the whole process alive for the full 10s after the test run finished
  * — found live running this file's own suite, not a hypothetical.
  */
-const DEFAULT_SILENCE_CHECK_IN_TIMEOUT_MS = 10_000;
+const DEFAULT_SILENCE_CHECK_IN_TIMEOUT_MS = 7_000;
 function silenceCheckInTimeoutMs(): number {
   const raw = process.env["SILENCE_CHECK_IN_TIMEOUT_MS"];
   const parsed = raw ? Number(raw) : NaN;
@@ -190,6 +204,33 @@ function silenceCheckInTimeoutMs(): number {
  * checking in gently, not urgently, actually sounds like.
  */
 const SILENCE_CHECK_IN_PHRASE = "[softly] Take your time. I'm still here.";
+
+/**
+ * Spoken on the SECOND and later check-ins, not the first. Found live on
+ * a real prospect's test call: Deepgram finalized his speech with an
+ * empty transcript over and over (poor line quality — deepgram-stt.
+ * provider.ts drops those, correctly, since /turns rejects an empty
+ * transcript), so he was talking and Grace genuinely could not hear a
+ * word of it. From his side that's indistinguishable from a dead line;
+ * he said "can you hear me grace" and hung up. The first check-in
+ * assumes ordinary thinking-silence and stays neutral; by the second
+ * one, "I can't hear you" is the far likelier explanation and naming it
+ * gives the caller something actionable (speak up, move, call back)
+ * instead of another polite reassurance that changes nothing.
+ */
+const SILENCE_TROUBLE_HEARING_PHRASE =
+  "[softly] I'm still here — but I might not be hearing you. " +
+  "If you're talking, try speaking up a little, or give me a shout again.";
+
+/**
+ * Why it repeats at all, and why it stops: the original design fired
+ * exactly once per silence episode, deliberately, to avoid nagging. A
+ * real call disproved that: a caller stuck in an STT dead zone got one
+ * reassurance and then silence forever, which read as the system being
+ * dead. Repeating bounds that — but only a few times, because a caller
+ * who genuinely walked away shouldn't be talked at indefinitely.
+ */
+const MAX_SILENCE_CHECK_INS = 3;
 
 /**
  * The one class that actually drives a phone call end to end — receives
@@ -266,6 +307,8 @@ export class CallSessionOrchestrator {
   private pendingBargeInTimer: ReturnType<typeof setTimeout> | null = null;
   /** See `DEFAULT_SILENCE_CHECK_IN_TIMEOUT_MS`'s own comment for the full design. */
   private silenceCheckInTimer: ReturnType<typeof setTimeout> | null = null;
+  /** How many check-ins this silence episode has already produced — reset by `armSilenceCheckIn`, which only runs when Grace speaks for a REAL reason (i.e. a new episode). See `MAX_SILENCE_CHECK_INS`. */
+  private silenceCheckInCount = 0;
   /** See `buildSilentTurnFallback`'s own comment — round-robins so a call that happens to hit this fallback more than once doesn't repeat the exact same line. */
   private silentTurnFallbackIndex = 0;
   /** See `handleFinalTranscriptCandidate`'s own comment — a finalized transcript flagged as a likely fragment, accumulated here while waiting to see if more follows, instead of starting a turn immediately. */
@@ -878,6 +921,16 @@ export class CallSessionOrchestrator {
    */
   private armSilenceCheckIn(sink: MediaStreamSink): void {
     this.disarmSilenceCheckIn();
+    // A REAL Grace utterance starts a fresh silence episode, so the
+    // repeat budget resets here and only here — `rearmSilenceCheckIn`
+    // below deliberately does not touch it, or the repeats would never
+    // reach their cap.
+    this.silenceCheckInCount = 0;
+    this.scheduleSilenceCheckIn(sink);
+  }
+
+  /** Schedules the next check-in WITHOUT resetting the repeat budget — see `armSilenceCheckIn`. */
+  private scheduleSilenceCheckIn(sink: MediaStreamSink): void {
     this.silenceCheckInTimer = setTimeout(() => {
       this.silenceCheckInTimer = null;
       this.speakSilenceCheckIn(sink);
@@ -908,16 +961,31 @@ export class CallSessionOrchestrator {
     if (this.ended || this.ttsPlaying || this.activeTurnAbort) {
       return;
     }
-    this.logger.info(
-      "silence check-in: no caller activity detected for the full timeout — speaking a one-time check-in",
-      { conversationId: this.conversationId, timeoutMs: silenceCheckInTimeoutMs() },
-    );
-    this.speak(SILENCE_CHECK_IN_PHRASE, sink).catch((error: unknown) => {
-      this.logger.warn("silence check-in TTS failed", {
-        conversationId: this.conversationId,
-        reason: error instanceof Error ? error.message : String(error),
-      });
+    this.silenceCheckInCount += 1;
+    const phrase =
+      this.silenceCheckInCount === 1 ? SILENCE_CHECK_IN_PHRASE : SILENCE_TROUBLE_HEARING_PHRASE;
+    this.logger.info("silence check-in: no caller activity detected for the full timeout", {
+      conversationId: this.conversationId,
+      timeoutMs: silenceCheckInTimeoutMs(),
+      checkInNumber: this.silenceCheckInCount,
     });
+    this.speak(phrase, sink)
+      .catch((error: unknown) => {
+        this.logger.warn("silence check-in TTS failed", {
+          conversationId: this.conversationId,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => {
+        // Re-arm (without resetting the budget) so a caller Grace
+        // genuinely can't hear isn't left in permanent silence after one
+        // reassurance — bounded by MAX_SILENCE_CHECK_INS so a caller who
+        // actually walked away isn't talked at forever.
+        if (this.ended || this.silenceCheckInCount >= MAX_SILENCE_CHECK_INS) {
+          return;
+        }
+        this.scheduleSilenceCheckIn(sink);
+      });
   }
 
   /**

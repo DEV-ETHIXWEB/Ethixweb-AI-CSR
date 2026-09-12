@@ -6,6 +6,7 @@ import {
 import { FakeOrchestratorClient } from "../../orchestrator-client/infrastructure/__fakes__/fake-orchestrator-client";
 import { FakeSpeechToTextProvider } from "../../speech/infrastructure/__fakes__/fake-speech-to-text.provider";
 import { FakeTextToSpeechProvider } from "../../speech/infrastructure/__fakes__/fake-text-to-speech.provider";
+import { DEFAULT_VOICE_DELIVERY_SETTINGS } from "../../speech/domain/text-to-speech.port";
 import type { CallSessionParams } from "../domain/call-session";
 import { CallSessionOrchestrator } from "./call-session-orchestrator";
 import { createNoopLogger } from "./__fakes__/fake-logger";
@@ -732,12 +733,7 @@ describe("CallSessionOrchestrator", () => {
 
       const index = tts.synthesizeCalls.indexOf("Got it, what's the issue?");
       expect(index).toBeGreaterThanOrEqual(0);
-      expect(tts.voiceSettingsCalls[index]).toEqual({
-        stability: 0.5,
-        similarityBoost: 0.75,
-        style: 0,
-        speed: 1,
-      });
+      expect(tts.voiceSettingsCalls[index]).toEqual(DEFAULT_VOICE_DELIVERY_SETTINGS);
     });
 
     it("a barge-in landing DURING an injected [pause] silence gap still stops Grace immediately — ttsPlaying stays true across the gap", async () => {
@@ -1857,7 +1853,7 @@ describe("CallSessionOrchestrator", () => {
       }
     });
 
-    it("does NOT fire twice — after the check-in fires, continued silence does not trigger a second one", async () => {
+    it("the FIRST check-in phrase specifically does NOT repeat verbatim — continued silence escalates to a different phrase instead (see the REPEATS test below for the full mechanism)", async () => {
       jest.useFakeTimers();
       try {
         const { orchestrator, tts } = buildOrchestratorUnderTest();
@@ -1872,7 +1868,80 @@ describe("CallSessionOrchestrator", () => {
         await jest.advanceTimersByTimeAsync(5000); // stay silent much longer
         expect(
           tts.synthesizeCalls.filter((t) => t === "Take your time. I'm still here.").length,
-        ).toBe(1); // still just the one
+        ).toBe(1); // still just the one — later check-ins use a different phrase, not a repeat of this one
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    /**
+     * REAL-CALL FINDING: a real prospective client's test call had his
+     * speech finalizing as EMPTY Deepgram transcripts throughout (poor
+     * line quality) — Grace never heard a turn, so from his side the
+     * line looked dead. The ORIGINAL one-shot check-in gave him exactly
+     * one reassurance in the whole silent stretch before he gave up and
+     * hung up saying "can you hear me grace". This proves the actual
+     * fix: continued silence now gets MORE check-ins, escalating to a
+     * phrase that names the likely real cause (not hearing him), capped
+     * so a caller who genuinely walked away isn't talked at forever.
+     */
+    it("REPEATS the check-in on continued silence, escalating to the 'might not be hearing you' phrase, capped at MAX_SILENCE_CHECK_INS", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+
+        await orchestrator.onCallStart(baseParams(), sink);
+
+        await jest.advanceTimersByTimeAsync(1000); // 1st check-in
+        await jest.advanceTimersByTimeAsync(1000); // 2nd
+        await jest.advanceTimersByTimeAsync(1000); // 3rd
+        await jest.advanceTimersByTimeAsync(1000); // would be a 4th, but the cap is 3
+
+        const troubleHearingCount = tts.synthesizeCalls.filter((t) =>
+          t.includes("might not be hearing you"),
+        ).length;
+        expect(
+          tts.synthesizeCalls.filter((t) => t === "Take your time. I'm still here.").length,
+        ).toBe(1);
+        expect(troubleHearingCount).toBe(2); // check-ins 2 and 3
+
+        // Confirms the cap actually holds — no 4th check-in, of either phrase.
+        expect(tts.synthesizeCalls.length).toBe(4); // greeting + 3 check-ins, nothing more
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("a REAL Grace utterance (not just continued silence) resets the repeat budget for a genuinely new silence episode", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+        orchestratorClient.turnResponses = [
+          {
+            conversationId: "conv-1",
+            responseText: "Got it, what's the issue?",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+        ];
+
+        await orchestrator.onCallStart(baseParams(), sink);
+        await jest.advanceTimersByTimeAsync(1000); // 1st check-in
+        await jest.advanceTimersByTimeAsync(1000); // 2nd check-in (budget now at 2/3)
+
+        // The caller finally responds — a real Grace reply re-arms with a
+        // FRESH budget, not a continuation of the old one.
+        const session = stt.sessions[0]!;
+        session.emitFinalTranscript("my sink is leaking", 0.9);
+        await jest.advanceTimersByTimeAsync(0);
+
+        await jest.advanceTimersByTimeAsync(1000); // 1st check-in of the NEW episode
+        expect(
+          tts.synthesizeCalls.filter((t) => t === "Take your time. I'm still here.").length,
+        ).toBe(2); // one from each episode's own first check-in, not blocked by the earlier episode's budget
       } finally {
         jest.useRealTimers();
       }
