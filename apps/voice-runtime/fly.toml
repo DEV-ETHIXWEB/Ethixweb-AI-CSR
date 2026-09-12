@@ -6,8 +6,9 @@
 #   fly deploy -c apps/voice-runtime/fly.toml --dockerfile apps/voice-runtime/Dockerfile .
 
 app = "ethixweb-voice-runtime"
-primary_region = "sea"   # Seattle — matches the +1 206 number and keeps
-                         # Twilio/Deepgram/ElevenLabs hops on the US west coast.
+primary_region = "sjc"   # San Jose — Managed Postgres is not offered in sea, and
+                         # co-locating the app with the DB matters more than
+                         # Seattle-vs-San-Jose does for the caller (both US West).
 
 [build]
 

@@ -4,7 +4,9 @@
 #   fly deploy -c apps/dashboard/fly.toml --dockerfile apps/dashboard/Dockerfile .
 
 app = "ethixweb-dashboard"
-primary_region = "sea"
+primary_region = "sjc"   # San Jose — Managed Postgres is not offered in sea, and
+                         # co-locating the app with the DB matters more than
+                         # Seattle-vs-San-Jose does for the caller (both US West).
 
 [build]
 
