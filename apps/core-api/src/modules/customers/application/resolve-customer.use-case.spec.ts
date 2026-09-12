@@ -1,5 +1,4 @@
 import type { TenantContextService } from "../../../shared/prisma/tenant-context.service";
-import { NoCrmIntegrationConfiguredError } from "../domain/errors";
 import type { Customer } from "../domain/customer.entity";
 import { createNoopLogger } from "./__fakes__/fake-logger";
 import { FakeCrmCustomerSyncPort } from "./__fakes__/fake-crm-customer-sync-port";
@@ -116,18 +115,18 @@ describe("ResolveCustomerUseCase", () => {
     expect(result?.name).toBe("Jane Doe (updated)");
   });
 
-  it("throws NoCrmIntegrationConfiguredError on a genuine cache miss with no CRM connected", async () => {
+  it("returns null (not an error) on a genuine cache miss with no CRM connected — an unconfigured CRM is just another kind of 'not found'", async () => {
     const crmCustomerSyncPort = new FakeCrmCustomerSyncPort();
     crmCustomerSyncPort.activeIntegrationId = null;
     const useCase = buildUseCase(new FakeCustomerRepository(), crmCustomerSyncPort);
 
-    await expect(
-      useCase.execute({
-        tenantId: "tenant-1",
-        businessId: "business-1",
-        phoneE164: "+15551234567",
-      }),
-    ).rejects.toThrow(NoCrmIntegrationConfiguredError);
+    const result = await useCase.execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      phoneE164: "+15551234567",
+    });
+
+    expect(result).toBeNull();
   });
 
   it("returns stale cached data rather than erroring when there's no CRM to refresh against", async () => {

@@ -8,7 +8,6 @@ import {
 import { setSpanAttributes } from "../../../shared/observability/tracing";
 import { TenantContextService } from "../../../shared/prisma/tenant-context.service";
 import type { Customer } from "../domain/customer.entity";
-import { NoCrmIntegrationConfiguredError } from "../domain/errors";
 import {
   CRM_CUSTOMER_SYNC_PORT,
   type CrmCustomerSyncPort,
@@ -52,30 +51,18 @@ export class CreateCustomerUseCase {
       "ethixweb.business_id": command.businessId,
     });
 
+    const crmResult = await this.attemptCrmSync(command);
+
     return this.tenantContext.run(command.tenantId, async (db) => {
-      const integrationId = await this.crmCustomerSyncPort.resolveActiveIntegrationId(
-        command.tenantId,
-        command.businessId,
-      );
-      if (!integrationId) {
-        throw new NoCrmIntegrationConfiguredError(command.businessId);
-      }
-
-      const crmResult = await this.crmCustomerSyncPort.createCustomer(
-        command.tenantId,
-        integrationId,
-        { name: command.name, phoneE164: command.phoneE164, email: command.email },
-      );
-
       const { customer, created } = await this.cacheUpserter.upsert(db, {
         tenantId: command.tenantId,
         businessId: command.businessId,
         phoneE164: command.phoneE164,
-        name: crmResult.name,
-        email: crmResult.email,
+        name: crmResult?.name ?? command.name,
+        email: crmResult?.email ?? command.email,
         address: command.address,
-        crmCustomerId: crmResult.crmCustomerId,
-        crmRawCache: crmResult.raw,
+        crmCustomerId: crmResult?.crmCustomerId,
+        crmRawCache: crmResult?.raw,
       });
 
       if (created) {
@@ -109,5 +96,48 @@ export class CreateCustomerUseCase {
 
       return customer;
     });
+  }
+
+  /**
+   * Same graceful-degradation contract as CreateLeadUseCase's own
+   * attemptCrmSync (create-lead.use-case.ts) — brought in line with it
+   * deliberately, per a live product decision: a missing/failed CRM
+   * integration used to hard-fail this use case entirely (an explicit,
+   * tested NoCrmIntegrationConfiguredError throw), which meant a caller's
+   * name and number were never saved anywhere, not even locally, the
+   * moment a business had no CRM connected — the same "technical issue,
+   * please call back directly" dead end createLead already refuses to
+   * produce. Never throws: `null` means "proceed with the caller's own
+   * command fields, crmCustomerId stays null," ready for a background job
+   * to sync later once a real CRM is connected (identical to createLead's
+   * own crmLeadId IS NULL convention).
+   */
+  private async attemptCrmSync(command: CreateCustomerCommand): Promise<{
+    crmCustomerId: string;
+    name: string;
+    email?: string | undefined;
+    raw: unknown;
+  } | null> {
+    try {
+      const integrationId = await this.crmCustomerSyncPort.resolveActiveIntegrationId(
+        command.tenantId,
+        command.businessId,
+      );
+      if (!integrationId) {
+        return null;
+      }
+      return await this.crmCustomerSyncPort.createCustomer(command.tenantId, integrationId, {
+        name: command.name,
+        phoneE164: command.phoneE164,
+        email: command.email,
+      });
+    } catch (error) {
+      this.logger.warn("CRM customer sync failed — proceeding with a local-only customer", {
+        tenantId: command.tenantId,
+        businessId: command.businessId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
   }
 }

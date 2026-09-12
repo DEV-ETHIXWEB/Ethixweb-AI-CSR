@@ -1,5 +1,4 @@
 import type { TenantContextService } from "../../../shared/prisma/tenant-context.service";
-import { NoCrmIntegrationConfiguredError } from "../domain/errors";
 import { createNoopLogger } from "./__fakes__/fake-logger";
 import { FakeCrmCustomerSyncPort } from "./__fakes__/fake-crm-customer-sync-port";
 import { FakeCustomerRepository } from "./__fakes__/fake-customer-repository";
@@ -45,19 +44,28 @@ describe("CreateCustomerUseCase", () => {
     expect(outboxWriterFactory.writtenEvents[0]?.eventType).toBe("customer.created");
   });
 
-  it("throws NoCrmIntegrationConfiguredError when the business has no active integration", async () => {
+  it("creates a local-only customer (crmCustomerId null) when the business has no active integration — never blocks on a missing CRM", async () => {
     const crmCustomerSyncPort = new FakeCrmCustomerSyncPort();
     crmCustomerSyncPort.activeIntegrationId = null;
-    const useCase = buildUseCase(new FakeCustomerRepository(), crmCustomerSyncPort);
+    const outboxWriterFactory = new FakeOutboxWriterFactory();
+    const useCase = buildUseCase(
+      new FakeCustomerRepository(),
+      crmCustomerSyncPort,
+      outboxWriterFactory,
+    );
 
-    await expect(
-      useCase.execute({
-        tenantId: "tenant-1",
-        businessId: "business-1",
-        name: "Jane Doe",
-        phoneE164: "+15551234567",
-      }),
-    ).rejects.toThrow(NoCrmIntegrationConfiguredError);
+    const customer = await useCase.execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      name: "Jane Doe",
+      phoneE164: "+15551234567",
+    });
+
+    expect(customer.crmCustomerId).toBeNull();
+    expect(customer.name).toBe("Jane Doe");
+    expect(customer.phoneE164).toBe("+15551234567");
+    expect(outboxWriterFactory.writtenEvents).toHaveLength(1);
+    expect(outboxWriterFactory.writtenEvents[0]?.eventType).toBe("customer.created");
   });
 
   it(

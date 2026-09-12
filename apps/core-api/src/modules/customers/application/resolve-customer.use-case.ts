@@ -8,7 +8,6 @@ import {
 import { setSpanAttributes } from "../../../shared/observability/tracing";
 import { TenantContextService } from "../../../shared/prisma/tenant-context.service";
 import type { Customer } from "../domain/customer.entity";
-import { NoCrmIntegrationConfiguredError } from "../domain/errors";
 import {
   CRM_CUSTOMER_SYNC_PORT,
   type CrmCustomerSyncPort,
@@ -93,11 +92,14 @@ export class ResolveCustomerUseCase {
     );
     if (!integrationId) {
       // No CRM connected to refresh against — stale local data beats no
-      // data at all; only a genuine cache miss with no CRM is an error.
-      if (cached) {
-        return cached;
-      }
-      throw new NoCrmIntegrationConfiguredError(command.businessId);
+      // data at all. A genuine cache miss with no CRM used to throw here
+      // (NoCrmIntegrationConfiguredError); now it's just `null`, the same
+      // "no customer found" result a real CRM miss below already returns —
+      // an unconfigured CRM shouldn't behave differently from a caller the
+      // CRM genuinely doesn't know about, and createCustomer (same
+      // reasoning, same live product decision — see its own attemptCrmSync
+      // comment) no longer treats it as fatal either.
+      return cached ?? null;
     }
 
     const crmResult = await this.crmCustomerSyncPort.searchCustomer(
