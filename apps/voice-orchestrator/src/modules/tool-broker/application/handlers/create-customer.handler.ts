@@ -26,7 +26,10 @@ export class CreateCustomerHandler implements ToolHandler<
   ): Promise<CreateCustomerOutput> {
     const result = await this.coreApiClient.post<CustomerResponse>("/internal/customers", {
       businessId: context.businessId,
-      name: `${input.name.first} ${input.name.last}`,
+      // `last` is optional (see CreateCustomerInputSchema's own comment) —
+      // filter before joining so a first-name-only caller becomes "Gary",
+      // never "Gary undefined" or a stray trailing space on a real record.
+      name: [input.name.first, input.name.last].filter(Boolean).join(" "),
       phoneE164: input.phone,
       email: input.email,
       address: input.address,

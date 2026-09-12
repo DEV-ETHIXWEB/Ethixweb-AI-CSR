@@ -233,13 +233,25 @@ describe("assembleLayeredPrompt", () => {
    * following through on the ask mattered. This is the priority
    * clarification that closes that gap.
    */
-  it("instructs the model that an incomplete (first-name-only) name must still get followed up before the call ends, even if other questions come first", () => {
-    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
-      "make sure you actually circle back and get it before the call ends",
-    );
-    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
-      "a lead with only a first name is an incomplete record",
-    );
+  /**
+   * v29 NARROWS this rule rather than dropping it: circling back for a
+   * missing last name is still instructed, but it may no longer become a
+   * blocking gate. The original "a lead with only a first name is an
+   * incomplete record" wording is deliberately GONE — paired with
+   * tool-catalog.ts's `name.last` being required, it deadlocked two real
+   * calls (one captured nothing at all, one fabricated
+   * {first:"Gary", last:"Gary"}). See PLATFORM_BASE_PROMPT_VERSION's own
+   * v29 comment.
+   */
+  it("still instructs circling back for a first-name-only caller, but ONCE and never as a blocker", () => {
+    const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+    expect(prompt).toContain("do circle back for it before the call ends");
+    expect(prompt).toContain("ask once, though");
+    expect(prompt).toContain("submit with the first name alone and move on");
+    expect(prompt).toContain("never invent one or repeat their first name into the");
+    // The old wording made the gap itself sound disqualifying, which is
+    // exactly what the model acted on when it fabricated a last name.
+    expect(prompt).not.toContain("a lead with only a first name is an incomplete record");
   });
 
   /**
@@ -823,6 +835,48 @@ describe("assembleLayeredPrompt", () => {
       const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
       expect(prompt).toContain("that's the caller telling you twice");
       expect(prompt).toContain("don't ask a third time");
+    });
+  });
+
+  /**
+   * v27, real-call finding: a caller opening with "how are you" got
+   * answered but never reciprocated ("hi grace how you" -> "Hey, doing
+   * well! What's going on?") — a one-sided exchange that reads as an
+   * interview, not a conversation.
+   */
+  describe("v27 — reciprocate a caller's opening social nicety instead of only answering it", () => {
+    it("instructs answering an opening 'how are you' briefly and warmly, then asking it back before moving into the call reason", () => {
+      const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+      expect(prompt).toContain("ask it back before moving into why they");
+      expect(prompt).toContain("one-sided");
+    });
+  });
+
+  /**
+   * v28, from a real prospect's test call that went badly (the SAME
+   * call this session's fragment-detector and repeating-silence-check-in
+   * fixes also came from). Two real, live-observed failures:
+   *
+   * (1) v27's own ask-it-back rule backfired on its first live outing —
+   * the caller said "hi grace" and the ENTIRE spoken response was the
+   * single clipped word "How" (the start of "How are you?"), because the
+   * question led the response and got talked over immediately.
+   * (2) the same caller opened with "Hi Grace, my name is Larry, I have
+   * a water heater problem" — name and problem volunteered together —
+   * and still got asked for both separately.
+   */
+  describe("v28 — real-call fixes: the reciprocated question must not LEAD a response, and multi-field openers must be absorbed whole", () => {
+    it("instructs the greeting/offer-to-help to come before the reciprocated question, never a bare question as the opening words", () => {
+      const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+      expect(prompt).toContain("never open a response with the bare question itself");
+      expect(prompt).toContain('clipped to a bare "how"');
+      expect(prompt).toContain("everything essential goes first");
+    });
+
+    it("instructs absorbing everything a caller volunteers in one breath (e.g. name + problem together) and never re-asking for it", () => {
+      const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+      expect(prompt).toContain("take all of it in one pass");
+      expect(prompt).toContain("never ask for something they already said");
     });
   });
 });

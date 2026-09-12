@@ -23,6 +23,46 @@ describe("CreateCustomerInputSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  /**
+   * The SAME fixation bug as the address one above, found the same way,
+   * one field over — and left in place when address was fixed. `last`
+   * was `z.string().min(1)`, so a caller giving only a first name
+   * ("it's just Gary", "there is no last name") left NO valid
+   * createCustomer call available: every attempt failed validation, so
+   * the model re-asked until the caller hung up. Two real calls: one
+   * deadlocked with `tool_rejected: name.last` and captured nothing at
+   * all, and one escaped by fabricating `{first:"Gary", last:"Gary"}` —
+   * a required field manufacturing false data onto a real customer
+   * record. A first name plus a phone number is a workable lead.
+   */
+  it("accepts a first name with NO last name — a caller who only gives one name must not deadlock the tool", () => {
+    const result = CreateCustomerInputSchema.safeParse({
+      name: { first: "Gary" },
+      phone: "+15551234567",
+      source: "ai_csr",
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("still rejects a missing FIRST name — that half stays required", () => {
+    const result = CreateCustomerInputSchema.safeParse({
+      name: { last: "Doe" },
+      phone: "+15551234567",
+      source: "ai_csr",
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("does not advertise `last` as required in the schema the model actually sees", () => {
+    const tool = TOOL_CATALOG.find((t) => t.name === "createCustomer");
+    const nameSchema = (tool?.jsonSchema as { properties: { name: { required: string[] } } })
+      .properties.name;
+
+    expect(nameSchema.required).toEqual(["first"]);
+  });
+
   it("accepts a PARTIAL address — whatever the caller actually gave, not all-or-nothing", () => {
     const result = CreateCustomerInputSchema.safeParse({
       name: { first: "Jane", last: "Doe" },

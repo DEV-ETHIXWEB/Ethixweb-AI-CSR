@@ -61,7 +61,20 @@ export type SearchCustomerInput = z.infer<typeof SearchCustomerInputSchema>;
  * actually need yet.
  */
 export const CreateCustomerInputSchema = z.object({
-  name: z.object({ first: z.string().min(1), last: z.string().min(1) }),
+  // `last` is OPTIONAL for the same reason `address` below is, and it was
+  // found the same way — on real calls. A hard-required last name is
+  // unsatisfiable for a caller who only gives one ("it's just Gary",
+  // "there is no last name"), and the model has no way out of that: the
+  // tool rejects every attempt, so it re-asks, the caller repeats
+  // themselves, and the call ends with no record at all. Seen twice on
+  // real calls: one deadlocked into `tool_rejected: name.last` and
+  // captured nothing, and another where the model escaped the constraint
+  // by fabricating `{first:"Gary", last:"Gary"}` — a required field
+  // manufacturing false data on a real customer record, which is worse
+  // than the gap it was trying to prevent. A first name plus a phone
+  // number is a complete, workable lead; a technician calling back can
+  // ask for the rest.
+  name: z.object({ first: z.string().min(1), last: z.string().min(1).optional() }),
   phone: e164,
   email: z.string().email().optional(),
   address: z
@@ -161,11 +174,15 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
         name: {
           type: "object",
           description:
-            "REQUIRED as an object with first and last — never a single combined string. " +
+            "An object with first and last — never a single combined string. " +
             "Split whatever the caller said the same way you always do: if they gave both in " +
-            "one breath (e.g. 'Akash Kumar'), the first word is first and the rest is last.",
+            "one breath (e.g. 'Akash Kumar'), the first word is first and the rest is last. " +
+            "Only `first` is required. OMIT `last` entirely when the caller has given just one " +
+            "name, or has said they don't have a last name — never invent one, never repeat the " +
+            "first name into it, and never withhold this call waiting to collect one. A first " +
+            "name and a phone number is a complete, usable record.",
           properties: { first: { type: "string" }, last: { type: "string" } },
-          required: ["first", "last"],
+          required: ["first"],
         },
         phone: {
           type: "string",
