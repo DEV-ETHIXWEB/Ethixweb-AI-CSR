@@ -248,3 +248,112 @@ describe("MediaStreamGateway — media-stream authentication", () => {
     expect(orchestrator.onCallStart).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Regression coverage for a real, client-facing failure: a prospect was
+ * mid-call when the process went down, and the line simply died. Nothing
+ * here tracked that a call was in progress, so `app.close()` tore the
+ * socket down instantly. Harmless-looking on a laptop; on a platform
+ * that sends SIGTERM for every deploy, restart and autoscale event, it
+ * means routinely cutting off live callers.
+ */
+describe("MediaStreamGateway — graceful shutdown drain", () => {
+  const ORIGINAL_TIMEOUT = process.env["SHUTDOWN_DRAIN_TIMEOUT_MS"];
+
+  beforeEach(() => {
+    process.env["TWILIO_AUTH_TOKEN"] = TEST_AUTH_TOKEN;
+    process.env["SHUTDOWN_DRAIN_TIMEOUT_MS"] = "2000";
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_TIMEOUT === undefined) {
+      delete process.env["SHUTDOWN_DRAIN_TIMEOUT_MS"];
+    } else {
+      process.env["SHUTDOWN_DRAIN_TIMEOUT_MS"] = ORIGINAL_TIMEOUT;
+    }
+  });
+
+  async function connectTo(gateway: MediaStreamGateway): Promise<FakeSocket> {
+    const socket = new FakeSocket();
+    let connected: Promise<void> = Promise.resolve();
+    gateway.register({
+      get: (_p: string, _o: unknown, handler: (conn: unknown) => Promise<void>) => {
+        connected = handler({ socket });
+      },
+    } as never);
+    await connected;
+    return socket;
+  }
+
+  function buildGateway(orchestrator: ReturnType<typeof buildFakeOrchestrator>) {
+    const moduleRef = { resolve: async () => orchestrator } as unknown as ModuleRef;
+    return new MediaStreamGateway(moduleRef, createNoopLogger());
+  }
+
+  it("returns immediately when no call is in progress", async () => {
+    const gateway = buildGateway(buildFakeOrchestrator());
+
+    const started = Date.now();
+    await gateway.beforeApplicationShutdown("SIGTERM");
+
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  it("WAITS for a call in progress instead of cutting it off, and resumes the moment it ends", async () => {
+    const orchestrator = buildFakeOrchestrator();
+    const gateway = buildGateway(orchestrator);
+    const socket = await connectTo(gateway);
+    socket.emit("message", Buffer.from(startMessage()));
+
+    let settled = false;
+    const shutdown = gateway.beforeApplicationShutdown("SIGTERM").then(() => {
+      settled = true;
+    });
+
+    // Still mid-call: shutdown must not have completed.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(settled).toBe(false);
+
+    socket.close();
+    await shutdown;
+    expect(settled).toBe(true);
+  });
+
+  it("refuses a NEW call once draining — a machine on its way out must not accept work it can't finish", async () => {
+    const orchestrator = buildFakeOrchestrator();
+    const gateway = buildGateway(orchestrator);
+
+    await gateway.beforeApplicationShutdown("SIGTERM");
+
+    const socket = await connectTo(gateway);
+    socket.emit("message", Buffer.from(startMessage()));
+
+    expect(orchestrator.onCallStart).not.toHaveBeenCalled();
+  });
+
+  it("gives up after the drain timeout rather than hanging shutdown forever", async () => {
+    process.env["SHUTDOWN_DRAIN_TIMEOUT_MS"] = "80";
+    const orchestrator = buildFakeOrchestrator();
+    const gateway = buildGateway(orchestrator);
+    const socket = await connectTo(gateway);
+    socket.emit("message", Buffer.from(startMessage()));
+
+    // Socket never closes — the straggler case.
+    await gateway.beforeApplicationShutdown("SIGTERM");
+
+    expect(orchestrator.onCallStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not hold shutdown open for a connection that never authenticated — an unauthenticated probe must not delay a deploy", async () => {
+    const orchestrator = buildFakeOrchestrator();
+    const gateway = buildGateway(orchestrator);
+    const socket = await connectTo(gateway);
+    socket.emit("message", Buffer.from(startMessage({ mediaStreamToken: "forged" })));
+
+    const started = Date.now();
+    await gateway.beforeApplicationShutdown("SIGTERM");
+
+    expect(orchestrator.onCallStart).not.toHaveBeenCalled();
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+});

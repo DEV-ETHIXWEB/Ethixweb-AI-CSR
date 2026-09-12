@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, type BeforeApplicationShutdown } from "@nestjs/common";
 import { ModuleRef } from "@nestjs/core";
 import type { FastifyInstance } from "fastify";
 import type { WebsocketHandler } from "@fastify/websocket";
@@ -40,8 +40,42 @@ import { verifyMediaStreamToken } from "../infrastructure/media-stream-auth.util
  * not a fresh one; found live as a real bug (see that class's own
  * comment for the exact failure this caused), not a hypothetical one.
  */
+/**
+ * How long shutdown waits for calls already in progress to finish before
+ * giving up on them. Read from `process.env` at call time (same
+ * convention as call-session-orchestrator.ts's own
+ * `silenceCheckInTimeoutMs`) so tests can drop it to a few milliseconds
+ * instead of holding a real 30s timer open.
+ *
+ * 30s is a deliberate compromise, not a measured constant: long enough
+ * for a caller mid-sentence to be answered and wrapped up, short enough
+ * to stay inside the grace period a platform allows between SIGTERM and
+ * SIGKILL (Fly's default is 5s and must be raised — see `kill_timeout`
+ * in fly.toml — or the platform kills the process before this can
+ * finish, making the drain pointless).
+ */
+const DEFAULT_DRAIN_TIMEOUT_MS = 30_000;
+function drainTimeoutMs(): number {
+  const raw = process.env["SHUTDOWN_DRAIN_TIMEOUT_MS"];
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_DRAIN_TIMEOUT_MS;
+}
+
 @Injectable()
-export class MediaStreamGateway {
+export class MediaStreamGateway implements BeforeApplicationShutdown {
+  /**
+   * Every call currently on this process. Exists ONLY so shutdown can
+   * wait for them — found live, the hard way: `app.close()` tore every
+   * in-progress call down mid-sentence, because nothing here knew a call
+   * was in progress at all. On a laptop that was a one-off; on a
+   * platform that sends SIGTERM for every deploy, restart and autoscale
+   * event it is routine, and the caller simply hears the line die.
+   */
+  private readonly activeCalls = new Set<WebSocket>();
+  /** Set once SIGTERM arrives — new connections are refused from then on, so a machine on its way out never accepts a call it can't finish. */
+  private draining = false;
+  private drainWaiters: Array<() => void> = [];
+
   constructor(
     private readonly moduleRef: ModuleRef,
     @Inject(APP_LOGGER) private readonly logger: StructuredLogger,
@@ -55,11 +89,83 @@ export class MediaStreamGateway {
     );
   }
 
+  /**
+   * `beforeApplicationShutdown`, NOT `onApplicationShutdown` — Nest runs
+   * the former while the HTTP server is still listening and the latter
+   * only after it has been torn down. Draining is only meaningful in the
+   * window where the sockets are still open, so the hook choice here is
+   * load-bearing, not stylistic.
+   */
+  async beforeApplicationShutdown(signal?: string): Promise<void> {
+    this.draining = true;
+    const inFlight = this.activeCalls.size;
+    if (inFlight === 0) {
+      this.logger.info("shutdown: no calls in progress, exiting immediately", { signal });
+      return;
+    }
+    const timeoutMs = drainTimeoutMs();
+    this.logger.info("shutdown: draining calls in progress before exit", {
+      signal,
+      inFlight,
+      timeoutMs,
+    });
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        // Deliberately does NOT force-close the stragglers: letting
+        // Nest's own teardown do that keeps one owner of socket
+        // lifecycle, and a caller whose call is cut at the deadline is
+        // no worse off than before this drain existed.
+        this.logger.warn("shutdown: drain timed out, some calls will be cut", {
+          signal,
+          stillActive: this.activeCalls.size,
+        });
+        resolve();
+      }, timeoutMs);
+      // Without unref the timer alone keeps the event loop alive for the
+      // full timeout even once every call has already hung up.
+      timer.unref?.();
+      this.drainWaiters.push(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    this.logger.info("shutdown: drain complete", { signal });
+  }
+
+  private trackCall(socket: WebSocket): void {
+    this.activeCalls.add(socket);
+  }
+
+  private untrackCall(socket: WebSocket): void {
+    if (!this.activeCalls.delete(socket)) {
+      return;
+    }
+    if (this.activeCalls.size === 0 && this.drainWaiters.length > 0) {
+      const waiters = this.drainWaiters;
+      this.drainWaiters = [];
+      for (const wake of waiters) {
+        wake();
+      }
+    }
+  }
+
   private async handleConnection(
     connection: { socket: WebSocket },
     _request: unknown,
   ): Promise<void> {
     const socket = connection.socket;
+
+    // Refuse work on a process that is on its way out. Twilio retries a
+    // failed Media Stream connection, and the platform routes that retry
+    // to a machine that is still accepting — so closing here costs the
+    // caller a reconnect, whereas accepting would strand them on a
+    // process about to exit.
+    if (this.draining) {
+      this.logger.warn("refusing new media stream — this process is shutting down");
+      socket.close();
+      return;
+    }
+
     const orchestrator = await this.moduleRef.resolve(CallSessionOrchestrator, undefined, {
       strict: false,
     });
@@ -157,6 +263,11 @@ export class MediaStreamGateway {
           return;
         }
         log.info("media stream started", { streamSid: params.streamSid, callSid: params.callSid });
+        // Tracked from the authenticated `start` onward, not from socket
+        // open: a connection that never sends a valid start event isn't a
+        // call, and holding shutdown open for one would let an unauthenticated
+        // probe delay every deploy.
+        this.trackCall(socket);
         orchestrator.onCallStart(params, sink).catch((error: unknown) => {
           log.error("onCallStart failed unexpectedly", {
             reason: error instanceof Error ? error.message : String(error),
@@ -200,6 +311,10 @@ export class MediaStreamGateway {
     });
 
     socket.on("close", () => {
+      // Untrack on close rather than on the `stop` event: `stop` doesn't
+      // arrive on a raw network drop, and a call that never releases its
+      // slot would hold shutdown open for the full drain timeout.
+      this.untrackCall(socket);
       if (params) {
         // Twilio's own `stop` event normally arrives before the socket
         // closes, making this a no-op double-call (onCallEnd's `this.ended`
