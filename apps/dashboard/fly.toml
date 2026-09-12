@@ -1,0 +1,25 @@
+# Dashboard — Next.js standalone build. Human-facing only; no call path
+# depends on it.
+#
+#   fly deploy -c apps/dashboard/fly.toml --dockerfile apps/dashboard/Dockerfile .
+
+app = "ethixweb-dashboard"
+primary_region = "sea"
+
+[build]
+
+[env]
+  PORT = "3001"
+  NODE_ENV = "production"
+  HOSTNAME = "0.0.0.0"
+
+[http_service]
+  internal_port = 3001
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

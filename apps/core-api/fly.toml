@@ -1,0 +1,36 @@
+# Core API — CRM sync, leads, customers, emergency rules, notifications.
+# Owns Postgres access (with RLS) and the outbox relay poller.
+#
+#   fly deploy -c apps/core-api/fly.toml --dockerfile apps/core-api/Dockerfile .
+
+app = "ethixweb-core-api"
+primary_region = "sea"
+
+[build]
+
+[env]
+  PORT = "3000"
+  NODE_ENV = "production"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  # Never suspend: OutboxRelayPoller runs on an interval inside this
+  # process and dispatches lead notifications. A suspended machine stops
+  # polling, so lead SMS would silently stop going out.
+  auto_stop_machines = false
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "15s"
+    method = "GET"
+    timeout = "5s"
+    path = "/healthz"
+
+kill_timeout = "20s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
