@@ -176,12 +176,38 @@ describe("assembleLayeredPrompt", () => {
    */
   it("instructs the model to never claim to be human, and to never gatekeep a transfer request", () => {
     expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("doesn't mean claiming to be human");
-    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
-      "say plainly that you're an automated assistant",
-    );
+    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain("say plainly that you're an ai");
     expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
       "never gatekeep a transfer request with more qualifying questions",
     );
+  });
+
+  /**
+   * v30 reworded the disclosure from "automated assistant" to the natural
+   * receptionist form the product owner asked for. The HONESTY half is
+   * unchanged and non-negotiable (asserted above) — this covers the
+   * delivery: named role, named business, said once, not dwelt on.
+   */
+  it("delivers the AI disclosure like a receptionist introducing themselves, not a stiff disclaimer", () => {
+    const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+    expect(prompt).toContain("the ai receptionist here at");
+    expect(prompt).toContain("not a stiff disclaimer and not an apology");
+    expect(prompt).toContain("give the answer in one breath");
+    expect(prompt).toContain("dwell on");
+  });
+
+  /**
+   * v30, from the first real call on the deployed stack: she talked too
+   * much, which on a phone line reads as pressure. Paired with the
+   * voice-runtime timer fix that stopped "Take your time, I'm still here"
+   * firing seconds after she finished speaking.
+   */
+  it("instructs short, one-idea-per-turn replies and forbids narrating that it is waiting", () => {
+    const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+    expect(prompt).toContain("this is a phone call, not an essay");
+    expect(prompt).toContain("never stack multiple questions");
+    expect(prompt).toContain("never voice your own stage directions or waiting noises");
+    expect(prompt).toContain("silence while the caller thinks is correct");
   });
 
   /**

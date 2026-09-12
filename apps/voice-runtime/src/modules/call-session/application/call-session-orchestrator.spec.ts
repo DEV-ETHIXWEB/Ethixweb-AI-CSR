@@ -1895,8 +1895,7 @@ describe("CallSessionOrchestrator", () => {
 
         await jest.advanceTimersByTimeAsync(1000); // 1st check-in
         await jest.advanceTimersByTimeAsync(1000); // 2nd
-        await jest.advanceTimersByTimeAsync(1000); // 3rd
-        await jest.advanceTimersByTimeAsync(1000); // would be a 4th, but the cap is 3
+        await jest.advanceTimersByTimeAsync(1000); // would be a 3rd, but the cap is 2
 
         const troubleHearingCount = tts.synthesizeCalls.filter((t) =>
           t.includes("might not be hearing you"),
@@ -1904,10 +1903,13 @@ describe("CallSessionOrchestrator", () => {
         expect(
           tts.synthesizeCalls.filter((t) => t === "Take your time. I'm still here.").length,
         ).toBe(1);
-        expect(troubleHearingCount).toBe(2); // check-ins 2 and 3
+        expect(troubleHearingCount).toBe(1); // check-in 2 only
 
-        // Confirms the cap actually holds — no 4th check-in, of either phrase.
-        expect(tts.synthesizeCalls.length).toBe(4); // greeting + 3 check-ins, nothing more
+        // Confirms the cap actually holds — no 3rd check-in, of either
+        // phrase. Lowered from 3 to 2 after real-call feedback that she
+        // was speaking up far too often; two is enough to signal "I'm
+        // here and might not be hearing you" without nagging.
+        expect(tts.synthesizeCalls.length).toBe(3); // greeting + 2 check-ins, nothing more
       } finally {
         jest.useRealTimers();
       }
@@ -2061,7 +2063,27 @@ describe("CallSessionOrchestrator", () => {
       }
     });
 
-    it("real recognized speech (confirmed interim text), unlike a bare blip, DOES reset the timer", async () => {
+    /**
+     * CHANGED from "resets the timer" to "cancels it", after the first
+     * real call on the deployed stack. Re-arming here started the
+     * countdown while the CALLER was still talking, so it then ran
+     * through Grace's own thinking AND her spoken reply — and fired
+     * "Take your time, I'm still here" a second or two after she stopped
+     * speaking, repeatedly, which is the exact opposite of a silence
+     * check-in's purpose.
+     *
+     * Cancelling is correct because a real turn follows recognized
+     * speech, and the timer is armed again at the END of that turn (see
+     * armSilenceCheckIn's call sites), i.e. at the only moment Grace is
+     * genuinely waiting on the caller.
+     *
+     * This does NOT reopen the "caller stuck in an STT dead zone" bug
+     * this check-in exists for: that case produces EMPTY transcripts,
+     * which deepgram-stt.provider.ts never forwards as interim speech at
+     * all, so the timer armed after Grace's previous turn survives
+     * untouched and still fires.
+     */
+    it("real recognized speech CANCELS the pending check-in — a talking caller needs no check-in", async () => {
       jest.useFakeTimers();
       try {
         const { orchestrator, stt, tts } = buildOrchestratorUnderTest();
@@ -2075,14 +2097,10 @@ describe("CallSessionOrchestrator", () => {
         session.emitInterimSpeech(); // real recognized text, not just VAD energy
         await jest.advanceTimersByTimeAsync(0);
 
-        // Under a FRESH 1000ms window from the confirmed speech — no
-        // check-in yet at the original schedule's mark.
-        await jest.advanceTimersByTimeAsync(200);
+        // Well past the original window, and past a hypothetical fresh
+        // one: nothing fires, because the caller is speaking.
+        await jest.advanceTimersByTimeAsync(3000);
         expect(tts.synthesizeCalls).not.toContain("Take your time. I'm still here.");
-
-        // ...but it does fire once the fresh window elapses.
-        await jest.advanceTimersByTimeAsync(800);
-        expect(tts.synthesizeCalls).toContain("Take your time. I'm still here.");
       } finally {
         jest.useRealTimers();
       }

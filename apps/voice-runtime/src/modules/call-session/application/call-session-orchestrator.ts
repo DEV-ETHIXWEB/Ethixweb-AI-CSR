@@ -185,7 +185,7 @@ function bargeInConfirmationTimeoutMs(): number {
  * the whole process alive for the full 10s after the test run finished
  * — found live running this file's own suite, not a hypothetical.
  */
-const DEFAULT_SILENCE_CHECK_IN_TIMEOUT_MS = 7_000;
+const DEFAULT_SILENCE_CHECK_IN_TIMEOUT_MS = 12_000;
 function silenceCheckInTimeoutMs(): number {
   const raw = process.env["SILENCE_CHECK_IN_TIMEOUT_MS"];
   const parsed = raw ? Number(raw) : NaN;
@@ -230,7 +230,7 @@ const SILENCE_TROUBLE_HEARING_PHRASE =
  * dead. Repeating bounds that — but only a few times, because a caller
  * who genuinely walked away shouldn't be talked at indefinitely.
  */
-const MAX_SILENCE_CHECK_INS = 3;
+const MAX_SILENCE_CHECK_INS = 2;
 
 /**
  * The one class that actually drives a phone call end to end — receives
@@ -894,7 +894,16 @@ export class CallSessionOrchestrator {
     sink: MediaStreamSink,
     transcript: string,
   ): void {
-    this.armSilenceCheckIn(sink);
+    // DISARM, never arm. This used to call armSilenceCheckIn, which
+    // started the countdown the moment the caller began speaking — so the
+    // timer then ran through Grace's own thinking AND her spoken reply.
+    // On a real call that put "Take your time, I'm still here" a second or
+    // two after she finished talking, over and over, which is the opposite
+    // of what a silence check-in is for. The caller talking means there is
+    // nothing to check in about; the timer is armed again only where it
+    // belongs — after Grace has finished speaking and is genuinely waiting
+    // (see armSilenceCheckIn's call sites at the end of a turn).
+    this.disarmSilenceCheckIn();
     if (!this.pendingBargeInTimer) {
       return;
     }
