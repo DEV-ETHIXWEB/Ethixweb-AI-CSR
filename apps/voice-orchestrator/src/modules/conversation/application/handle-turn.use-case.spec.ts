@@ -1775,6 +1775,83 @@ describe("HandleTurnUseCase", () => {
   });
 
   /**
+   * Regression coverage for a real bug found live via a full end-to-end
+   * run against the actual running services (not a fake harness):
+   * reproduced 4/4 times, a caller who asked for a human got "Let me get
+   * someone on the line for you" as the model's ENTIRE turn — no tool
+   * call at all. The existing backstops filled in their own defaults
+   * (searchCustomer/escalateEmergency), so the caller was told they were
+   * being connected while nothing was ever attempted. This is the exact
+   * "never fake a successful transfer" failure the whole feature exists
+   * to prevent, so it gets the same deterministic-safety-net treatment as
+   * escalateEmergency's own missed-call backstop above.
+   */
+  it("force-calls transferToHuman when the model's own text promises a handoff but calls no tool (deterministic safety net)", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "Let me get someone on the line for you." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const transferHandler = {
+      execute: jest.fn().mockResolvedValue({ transferDestination: "+15559876543" }),
+    };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "transferToHuman", handler: transferHandler }],
+    });
+
+    const result = await useCase.execute(
+      baseCommand({
+        transcript: "can I just talk to a real person please",
+        allowedTools: ["transferToHuman"],
+      }),
+    );
+
+    expect(transferHandler.execute).toHaveBeenCalledTimes(1);
+    expect(transferHandler.execute.mock.calls[0]?.[0]).toMatchObject({ reason: "caller_requested" });
+    expect(result.toolCallsExecuted).toEqual(["transferToHuman"]);
+    expect(result.humanTransfer).toEqual({
+      reason: "caller_requested",
+      transferDestination: "+15559876543",
+    });
+    // Only one scripted response exists — if the loop ran a second
+    // completion instead of breaking after the backstop-driven transfer,
+    // this assertion (not just the request count) is what would catch it.
+    expect(aiProvider.requests).toHaveLength(1);
+    expect(result.responseText).toBe("Let me get someone on the line for you.");
+  });
+
+  it("does NOT force-call transferToHuman for ordinary text that merely contains 'get' or 'you' — the phrase match is specific, not a generic trigger", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "Got it — what's going on with the sink?" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const transferHandler = { execute: jest.fn() };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "transferToHuman", handler: transferHandler }],
+    });
+
+    const result = await useCase.execute(
+      baseCommand({ transcript: "my kitchen sink is leaking", allowedTools: ["transferToHuman"] }),
+    );
+
+    expect(transferHandler.execute).not.toHaveBeenCalled();
+    expect(result.humanTransfer).toBeUndefined();
+  });
+
+  /**
    * Found live on a real ~10-minute phone call (turn 18 of 40): the
    * backstop fired a SECOND time mid-call, adding a full extra LLM
    * round-trip (measured: this exact turn's response time nearly doubled
@@ -1807,7 +1884,9 @@ describe("HandleTurnUseCase", () => {
         ],
       ];
       const escalateHandler = {
-        execute: jest.fn().mockResolvedValue({ isEmergency: false, severity: "routine", action: "none" }),
+        execute: jest
+          .fn()
+          .mockResolvedValue({ isEmergency: false, severity: "routine", action: "none" }),
       };
       const { useCase } = buildUseCase({
         aiProvider,
@@ -1845,7 +1924,9 @@ describe("HandleTurnUseCase", () => {
         ],
       ];
       const escalateHandler = {
-        execute: jest.fn().mockResolvedValue({ isEmergency: false, severity: "routine", action: "none" }),
+        execute: jest
+          .fn()
+          .mockResolvedValue({ isEmergency: false, severity: "routine", action: "none" }),
       };
       const { useCase } = buildUseCase({
         aiProvider,
@@ -1871,12 +1952,17 @@ describe("HandleTurnUseCase", () => {
           { type: "done", stopReason: "end_turn" },
         ],
         [
-          { type: "text_delta", text: "The caller has said goodbye and ended the call. As instructed, I let them go." },
+          {
+            type: "text_delta",
+            text: "The caller has said goodbye and ended the call. As instructed, I let them go.",
+          },
           { type: "done", stopReason: "end_turn" },
         ],
       ];
       const escalateHandler = {
-        execute: jest.fn().mockResolvedValue({ isEmergency: false, severity: "routine", action: "none" }),
+        execute: jest
+          .fn()
+          .mockResolvedValue({ isEmergency: false, severity: "routine", action: "none" }),
       };
       const { useCase } = buildUseCase({
         aiProvider,
@@ -1885,7 +1971,10 @@ describe("HandleTurnUseCase", () => {
       });
 
       const result = await useCase.execute(
-        baseCommand({ transcript: "Never mind, I'll call back later.", allowedTools: ["escalateEmergency"] }),
+        baseCommand({
+          transcript: "Never mind, I'll call back later.",
+          allowedTools: ["escalateEmergency"],
+        }),
       );
 
       expect(aiProvider.requests).toHaveLength(1);
@@ -1921,7 +2010,10 @@ describe("HandleTurnUseCase", () => {
       });
 
       const result = await useCase.execute(
-        baseCommand({ transcript: "i smell gas in the basement", allowedTools: ["escalateEmergency"] }),
+        baseCommand({
+          transcript: "i smell gas in the basement",
+          allowedTools: ["escalateEmergency"],
+        }),
       );
 
       expect(aiProvider.requests).toHaveLength(2);
@@ -1943,7 +2035,9 @@ describe("HandleTurnUseCase", () => {
         ],
       ];
       const escalateHandler = {
-        execute: jest.fn().mockResolvedValue({ isEmergency: false, severity: "routine", action: "none" }),
+        execute: jest
+          .fn()
+          .mockResolvedValue({ isEmergency: false, severity: "routine", action: "none" }),
       };
       const { useCase } = buildUseCase({
         aiProvider,
@@ -1976,7 +2070,9 @@ describe("HandleTurnUseCase", () => {
       ];
       const lookupHandler = { execute: jest.fn().mockResolvedValue({ calls: [] }) };
       const escalateHandler = {
-        execute: jest.fn().mockResolvedValue({ isEmergency: false, severity: "routine", action: "none" }),
+        execute: jest
+          .fn()
+          .mockResolvedValue({ isEmergency: false, severity: "routine", action: "none" }),
       };
       const { useCase } = buildUseCase({
         aiProvider,
@@ -1988,7 +2084,10 @@ describe("HandleTurnUseCase", () => {
       });
 
       const result = await useCase.execute(
-        baseCommand({ transcript: "it's akash, my disposal is jammed again", allowedTools: ["lookupPreviousCalls", "escalateEmergency"] }),
+        baseCommand({
+          transcript: "it's akash, my disposal is jammed again",
+          allowedTools: ["lookupPreviousCalls", "escalateEmergency"],
+        }),
       );
 
       expect(lookupHandler.execute).toHaveBeenCalledTimes(1);
@@ -2002,7 +2101,10 @@ describe("HandleTurnUseCase", () => {
       aiProvider.responses = [
         [
           { type: "text_delta", text: "What's the zip code there?" },
-          { type: "tool_call", toolCall: { id: "t1", name: "getServiceAreas", arguments: { zip: "98032" } } },
+          {
+            type: "tool_call",
+            toolCall: { id: "t1", name: "getServiceAreas", arguments: { zip: "98032" } },
+          },
           { type: "done", stopReason: "tool_use" },
         ],
         [
@@ -2017,7 +2119,9 @@ describe("HandleTurnUseCase", () => {
         registeredTools: [{ name: "getServiceAreas", handler: serviceHandler }],
       });
 
-      await useCase.execute(baseCommand({ transcript: "do you cover kent", allowedTools: ["getServiceAreas"] }));
+      await useCase.execute(
+        baseCommand({ transcript: "do you cover kent", allowedTools: ["getServiceAreas"] }),
+      );
 
       expect(aiProvider.requests).toHaveLength(2);
     });
@@ -2041,7 +2145,9 @@ describe("HandleTurnUseCase", () => {
         ],
       ];
       const escalateHandler = {
-        execute: jest.fn().mockResolvedValue({ isEmergency: false, severity: "routine", action: "none" }),
+        execute: jest
+          .fn()
+          .mockResolvedValue({ isEmergency: false, severity: "routine", action: "none" }),
       };
       const { useCase } = buildUseCase({
         aiProvider,
@@ -3083,12 +3189,16 @@ describe("HandleTurnUseCase", () => {
       ];
       const { useCase } = buildUseCase({ aiProvider, repository });
       await useCase.execute(baseCommand({ transcript, allowedTools: [] }));
-      const callerMessages = (aiProvider.requests[0]?.messages ?? []).filter((m) => m.role === "user");
+      const callerMessages = (aiProvider.requests[0]?.messages ?? []).filter(
+        (m) => m.role === "user",
+      );
       return String(callerMessages[callerMessages.length - 1]?.content ?? "");
     }
 
     it("REAL QA FAILURE: tells the model Carnation's ZIP IS covered, so she cannot turn the caller away", async () => {
-      const content = await sentCallerMessage("I'm at 98014 out in Carnation, my water heater is leaking.");
+      const content = await sentCallerMessage(
+        "I'm at 98014 out in Carnation, my water heater is leaking.",
+      );
       expect(content).toContain("zip 98014 IS within the service area");
     });
 

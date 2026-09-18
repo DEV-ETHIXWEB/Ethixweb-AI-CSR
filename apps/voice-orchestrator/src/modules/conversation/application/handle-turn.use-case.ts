@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { classifyZip, coveredZipsFromPrompt, detectServiceAreaFromTranscript } from "../domain/service-area";
+import {
+  classifyZip,
+  coveredZipsFromPrompt,
+  detectServiceAreaFromTranscript,
+} from "../domain/service-area";
 import { Inject, Injectable } from "@nestjs/common";
 import type { IdempotencyStore, StructuredLogger } from "@ethixweb/shared-kernel";
 import { APP_LOGGER } from "../../../shared/observability/app-logger.module";
@@ -600,6 +604,26 @@ export class HandleTurnUseCase {
         }
       }
 
+      // See buildTransferPromiseBackstopCall's own comment — found live,
+      // not hypothetical. Deliberately OUTSIDE the `toolCalls.length ===
+      // 0` block above: a real run showed the model calling a DIFFERENT
+      // tool (searchCustomer) in the SAME completion as text promising a
+      // transfer, which the zero-tool-calls gate never sees — the model
+      // used its one tool-call slot on something else while still saying
+      // words that commit to a handoff. Checked against whatever
+      // `toolCalls` ended up being (the model's own, a backstop's, or
+      // both), unconditionally — the only thing that matters is whether
+      // transferToHuman is actually among them; `turn.text` (not the
+      // transcript) is what's checked, since this fires on what GRACE
+      // said, not what the caller said.
+      if (
+        command.allowedTools.includes("transferToHuman") &&
+        looksLikeUnbackedTransferPromise(turn.text) &&
+        !toolCalls.some((call) => call.name === "transferToHuman")
+      ) {
+        toolCalls = [...toolCalls, buildTransferPromiseBackstopCall(command.transcript)];
+      }
+
       if (turn.text || toolCalls.length > 0) {
         pushMessage({
           role: "assistant",
@@ -654,7 +678,10 @@ export class HandleTurnUseCase {
           const verdict = classifyZip(askedZip, coveredZips);
           if (verdict !== null) {
             output = { inServiceArea: verdict !== "outside" };
-            conversation.lastServiceAreaCheck = { zip: askedZip, inServiceArea: verdict !== "outside" };
+            conversation.lastServiceAreaCheck = {
+              zip: askedZip,
+              inServiceArea: verdict !== "outside",
+            };
           }
         }
         if (
@@ -1332,7 +1359,8 @@ export class HandleTurnUseCase {
     // being null just means no on-call target resolved, which
     // voice-runtime's own static fallback chain already handles.
     if (toolName === "transferToHuman" && isRecord(output)) {
-      const reason = typeof toolArguments["reason"] === "string" ? toolArguments["reason"] : "unknown";
+      const reason =
+        typeof toolArguments["reason"] === "string" ? toolArguments["reason"] : "unknown";
       const transferDestination =
         typeof output["transferDestination"] === "string" ? output["transferDestination"] : null;
       return { humanTransfer: { reason, transferDestination } };
@@ -1598,6 +1626,42 @@ function buildSearchCustomerBackstopCall(phone: string): AiToolCallRequest {
     id: randomUUID(),
     name: "searchCustomer",
     arguments: { phone },
+  };
+}
+
+/**
+ * FOUND LIVE, via a real end-to-end run against this service (not a
+ * qa-suite scenario, which only ever tested the human-request turn in
+ * isolation): a caller who first described their problem, THEN asked for
+ * a human, got "Let me get someone on the line for you" as the model's
+ * text — with ZERO tool calls. With no transferToHuman call of its own,
+ * the existing backstops above filled in their usual defaults
+ * (escalateEmergency/searchCustomer), and the caller was left on the AI,
+ * having just been told they were being connected. Reproduced 4/4 times.
+ *
+ * This is the single worst class of bug this whole feature exists to
+ * prevent — a spoken promise with no real action behind it — so it gets
+ * its own backstop, the same "the model's own output already shows the
+ * intent; code guarantees the side effect actually happens" pattern as
+ * escalateEmergency/searchCustomer above. Deliberately NOT gated on
+ * `!turn.interrupted`, matching escalateEmergency's own reasoning: a
+ * caller left believing they're being transferred when they are not is a
+ * worse failure than one skipped lookup.
+ */
+function looksLikeUnbackedTransferPromise(text: string): boolean {
+  return /\b(let me get (you|someone)|let me (connect|transfer) you|i'?m (connecting|transferring) you|one sec,? (let me get|i'?ll get)|hold on,? (let me get|i'?ll get)|get (you|someone) (over to|on the line with|connected))\b/i.test(
+    text,
+  );
+}
+
+function buildTransferPromiseBackstopCall(transcript: string): AiToolCallRequest {
+  return {
+    id: randomUUID(),
+    name: "transferToHuman",
+    arguments: {
+      reason: "caller_requested",
+      summary: `Caller's own words this turn: "${transcript}". Grace's reply promised a handoff without calling the tool — backstop-triggered.`,
+    },
   };
 }
 
