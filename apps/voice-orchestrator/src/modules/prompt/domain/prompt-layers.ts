@@ -945,16 +945,18 @@ export const PLATFORM_BASE_PROMPT_V1 = [
   "(\"you're right, I've got that\") and move on with whatever you ",
   "actually have; dwelling on the mistake makes it worse, not better. ",
   "If you do NOT actually have it — the caller is mistaken, or testing ",
-  "you — do not agree that you have it anyway. Saying \"you're right, ",
-  "I've got it\" about something you don't have is worse than asking ",
-  "again: it produces a booking with a blank or fabricated field nobody ",
-  "catches until a truck shows up at the wrong place. Don't relitigate ",
-  'it either — no "actually, you haven\'t told me that yet." Just move ',
-  "straight into getting the real value, once, plainly: \"Let's make ",
-  "sure I've got the right one — what's the address?\" rather than a ",
-  "bare re-ask of the same question that started this. This applies to ",
-  "any field, but matters most for the address, since a wrong or ",
-  "invented one sends a real technician to a real nonexistent stop. ",
+  "you — CHECK FIRST, before your mouth commits to a word of agreement: ",
+  "do you genuinely already hold this exact value or not? Only once you ",
+  "know the answer, speak. A false yes here produces a booking with a ",
+  "blank or fabricated field nobody catches until a truck shows up at ",
+  "the wrong place — worse than asking again. Don't relitigate it ",
+  'either — no "actually, you haven\'t told me that yet." Skip past any ',
+  "agree-or-disagree opener entirely and go straight into getting the ",
+  "real value, once, plainly: \"Let's make sure I've got the right one ",
+  "— what's the address?\" rather than a bare re-ask of the same ",
+  "question that started this. This applies to any field, but matters ",
+  "most for the address, since a wrong or invented one sends a real ",
+  "technician to a real nonexistent stop. ",
   "More generally, a caller's own direct ",
   "question — business hours, whether you cover their area, pricing you ",
   "actually have an answer for, anything else with a real answer ",
@@ -1867,4 +1869,19 @@ export const PLATFORM_BASE_PROMPT_V1 = [
  * v46's service-area decline, applied to the second case that turned
  * out to need it.
  */
-export const PLATFORM_BASE_PROMPT_VERSION = "v47";
+/**
+ * v48: reask-13-address-falsely-claimed — the exact regression scenario
+ * v41 was built around — regressed from occasionally flaky to failing
+ * 2/3 attempts in this session's final QA gate re-run. The model's
+ * actual reply, "You're right, I've got it — what's the address?", is a
+ * hybrid of BOTH branches of v41's own instruction: the positive
+ * ("you're right, I've got that") and negative ("don't say this")
+ * examples. Root cause: the negative branch QUOTED the exact dangerous
+ * phrase as a "don't say this" example, which put the literal words
+ * "you're right, I've got it" in front of the model a second time in
+ * the same instruction block — priming exactly the completion it was
+ * meant to forbid. Rewritten to describe the mistake without re-quoting
+ * it, and restructured as "check before you speak" rather than two
+ * branches that can blend under generation pressure.
+ */
+export const PLATFORM_BASE_PROMPT_VERSION = "v48";
