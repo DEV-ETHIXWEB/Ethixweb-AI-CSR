@@ -3,6 +3,7 @@ import { TenantsModule } from "../tenants/tenants.module";
 import { EscalateEmergencyUseCase } from "./application/escalate-emergency.use-case";
 import { GetBusinessHoursUseCase } from "./application/get-business-hours.use-case";
 import { ResolveOnCallUseCase } from "./application/resolve-oncall.use-case";
+import { TransferToHumanUseCase } from "./application/transfer-to-human.use-case";
 import { BUSINESS_HOUR_REPOSITORY } from "./domain/ports/business-hour-repository.port";
 import { EMERGENCY_RULE_REPOSITORY } from "./domain/ports/emergency-rule-repository.port";
 import { ONCALL_REPOSITORY } from "./domain/ports/oncall-repository.port";
@@ -22,7 +23,8 @@ import { EmergencyRulesToolController } from "./interfaces/emergency-rules-tool.
     EscalateEmergencyUseCase,
     GetBusinessHoursUseCase,
     ResolveOnCallUseCase,
+    TransferToHumanUseCase,
   ],
-  exports: [ResolveOnCallUseCase, EscalateEmergencyUseCase, GetBusinessHoursUseCase],
+  exports: [ResolveOnCallUseCase, EscalateEmergencyUseCase, GetBusinessHoursUseCase, TransferToHumanUseCase],
 })
 export class EmergencyRulesModule {}

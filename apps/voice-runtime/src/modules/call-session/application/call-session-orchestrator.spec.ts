@@ -64,6 +64,10 @@ describe("CallSessionOrchestrator", () => {
     // onCallEnd. Any test that specifically exercises this window's own
     // timing overrides it back to a real, meaningful value.
     process.env["BARGE_IN_CONFIRMATION_TIMEOUT_MS"] = "5";
+    // Same rationale again for the post-goodbye pause before the line is
+    // actually dropped (2s in production). The farewell describe block
+    // below sets its own values where the timing is the point.
+    process.env["FAREWELL_HANGUP_GRACE_MS"] = "5";
   });
   afterEach(() => {
     process.env = { ...originalEnv };
@@ -199,6 +203,40 @@ describe("CallSessionOrchestrator", () => {
       expect(sink.clearCount).toBeGreaterThanOrEqual(1);
       expect(orchestratorClient.interruptCalls).toHaveLength(1);
       expect(orchestratorClient.interruptCalls[0]?.req.tenantId).toBe("tenant-1");
+    });
+
+    it("REAL-CALL REGRESSION 9ecc6846: stops Grace when the caller talks while her reply is still PLAYING, even though it finished SENDING instantly", async () => {
+      const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      // Exactly the live shape: cached / Flash audio handed over at once, no
+      // per-chunk delay, but 3 x 2s = 6 seconds of real speech queued at Twilio.
+      tts.chunkBytes = 16_000;
+      tts.chunkDelayMs = 0;
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "Got it, a leaking water heater. Is it dripping or pouring out?",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+      session.emitFinalTranscript("my water heater is leaking", 0.95);
+      await flushMicrotasks();
+      await new Promise((r) => setTimeout(r, 30));
+      const clearsBeforeBargeIn = sink.clearCount;
+      const interruptsBeforeBargeIn = orchestratorClient.interruptCalls.length;
+
+      // Sending is long over; six seconds of her voice is still playing.
+      session.emitSpeechStarted();
+      session.emitInterimSpeech();
+      await flushMicrotasks();
+
+      expect(sink.clearCount).toBeGreaterThan(clearsBeforeBargeIn);
+      expect(orchestratorClient.interruptCalls.length).toBe(interruptsBeforeBargeIn + 1);
     });
 
     it("does NOT treat a bare SpeechStarted (never confirmed by interim speech) as a barge-in — noise/breath/cough must not kill an in-flight response", async () => {
@@ -1679,6 +1717,117 @@ describe("CallSessionOrchestrator", () => {
     });
   });
 
+  /**
+   * The non-emergency counterpart to "emergency escalation" above — same
+   * executeTransfer code path, same static-fallback and honest-failure
+   * contract, exercised through the separate `humanTransfer` signal
+   * instead of `escalation.action === "forward_call"`. See
+   * TransferToHumanUseCase's own comment (core-api) for why this is a
+   * distinct tool/signal rather than a variant of emergency escalation.
+   */
+  describe("human transfer", () => {
+    it("executes a call transfer when a turn result signals humanTransfer", async () => {
+      process.env["HUMAN_FALLBACK_NUMBER"] = "+15559990000";
+      const { orchestrator, orchestratorClient, stt, callTransfer } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "One sec, let me get you over to the team.",
+          toolCallsExecuted: ["transferToHuman"],
+          interrupted: false,
+          state: "qualifying",
+          humanTransfer: { reason: "caller_requested", transferDestination: null },
+        },
+      ];
+
+      await orchestrator.onCallStart(baseParams({ callSid: "CA-human-transfer" }), sink);
+      const session = stt.sessions[0]!;
+      session.emitFinalTranscript("can I talk to a real person please", 0.9);
+      await flushMicrotasks();
+
+      expect(callTransfer.transferCalls).toHaveLength(1);
+      expect(callTransfer.transferCalls[0]).toEqual({
+        callSid: "CA-human-transfer",
+        destination: "+15559990000",
+      });
+    });
+
+    it("prefers the server-resolved on-call destination over the static HUMAN_FALLBACK_NUMBER when both are available", async () => {
+      process.env["HUMAN_FALLBACK_NUMBER"] = "+15559990000";
+      const { orchestrator, orchestratorClient, stt, callTransfer } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "One sec, let me get you over to the team.",
+          toolCallsExecuted: ["transferToHuman"],
+          interrupted: false,
+          state: "qualifying",
+          humanTransfer: { reason: "caller_requested", transferDestination: "+15551230000" },
+        },
+      ];
+
+      await orchestrator.onCallStart(baseParams({ callSid: "CA-human-oncall" }), sink);
+      const session = stt.sessions[0]!;
+      session.emitFinalTranscript("can I talk to a real person please", 0.9);
+      await flushMicrotasks();
+
+      expect(callTransfer.transferCalls).toHaveLength(1);
+      expect(callTransfer.transferCalls[0]).toEqual({
+        callSid: "CA-human-oncall",
+        destination: "+15551230000",
+      });
+    });
+
+    it("speaks an honest fallback and re-arms the silence check-in when no destination is configured at all — never claims a transfer that didn't happen", async () => {
+      delete process.env["HUMAN_FALLBACK_NUMBER"];
+      delete process.env["EMERGENCY_TRANSFER_NUMBER"];
+      const { orchestrator, orchestratorClient, stt, callTransfer, tts } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "One sec, let me get you over to the team.",
+          toolCallsExecuted: ["transferToHuman"],
+          interrupted: false,
+          state: "qualifying",
+          humanTransfer: { reason: "caller_requested", transferDestination: null },
+        },
+      ];
+
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+      session.emitFinalTranscript("can I talk to a real person please", 0.9);
+      await flushMicrotasks();
+
+      expect(callTransfer.transferCalls).toHaveLength(0);
+      expect(tts.synthesizeCalls.some((t) => /wasn'?t able to reach the team/i.test(t))).toBe(true);
+      expect(tts.synthesizeCalls.every((t) => !/you'?re (now )?connected/i.test(t))).toBe(true);
+    });
+
+    it("does not attempt a transfer when no turn result signals humanTransfer", async () => {
+      const { orchestrator, orchestratorClient, stt, callTransfer } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "Sure, what's going on with it?",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+      session.emitFinalTranscript("my water heater is old", 0.9);
+      await flushMicrotasks();
+
+      expect(callTransfer.transferCalls).toHaveLength(0);
+    });
+  });
+
   describe("capacity rejection (429) at call start", () => {
     /**
      * Regression coverage for a real gap found live: docs/36 §3 admits
@@ -2178,6 +2327,90 @@ describe("CallSessionOrchestrator", () => {
       } finally {
         jest.useRealTimers();
       }
+    });
+  });
+
+  describe("farewell hang-up (the caller says goodbye and the line actually drops)", () => {
+    async function runUntilGoodbye(closingLine: string) {
+      const harness = buildOrchestratorUnderTest();
+      const { orchestrator, orchestratorClient, stt } = harness;
+      const sink = new FakeMediaStreamSink();
+      const params = baseParams();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "Got it, a leaking sink. What's your name?",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+        {
+          conversationId: "conv-1",
+          responseText: closingLine,
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "closing",
+        },
+      ];
+
+      await orchestrator.onCallStart(params, sink);
+      const session = stt.sessions[0]!;
+      session.emitFinalTranscript("my sink is leaking", 0.95);
+      await flushMicrotasks();
+      session.emitFinalTranscript("okay bye", 0.99);
+      await flushMicrotasks();
+      return { ...harness, session, params };
+    }
+
+    it("hangs up on the caller's goodbye, after the grace period, with its own end reason", async () => {
+      process.env["FAREWELL_HANGUP_GRACE_MS"] = "5";
+      const { callTransfer, orchestratorClient, tts, params } = await runUntilGoodbye(
+        "Bye, have a great day ahead.",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      expect(tts.synthesizeCalls).toContain("Bye, have a great day ahead.");
+      expect(callTransfer.hangUps).toEqual([params.callSid]);
+      expect(orchestratorClient.endCalls).toHaveLength(1);
+      expect(orchestratorClient.endCalls[0]?.req.endReason).toBe("agent_hangup_after_farewell");
+    });
+
+    it("does NOT hang up while the grace period is still running — the closing line finishes first", async () => {
+      process.env["FAREWELL_HANGUP_GRACE_MS"] = "400";
+      const { callTransfer } = await runUntilGoodbye("Bye, have a great day ahead.");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(callTransfer.hangUps).toEqual([]);
+    });
+
+    it("abandons the hang-up when the caller speaks again during the grace period", async () => {
+      process.env["FAREWELL_HANGUP_GRACE_MS"] = "200";
+      const { callTransfer, orchestratorClient, session } = await runUntilGoodbye(
+        "Bye, have a great day ahead.",
+      );
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "Of course, what else can I get for you?",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+      session.emitFinalTranscript("wait one more thing", 0.97);
+      await flushMicrotasks();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      expect(callTransfer.hangUps).toEqual([]);
+      expect(orchestratorClient.endCalls).toHaveLength(0);
+    });
+
+    it("never hangs up on a closing turn that ends in a question", async () => {
+      process.env["FAREWELL_HANGUP_GRACE_MS"] = "5";
+      const { callTransfer } = await runUntilGoodbye("Before you go, what's your name?");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      expect(callTransfer.hangUps).toEqual([]);
     });
   });
 });

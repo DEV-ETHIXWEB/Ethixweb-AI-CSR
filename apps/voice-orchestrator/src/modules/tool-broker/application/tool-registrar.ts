@@ -8,6 +8,7 @@ import { GetBusinessHoursHandler } from "./handlers/get-business-hours.handler";
 import { GetServiceAreasHandler } from "./handlers/get-service-areas.handler";
 import { LookupPreviousCallsHandler } from "./handlers/lookup-previous-calls.handler";
 import { SearchCustomerHandler } from "./handlers/search-customer.handler";
+import { TransferToHumanHandler } from "./handlers/transfer-to-human.handler";
 import { UpdateLeadHandler } from "./handlers/update-lead.handler";
 import { ToolRegistry } from "./tool-registry";
 
@@ -24,6 +25,7 @@ export class ToolRegistrar implements OnModuleInit {
     private readonly getServiceAreas: GetServiceAreasHandler,
     private readonly escalateEmergency: EscalateEmergencyHandler,
     private readonly lookupPreviousCalls: LookupPreviousCallsHandler,
+    private readonly transferToHuman: TransferToHumanHandler,
   ) {}
 
   onModuleInit(): void {
@@ -36,6 +38,7 @@ export class ToolRegistrar implements OnModuleInit {
       getServiceAreas: this.getServiceAreas,
       escalateEmergency: this.escalateEmergency,
       lookupPreviousCalls: this.lookupPreviousCalls,
+      transferToHuman: this.transferToHuman,
     };
 
     for (const definition of TOOL_CATALOG) {

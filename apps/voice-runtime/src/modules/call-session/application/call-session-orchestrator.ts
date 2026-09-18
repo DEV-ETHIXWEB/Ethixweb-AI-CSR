@@ -24,13 +24,14 @@ import {
   type TextToSpeechProvider,
 } from "../../speech/domain/text-to-speech.port";
 import { ALLOWED_TOOLS, type CallSessionParams } from "../domain/call-session";
+import { isFarewell } from "../domain/farewell";
 import type { MediaStreamSink } from "../domain/media-stream-sink.port";
 import {
   TWILIO_MEDIA_ENCODING,
   TWILIO_MEDIA_SAMPLE_RATE_HZ,
 } from "../../telephony/domain/twilio-media-stream.types";
 import { isPureBackchannel } from "./backchannel-detector";
-import { parseDelivery, silenceBuffer, type DeliverySegment } from "./emotional-delivery";
+import { MULAW_BYTES_PER_MS, parseDelivery, silenceBuffer, type DeliverySegment } from "./emotional-delivery";
 import { looksLikeIncompleteFragment } from "./fragment-detector";
 
 /**
@@ -177,7 +178,7 @@ function bargeInConfirmationTimeoutMs(): number {
  * by making the first one arrive late.
  *
  * Read from `process.env` at call time (raw, not the validated `Env`
- * object — same convention `executeEmergencyTransfer` already uses in
+ * object — same convention `executeTransfer` already uses in
  * this same file) rather than a plain constant, specifically so tests
  * can override it to a tiny value: a real 10s timer left armed by a test
  * that doesn't call `onCallEnd` (most of the 26 pre-existing tests in
@@ -271,6 +272,28 @@ const MAX_SILENCE_CHECK_INS = 2;
  * instantiation the module's own long-standing intent finally correct
  * in practice, not just in a comment.
  */
+/**
+ * How long to wait after Grace's sign-off finishes before actually
+ * dropping the line, at the product owner's request ("once CSR will say
+ * bye and have a great day ahead, then 2 sec delay, then cut the call").
+ *
+ * Doubles as the window in which a caller can take the call back: any new
+ * caller turn during it cancels the hang-up entirely, so a misfire of
+ * isFarewell costs a two-second pause rather than a dropped call.
+ */
+const DEFAULT_FAREWELL_HANGUP_GRACE_MS = 2000;
+
+/** Below this much remaining playback, Grace is treated as no longer audible. See millisUntilPlaybackEnds. */
+const AUDIBLE_TAIL_TOLERANCE_MS = 40;
+
+/** Read per call rather than at module load so an operator can tune it with a secret, and so tests can shorten it without faking timers. */
+function farewellHangUpGraceMs(): number {
+  const configured = Number(process.env["FAREWELL_HANGUP_GRACE_MS"]);
+  return Number.isFinite(configured) && configured >= 0
+    ? configured
+    : DEFAULT_FAREWELL_HANGUP_GRACE_MS;
+}
+
 @Injectable({ scope: Scope.TRANSIENT })
 export class CallSessionOrchestrator {
   private conversationId: string | null = null;
@@ -278,6 +301,24 @@ export class CallSessionOrchestrator {
   private activeTurnAbort: AbortController | null = null;
   private ttsAbort: AbortController | null = null;
   private ttsPlaying = false;
+  /**
+   * Wall-clock time at which the audio already handed to Twilio will have
+   * finished PLAYING on the caller's phone.
+   *
+   * `ttsPlaying` only means "audio is still being sent". Twilio buffers
+   * everything it receives and plays it in real time, so the two drift
+   * apart by however much faster than real time audio arrives. FOUND LIVE
+   * on call 9ecc6846 ("even when I'm saying something she continuously
+   * keeps talking"): once replayed cached clips (sent in about 1ms) and the
+   * Flash TTS model (renders faster than real time) went out, `ttsPlaying`
+   * turned false while the caller could still hear several seconds of
+   * Grace, and every barge-in decision gated on it silently did nothing,
+   * so Twilio's `clear` was never sent and she talked straight over them.
+   *
+   * Tracked from bytes actually sent: Twilio's media stream is 8kHz mu-law,
+   * one byte per sample, so 8 bytes is exactly 1ms of audio.
+   */
+  private playbackEndsAt = 0;
   private ended = false;
   /**
    * Set by `handleBargeIn` and checked by `handleFinalTranscript`'s
@@ -313,6 +354,8 @@ export class CallSessionOrchestrator {
   private silentTurnFallbackIndex = 0;
   /** See `handleFinalTranscriptCandidate`'s own comment — a finalized transcript flagged as a likely fragment, accumulated here while waiting to see if more follows, instead of starting a turn immediately. */
   private pendingFragment: { transcript: string; confidence: number } | null = null;
+  /** Caller turns actually handled on this call. Only read by the farewell hang-up below, which refuses to fire on the very first thing a caller says — see that branch's own comment. */
+  private callerTurnsHandled = 0;
   private fragmentCoalesceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
@@ -653,6 +696,7 @@ export class CallSessionOrchestrator {
     // visibility anywhere before this; DeepgramSttSession's own finalized-
     // transcript log (this same diagnostic pass) is the other half.
     const turnStartedAt = Date.now();
+    this.callerTurnsHandled += 1;
     log.info("finalized transcript received, starting turn", {
       transcript: result.transcript,
       confidence: result.confidence,
@@ -782,10 +826,17 @@ export class CallSessionOrchestrator {
       // speakQueue) — the caller hears SOMETHING before the line hands
       // off, rather than silence during the transfer's own connection
       // setup latency, without speaking it twice.
-      const transferred = await this.executeEmergencyTransfer(
+      // The spoken line has been SENT, but may still be playing; transferring
+      // now would cut the caller off mid-sentence.
+      const transferWait = this.millisUntilPlaybackEnds();
+      if (transferWait > 0) {
+        await sleep(transferWait);
+      }
+      const transferred = await this.executeTransfer(
         params,
         log,
         turnResult.escalation.transferDestination,
+        "emergency",
       );
       if (!transferred && !this.ended) {
         // FOUND LIVE via a full-stack audit: this branch used to be a
@@ -803,6 +854,86 @@ export class CallSessionOrchestrator {
         );
         this.armSilenceCheckIn(sink);
       }
+    } else if (turnResult.humanTransfer) {
+      // The non-emergency counterpart to the branch above — same
+      // execution path (executeTransfer), same "never claim a transfer
+      // that didn't happen" contract, deliberately lower urgency in the
+      // spoken fallback since this was never a safety situation. Grace's
+      // own turn response (already spoken above, via speakQueue) is the
+      // natural confirmation Phase 4 asks for — "one sec, let me get you
+      // connected" or similar, produced by the prompt, not hardcoded here
+      // — so nothing more is said on SUCCESS: the caller has already left
+      // this service's control by the time transferCall resolves, and
+      // anything spoken after that point could not reach them anyway.
+      log.info("human transfer signaled — executing call transfer", {
+        conversationId,
+        reason: turnResult.humanTransfer.reason,
+        resolvedOnCallDestination: turnResult.humanTransfer.transferDestination,
+      });
+      const transferWait = this.millisUntilPlaybackEnds();
+      if (transferWait > 0) {
+        await sleep(transferWait);
+      }
+      const transferred = await this.executeTransfer(
+        params,
+        log,
+        turnResult.humanTransfer.transferDestination,
+        "human_transfer",
+      );
+      if (!transferred && !this.ended) {
+        await this.speak(
+          "[warm] I wasn't able to reach the team directly right now — let's get your information so someone can follow up.",
+          sink,
+        );
+        this.armSilenceCheckIn(sink);
+      }
+    } else if (this.shouldHangUpOn(result.transcript, turnResult.responseText)) {
+      // The caller said goodbye, and Grace's own sign-off has just
+      // finished playing (speakQueue is awaited above, so this never cuts
+      // her off mid-word). Ending the conversation FIRST, with its own
+      // end reason, means the durable record says who actually ended the
+      // call — the gateway's socket-close path hardcodes "caller_hangup",
+      // and every call before this one was recorded that way even when
+      // the caller was simply waiting for a line that never dropped.
+      // `onCallEnd`'s `this.ended` guard then makes the gateway's later
+      // call a no-op, exactly as it already is for a real hangup.
+      log.info("caller said goodbye — ending the call from this side", {
+        conversationId,
+        transcript: result.transcript,
+      });
+      // A beat before the line drops. Grace's sign-off has finished
+      // playing by here (speakQueue is awaited above), and cutting the
+      // carrier the same millisecond her last word ends sounds like the
+      // call failed rather than like it finished.
+      //
+      // It is also a genuine safety window: if the caller starts a NEW
+      // turn during it ("wait, one more thing"), the hang-up is abandoned
+      // and the call carries on exactly as if the farewell had never been
+      // detected. That makes a false positive from isFarewell recoverable
+      // by the caller instead of final.
+      const turnsBeforeGrace = this.callerTurnsHandled;
+      // Let the sign-off actually finish PLAYING first. Measured from send-end
+      // alone, a fast render would drop the line mid-"take care".
+      await sleep(this.millisUntilPlaybackEnds() + farewellHangUpGraceMs());
+      if (this.ended || this.callerTurnsHandled !== turnsBeforeGrace) {
+        log.info("caller kept talking during the goodbye grace period — call continues", {
+          conversationId,
+        });
+        return;
+      }
+      await this.onCallEnd(params, "agent_hangup_after_farewell");
+      try {
+        await this.callTransfer.hangUp(params.callSid);
+      } catch (error) {
+        // Best-effort by the port's own contract. The caller is still
+        // connected and the conversation is already closed out, so the
+        // worst case is the pre-existing behaviour: they hang up
+        // themselves a moment later.
+        log.warn("hang-up request failed — leaving the line to the caller", {
+          conversationId,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
     } else {
       // Grace just finished speaking her real response and isn't being
       // handed off — this IS the "now waiting on the caller" checkpoint.
@@ -810,6 +941,33 @@ export class CallSessionOrchestrator {
       // isn't a moment to proactively check in on.
       this.armSilenceCheckIn(sink);
     }
+  }
+
+  /**
+   * Gate in front of `isFarewell` for the one thing that helper cannot
+   * see: WHERE in the call the goodbye landed. A farewell as the very
+   * first thing a caller says is not a caller signing off, it is either a
+   * misrecognition on a bad line or a wrong number — and the platform
+   * prompt's own wrong-number rule says to give them one brief, useful
+   * introduction rather than dropping the call. So the earliest this can
+   * fire is the second caller turn.
+   */
+  private shouldHangUpOn(transcript: string, spokenResponse: string): boolean {
+    if (this.callerTurnsHandled < 2 || !isFarewell(transcript)) {
+      return false;
+    }
+    // FOUND IN QA, not in production, and it would have been ugly live:
+    // the caller said "that's all I needed, thanks" and Grace answered
+    // "You got it — I'll get someone out to take a look at that. What's
+    // your name?" Hanging up on that drops the line on someone who has
+    // just been asked a question, which is worse than the stale line this
+    // feature exists to fix. The prompt is what should stop Grace asking
+    // at all (v35's sign-off rule); this is the guarantee that a miss
+    // there can never produce a cut-off question.
+    if (/\?\s*$/.test(spokenResponse.trim())) {
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -907,7 +1065,7 @@ export class CallSessionOrchestrator {
     if (!this.pendingBargeInTimer) {
       return;
     }
-    if (isPureBackchannel(transcript) && (this.ttsPlaying || this.activeTurnAbort)) {
+    if (isPureBackchannel(transcript) && (this.isAudible() || this.activeTurnAbort)) {
       this.logger.info("backchannel detected mid-speech — not treating it as a barge-in", {
         conversationId: this.conversationId,
       });
@@ -943,7 +1101,11 @@ export class CallSessionOrchestrator {
     this.silenceCheckInTimer = setTimeout(() => {
       this.silenceCheckInTimer = null;
       this.speakSilenceCheckIn(sink);
-    }, silenceCheckInTimeoutMs());
+      // Counted from when the caller STOPS HEARING Grace, not from when her
+      // audio finished sending. With fast TTS those differ by seconds, and
+      // counting from send-end cut the caller's time to answer by exactly
+      // that much before "are you still there?" spoke over them.
+    }, silenceCheckInTimeoutMs() + this.millisUntilPlaybackEnds());
   }
 
   /** Cancels any pending silence check-in without speaking one — real caller activity, a new turn starting, or the call ending all mean there's nothing to check in about. */
@@ -967,7 +1129,7 @@ export class CallSessionOrchestrator {
    * disarm-on-activity wiring should already prevent.
    */
   private speakSilenceCheckIn(sink: MediaStreamSink): void {
-    if (this.ended || this.ttsPlaying || this.activeTurnAbort) {
+    if (this.ended || this.isAudible() || this.activeTurnAbort) {
       return;
     }
     this.silenceCheckInCount += 1;
@@ -1040,9 +1202,8 @@ export class CallSessionOrchestrator {
         this.ttsAbort.abort();
         this.ttsAbort = null;
       }
-      if (this.ttsPlaying) {
-        sink.clearQueuedAudio();
-        this.ttsPlaying = false;
+      if (this.isAudible()) {
+        this.stopAudibleAudio(sink);
       }
       return;
     }
@@ -1051,15 +1212,14 @@ export class CallSessionOrchestrator {
       this.ttsAbort.abort();
       this.ttsAbort = null;
     }
-    if (this.ttsPlaying) {
+    if (this.isAudible()) {
       this.logger.info(
         "barge-in: TTS was playing between turns, calling /interrupt (mechanism 2)",
         {
           conversationId: this.conversationId,
         },
       );
-      sink.clearQueuedAudio();
-      this.ttsPlaying = false;
+      this.stopAudibleAudio(sink);
       if (this.conversationId) {
         this.orchestrator
           .interrupt(this.conversationId, { tenantId: params.tenantId })
@@ -1197,10 +1357,19 @@ export class CallSessionOrchestrator {
    * ProviderCompletionError), just missing on the single most
    * safety-critical path in the whole system.
    */
-  private async executeEmergencyTransfer(
+  /**
+   * Shared by both transfer paths — escalateEmergency's `forward_call` and
+   * the non-emergency `transferToHuman` — since the actual Twilio call
+   * modification, the static-number fallback chain, and the honest
+   * failure contract (never claim a transfer that didn't happen) are
+   * identical for both. `source` only changes what gets logged, so a real
+   * incident can still be traced to which tool actually triggered it.
+   */
+  private async executeTransfer(
     params: CallSessionParams,
     log: StructuredLogger,
     resolvedOnCallDestination: string | null,
+    source: "emergency" | "human_transfer",
   ): Promise<boolean> {
     const destination =
       resolvedOnCallDestination ||
@@ -1208,8 +1377,8 @@ export class CallSessionOrchestrator {
       process.env["HUMAN_FALLBACK_NUMBER"];
     if (!destination) {
       log.error(
-        "escalateEmergency signaled forward_call but neither EMERGENCY_TRANSFER_NUMBER nor HUMAN_FALLBACK_NUMBER is configured — cannot execute transfer",
-        { conversationId: this.conversationId },
+        `${source} signaled a transfer but neither EMERGENCY_TRANSFER_NUMBER nor HUMAN_FALLBACK_NUMBER is configured — cannot execute transfer`,
+        { conversationId: this.conversationId, source },
       );
       return false;
     }
@@ -1217,8 +1386,9 @@ export class CallSessionOrchestrator {
       await this.callTransfer.transferCall(params.callSid, destination);
       return true;
     } catch (error) {
-      log.error("emergency call transfer failed", {
+      log.error(`${source} call transfer failed`, {
         conversationId: this.conversationId,
+        source,
         reason: error instanceof Error ? error.message : String(error),
       });
       return false;
@@ -1245,6 +1415,35 @@ export class CallSessionOrchestrator {
    * landing mid-pause is still handled correctly by the existing
    * mechanism 2 path.
    */
+  private recordSentAudio(sink: MediaStreamSink, chunk: Buffer): void {
+    sink.sendAudio(chunk);
+    this.playbackEndsAt = Math.max(Date.now(), this.playbackEndsAt) + chunk.length / MULAW_BYTES_PER_MS;
+  }
+
+  /** True while the caller can still HEAR Grace, not merely while audio is still being sent. */
+  private isAudible(): boolean {
+    return this.ttsPlaying || this.millisUntilPlaybackEnds() > 0;
+  }
+
+  /**
+   * Remaining audible playback, rounded DOWN to zero below
+   * AUDIBLE_TAIL_TOLERANCE_MS. A few milliseconds of tail is inaudible and
+   * within Twilio's own network jitter, so treating it as "still talking"
+   * would only fire needless clears and /interrupt calls and delay
+   * post-speech actions for nothing.
+   */
+  private millisUntilPlaybackEnds(): number {
+    const remaining = this.playbackEndsAt - Date.now();
+    return remaining > AUDIBLE_TAIL_TOLERANCE_MS ? remaining : 0;
+  }
+
+  /** Twilio has discarded everything queued, so nothing is audible any more. */
+  private stopAudibleAudio(sink: MediaStreamSink): void {
+    sink.clearQueuedAudio();
+    this.ttsPlaying = false;
+    this.playbackEndsAt = 0;
+  }
+
   private async speak(text: string, sink: MediaStreamSink): Promise<void> {
     const { voiceSettings, segments: parsedSegments } = parseDelivery(text);
     // C1, found live on a real call, source-confirmed: a turn's ENTIRE
@@ -1293,7 +1492,7 @@ export class CallSessionOrchestrator {
           break;
         }
         if (segment.pauseBeforeMs > 0) {
-          sink.sendAudio(silenceBuffer(segment.pauseBeforeMs));
+          this.recordSentAudio(sink, silenceBuffer(segment.pauseBeforeMs));
         }
         for await (const chunk of this.tts.synthesize(
           segment.text,
@@ -1307,7 +1506,7 @@ export class CallSessionOrchestrator {
             firstChunkAt = Date.now();
           }
           chunkCount += 1;
-          sink.sendAudio(chunk);
+          this.recordSentAudio(sink, chunk);
         }
       }
     } catch (error) {
@@ -1361,6 +1560,10 @@ export class CallSessionOrchestrator {
         "We're sorry, we're unable to take your call right now. Please try again shortly.",
         sink,
       );
+      const apologyWait = this.millisUntilPlaybackEnds();
+      if (apologyWait > 0) {
+        await sleep(apologyWait);
+      }
     } finally {
       this.ended = true;
       sink.close();

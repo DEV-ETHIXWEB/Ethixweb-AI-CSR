@@ -12,6 +12,7 @@ import { GetBusinessHoursHandler } from "./application/handlers/get-business-hou
 import { GetServiceAreasHandler } from "./application/handlers/get-service-areas.handler";
 import { LookupPreviousCallsHandler } from "./application/handlers/lookup-previous-calls.handler";
 import { SearchCustomerHandler } from "./application/handlers/search-customer.handler";
+import { TransferToHumanHandler } from "./application/handlers/transfer-to-human.handler";
 import { UpdateLeadHandler } from "./application/handlers/update-lead.handler";
 import { ToolRegistrar } from "./application/tool-registrar";
 import { ToolRegistry } from "./application/tool-registry";
@@ -38,6 +39,7 @@ import { RedisToolAuditLogAdapter } from "./infrastructure/redis-tool-audit-log.
     GetServiceAreasHandler,
     EscalateEmergencyHandler,
     LookupPreviousCallsHandler,
+    TransferToHumanHandler,
   ],
   // CORE_API_CLIENT exported for the identical reason IDEMPOTENCY_STORE
   // already is (see that export's own history) — the production-blocker

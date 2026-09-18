@@ -1659,6 +1659,61 @@ describe("HandleTurnUseCase", () => {
   });
 
   /**
+   * The non-emergency counterpart to the two escalation tests above — see
+   * TransferToHumanUseCase's own comment (core-api) for why this is a
+   * separate tool/signal rather than a variant of emergency escalation.
+   */
+  it("surfaces humanTransfer on the result when transferToHuman succeeds", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "One sec, let me get you over to the team." },
+        {
+          type: "tool_call",
+          toolCall: {
+            id: "call-1",
+            name: "transferToHuman",
+            arguments: { reason: "caller_requested", summary: "Asked for a human directly." },
+          },
+        },
+        { type: "done", stopReason: "tool_use" },
+      ],
+    ];
+    const transferHandler = {
+      execute: jest.fn().mockResolvedValue({ transferDestination: "+15559876543" }),
+    };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "transferToHuman", handler: transferHandler }],
+    });
+
+    const result = await useCase.execute(
+      baseCommand({ transcript: "can I talk to a real person", allowedTools: ["transferToHuman"] }),
+    );
+
+    expect(result.humanTransfer).toEqual({
+      reason: "caller_requested",
+      transferDestination: "+15559876543",
+    });
+    // The single most important thing this signal has to get right: a
+    // real Twilio transfer takes over the whole call, so the model must
+    // never be given a SECOND completion pass to add more text after the
+    // transitional line above — found live in QA, a second pass invented
+    // detail about the transfer's outcome ("I'm not able to get someone
+    // on the line right now") from a tool result that said no such thing.
+    // Only one scripted response exists above; if the loop incorrectly
+    // ran a second completion, this would either throw (index out of
+    // bounds handled by FakeAiProvider re-using the last response) or
+    // silently double the request count — asserting the exact count is
+    // the direct, unambiguous check.
+    expect(aiProvider.requests).toHaveLength(1);
+    expect(result.responseText.trim()).toBe("One sec, let me get you over to the team.");
+  });
+
+  /**
    * Regression coverage for the most serious live finding of the whole
    * scenario battery: running the SAME unambiguous "pipe burst ...
    * flooding fast" description 10 times against the real model, with the
@@ -1736,6 +1791,272 @@ describe("HandleTurnUseCase", () => {
    * escalateEmergency tool-call message old enough, that this turn's own
    * `compressMessages` call drops it before the model ever runs.
    */
+  describe("backstop tools no longer force a second spoken reply (calls d2b845c4 / e41dd948)", () => {
+    it("runs a non-emergency backstop but does NOT speak a second time: one completion, one reply", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          { type: "text_delta", text: "I'm doing well, thanks for asking. How's your day going?" },
+          { type: "done", stopReason: "end_turn" },
+        ],
+        [
+          { type: "text_delta", text: "Got it, I've got you in the system. What's going on?" },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const escalateHandler = {
+        execute: jest.fn().mockResolvedValue({ isEmergency: false, severity: "routine", action: "none" }),
+      };
+      const { useCase } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "escalateEmergency", handler: escalateHandler }],
+      });
+
+      const result = await useCase.execute(
+        baseCommand({ transcript: "hi grace how are you", allowedTools: ["escalateEmergency"] }),
+      );
+
+      // The safety check still ran...
+      expect(escalateHandler.execute).toHaveBeenCalledTimes(1);
+      expect(result.toolCallsExecuted).toEqual(["escalateEmergency"]);
+      // ...but the model was not made to talk again about a non-result.
+      expect(aiProvider.requests).toHaveLength(1);
+      expect(result.responseText).toBe("I'm doing well, thanks for asking. How's your day going?");
+      expect(result.escalation).toBeUndefined();
+      const saved = await repository.findById("tenant-1", baseConversation().id);
+      expect(saved?.emergencyEverChecked).toBe(true);
+    });
+
+    it("REAL-CALL REGRESSION 9ecc6846: still continues when the first pass only acknowledged, so the conversation never stalls", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          { type: "text_delta", text: "You're right, I've got it. Sorry about that." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+        [
+          { type: "text_delta", text: "What's the address where you need the work done?" },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const escalateHandler = {
+        execute: jest.fn().mockResolvedValue({ isEmergency: false, severity: "routine", action: "none" }),
+      };
+      const { useCase } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "escalateEmergency", handler: escalateHandler }],
+      });
+
+      const result = await useCase.execute(
+        baseCommand({ transcript: "i'm akash not grace", allowedTools: ["escalateEmergency"] }),
+      );
+
+      expect(aiProvider.requests).toHaveLength(2);
+      expect(result.responseText).toContain("What's the address");
+    });
+
+    it("PRE-DEPLOY REGRESSION: never makes Grace speak again after she said goodbye to a caller signing off", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          { type: "text_delta", text: "No problem, talk soon!" },
+          { type: "done", stopReason: "end_turn" },
+        ],
+        [
+          { type: "text_delta", text: "The caller has said goodbye and ended the call. As instructed, I let them go." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const escalateHandler = {
+        execute: jest.fn().mockResolvedValue({ isEmergency: false, severity: "routine", action: "none" }),
+      };
+      const { useCase } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "escalateEmergency", handler: escalateHandler }],
+      });
+
+      const result = await useCase.execute(
+        baseCommand({ transcript: "Never mind, I'll call back later.", allowedTools: ["escalateEmergency"] }),
+      );
+
+      expect(aiProvider.requests).toHaveLength(1);
+      expect(result.responseText).toBe("No problem, talk soon!");
+    });
+
+    it("STILL speaks again when the backstop finds a real emergency, so the caller hears the escalation", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          { type: "text_delta", text: "Okay, let's get that handled." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+        [
+          { type: "text_delta", text: "I'm getting you connected to someone right now." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const escalateHandler = {
+        execute: jest.fn().mockResolvedValue({
+          isEmergency: true,
+          severity: "critical",
+          action: "forward_call",
+          transferDestination: "+15559876543",
+        }),
+      };
+      const { useCase } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "escalateEmergency", handler: escalateHandler }],
+      });
+
+      const result = await useCase.execute(
+        baseCommand({ transcript: "i smell gas in the basement", allowedTools: ["escalateEmergency"] }),
+      );
+
+      expect(aiProvider.requests).toHaveLength(2);
+      expect(result.escalation?.action).toBe("forward_call");
+      expect(result.responseText).toBe(
+        "Okay, let's get that handled. I'm getting you connected to someone right now.",
+      );
+    });
+
+    it("STILL speaks again when the model said nothing before the backstop, so the caller is never left in silence", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [{ type: "done", stopReason: "end_turn" }],
+        [
+          { type: "text_delta", text: "What's going on with the plumbing?" },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const escalateHandler = {
+        execute: jest.fn().mockResolvedValue({ isEmergency: false, severity: "routine", action: "none" }),
+      };
+      const { useCase } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "escalateEmergency", handler: escalateHandler }],
+      });
+
+      const result = await useCase.execute(
+        baseCommand({ transcript: "hello", allowedTools: ["escalateEmergency"] }),
+      );
+
+      expect(aiProvider.requests).toHaveLength(2);
+      expect(result.responseText).toBe("What's going on with the plumbing?");
+    });
+
+    it("does not ask a second question after a lookup the MODEL called right after already asking one", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          { type: "text_delta", text: "Is it the same issue, or something different this time?" },
+          { type: "tool_call", toolCall: { id: "t1", name: "lookupPreviousCalls", arguments: {} } },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [
+          { type: "text_delta", text: "So what's going on with it now?" },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const lookupHandler = { execute: jest.fn().mockResolvedValue({ calls: [] }) };
+      const escalateHandler = {
+        execute: jest.fn().mockResolvedValue({ isEmergency: false, severity: "routine", action: "none" }),
+      };
+      const { useCase } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [
+          { name: "lookupPreviousCalls", handler: lookupHandler },
+          { name: "escalateEmergency", handler: escalateHandler },
+        ],
+      });
+
+      const result = await useCase.execute(
+        baseCommand({ transcript: "it's akash, my disposal is jammed again", allowedTools: ["lookupPreviousCalls", "escalateEmergency"] }),
+      );
+
+      expect(lookupHandler.execute).toHaveBeenCalledTimes(1);
+      expect(result.responseText).toBe("Is it the same issue, or something different this time?");
+    });
+
+    it("STILL speaks again after a coverage lookup, because the caller is waiting to hear the answer", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          { type: "text_delta", text: "What's the zip code there?" },
+          { type: "tool_call", toolCall: { id: "t1", name: "getServiceAreas", arguments: { zip: "98032" } } },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [
+          { type: "text_delta", text: "Good news, we cover Kent." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const serviceHandler = { execute: jest.fn().mockResolvedValue({ inServiceArea: true }) };
+      const { useCase } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "getServiceAreas", handler: serviceHandler }],
+      });
+
+      await useCase.execute(baseCommand({ transcript: "do you cover kent", allowedTools: ["getServiceAreas"] }));
+
+      expect(aiProvider.requests).toHaveLength(2);
+    });
+
+    it("still loops for a tool the MODEL asked for, since it is waiting on that result", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          { type: "text_delta", text: "Let me check that." },
+          {
+            type: "tool_call",
+            toolCall: { id: "t1", name: "escalateEmergency", arguments: { description: "leak" } },
+          },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [
+          { type: "text_delta", text: "Where's the leak coming from?" },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const escalateHandler = {
+        execute: jest.fn().mockResolvedValue({ isEmergency: false, severity: "routine", action: "none" }),
+      };
+      const { useCase } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "escalateEmergency", handler: escalateHandler }],
+      });
+
+      await useCase.execute(
+        baseCommand({ transcript: "my sink is leaking", allowedTools: ["escalateEmergency"] }),
+      );
+
+      expect(aiProvider.requests).toHaveLength(2);
+    });
+  });
+
   it("does NOT re-fire the escalateEmergency backstop after compaction has dropped the earlier call's tool-call message", async () => {
     const repository = new FakeConversationRepository();
     const oldMessages: Conversation["messages"] = [
@@ -2742,6 +3063,43 @@ describe("HandleTurnUseCase", () => {
       const result = await useCase.execute(command);
       expect(result.responseText).toBe("hi");
       expect(aiProvider.requests).toHaveLength(1);
+    });
+  });
+
+  describe("deterministic service-area answers from the business's approved ZIP list", () => {
+    const zipPrompt =
+      "[PLATFORM BASE]\nBe helpful.\n\n[BUSINESS OVERRIDE]\nRelevant business knowledge:\n" +
+      "- [service_area] Cities and counties served: CONFIRMED SERVED ZIP CODES: 98001, 98002, 98032, 98101, 98402.";
+
+    async function sentCallerMessage(transcript: string): Promise<string> {
+      const repository = new FakeConversationRepository();
+      repository.seed({ ...baseConversation(), systemPrompt: zipPrompt });
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          { type: "text_delta", text: "Got it. What's the address?" },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const { useCase } = buildUseCase({ aiProvider, repository });
+      await useCase.execute(baseCommand({ transcript, allowedTools: [] }));
+      const callerMessages = (aiProvider.requests[0]?.messages ?? []).filter((m) => m.role === "user");
+      return String(callerMessages[callerMessages.length - 1]?.content ?? "");
+    }
+
+    it("REAL QA FAILURE: tells the model Carnation's ZIP IS covered, so she cannot turn the caller away", async () => {
+      const content = await sentCallerMessage("I'm at 98014 out in Carnation, my water heater is leaking.");
+      expect(content).toContain("zip 98014 IS within the service area");
+    });
+
+    it("tells the model a clearly out-of-area ZIP is not covered, when the caller called it a zip", async () => {
+      const content = await sentCallerMessage("my zip code is 90210");
+      expect(content).toContain("zip 90210 is NOT within the service area");
+    });
+
+    it("adds NO coverage note for a street address, so a house number can never trigger a refusal", async () => {
+      const content = await sentCallerMessage("it's 13005 SE 245th Street in Kent");
+      expect(content).not.toContain("service area");
     });
   });
 });

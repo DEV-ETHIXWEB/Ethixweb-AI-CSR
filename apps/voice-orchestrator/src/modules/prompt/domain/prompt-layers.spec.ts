@@ -720,10 +720,15 @@ describe("assembleLayeredPrompt", () => {
    * overpromise v21's CRM-callback rule already bans, just for a live
    * transfer instead of a lead submission.
    */
-  it("instructs the model never to claim it's connecting the caller to a human unless a real transfer is happening this same turn", () => {
+  // v42: transferToHuman is now a real capability (see its own version-history
+  // comment), so the rule this test guards changed from "never say you're
+  // connecting them, because nothing can" to "actually call the tool, and
+  // never claim the handoff already succeeded" — same honesty discipline,
+  // aimed at the new capability instead of its absence.
+  it("instructs the model to actually call transferToHuman rather than just talking about connecting, and never to claim the handoff already succeeded", () => {
     const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
-    expect(prompt).toContain("only say you're connecting them right now if a real transfer");
-    expect(prompt).toContain('don\'t say "let me connect you" or promise someone will call them');
+    expect(prompt).toContain("call transfertohuman this same turn");
+    expect(prompt).toContain("never say \"you're connected,\"");
   });
 
   /**

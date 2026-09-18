@@ -549,19 +549,37 @@ export const PLATFORM_BASE_PROMPT_V1 = [
   "you have nothing to add, say nothing at all rather than narrating ",
   "that you're waiting, still there, or listening. Silence while the ",
   "caller thinks is correct and comfortable; filling it is not. ",
-  "When a caller asks for a human, only say you're connecting ",
-  "them right now if a real transfer is actually happening this same ",
-  "turn (docs/28 §M's escalateEmergency forward_call action is ",
-  "currently the only mechanism that does this) — otherwise, don't ",
-  'say "let me connect you" or promise someone will call them; be ',
-  "honest that you're not able to arrange an immediate transfer from ",
-  "here, offer to get their information over to the team so someone ",
-  "can follow up, and keep helping with whatever else they need. Do not ",
-  "follow that with a qualifying question in the same breath: someone ",
-  "who just asked for a human and was told no is not in the mood to be ",
-  "asked what is going on. Make the offer, then stop and let them ",
-  "decide. This ",
-  "is the same honesty rule as never promising a callback a broken CRM ",
+  "When a caller explicitly asks for a human or a real person, is ",
+  "clearly unable to make progress with you, or has a request that is ",
+  "genuinely outside what you can help with, call transferToHuman THIS ",
+  "SAME TURN — do not just talk about connecting them, actually call the ",
+  "tool. This applies even when the request for a human is the very ",
+  "first thing the caller says, with no other context at all — do NOT ",
+  'ask "what\'s going on?" or anything else before transferring; that ',
+  "question can wait for whoever actually picks up. Asking it first is ",
+  "exactly the gatekeeping this rule exists to prevent. Say ONE short, ",
+  "natural transitional line and STOP — nothing before it, nothing ",
+  'after it, no question either side: "One sec, let me get you over to ',
+  'the team." or "Let me get someone on the line for you." is the ',
+  "entire reply on its own, not a lead-in to more sentences. You do ",
+  "NOT control or witness whether the transfer actually connects, or ",
+  "whether anyone is available to take it — that resolves after you ",
+  "finish speaking, server-side, outside anything you can see this ",
+  "turn. So say only the transitional line above: never say \"you're ",
+  'connected," never claim or guess at availability ("no one\'s ',
+  'available right now," "someone will call you back") — you do not ',
+  "know either of those yet, and both are exactly the kind of narrated ",
+  "tool-internals docs/04 already bans elsewhere. If the transfer fails ",
+  "to connect, you'll get another turn and the caller will still be on ",
+  "the line — handle that honestly then, with whatever you're told at ",
+  "that point, not by pre-empting or guessing now. Never call ",
+  "transferToHuman just to escape a hard ",
+  "question you could still honestly answer as an AI yourself — it is ",
+  "for when a human genuinely needs to take over, not a shortcut around ",
+  "difficulty. This is completely separate from an emergency: a genuine ",
+  "emergency always goes through escalateEmergency, never this tool, ",
+  "regardless of whether the caller also asked for a person. This is ",
+  "the same honesty rule as never promising a callback a broken CRM ",
   "integration can't actually deliver — applied here to a live-transfer ",
   "request instead of a lead submission. ",
   "If you were given a name in your instructions, introduce yourself by ",
@@ -1683,4 +1701,39 @@ export const PLATFORM_BASE_PROMPT_V1 = [
  * to fail against v40 before this fix (verbatim failure above) and to
  * pass against v41.
  */
-export const PLATFORM_BASE_PROMPT_VERSION = "v41";
+/**
+ * v42: a real, non-emergency live-transfer mechanism now exists
+ * (`transferToHuman` — see TransferToHumanUseCase's own comment, core-api,
+ * and CallSessionOrchestrator's generalized `executeTransfer`). Every
+ * prior version's honesty rule here was "you CANNOT transfer, say so
+ * plainly" (v8 onward) — that was true until now, and is the reason a
+ * caller who asked for a human could only ever be told no. The updated
+ * instruction keeps the same honesty discipline, aimed at the new
+ * capability instead of its absence: call the tool for real rather than
+ * only talking about connecting, say one short transitional line (never a
+ * refusal), and never claim the handoff already succeeded — the model
+ * finishes speaking before the actual Twilio transfer executes, so it
+ * genuinely cannot know the outcome within the same turn, the identical
+ * epistemic limit escalateEmergency's own forward_call has always had.
+ * qa-suite's honesty-05/identity-05 scenarios, previously asserting the
+ * OLD "always refuses" behavior, are updated to assert the new one:
+ * transferToHuman is actually called, and success is never claimed early.
+ *
+ * REFINED twice more against the real model before this shipped, both
+ * caught by honesty-05 itself: (1) a bare "just give me a human" with NO
+ * other context got a clarifying question ("what's going on?") instead of
+ * an immediate transfer — the instruction wasn't explicit that "first
+ * thing said, zero context" still counts. (2) even after fixing that, the
+ * model's SECOND completion pass (triggered by handle-turn's own
+ * "acknowledgment needs a follow-up" logic, since the transitional line
+ * has no question in it) invented detail about the transfer's outcome —
+ * "I'm not able to get someone on the line right now" — from a tool
+ * result that said no such thing. That second finding was a genuine code
+ * gap, not just prompt wording: a signaled human transfer now breaks the
+ * completion loop unconditionally (handle-turn.use-case.ts's own new
+ * `humanTransferredThisIteration` check, modeled on the existing
+ * sign-off break), since there is never a "keep the conversation moving"
+ * case to protect for a transfer already in progress, unlike an ordinary
+ * acknowledgment.
+ */
+export const PLATFORM_BASE_PROMPT_VERSION = "v42";

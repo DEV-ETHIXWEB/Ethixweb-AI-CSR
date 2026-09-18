@@ -77,6 +77,14 @@ export interface TurnResult {
         transferDestination: string | null;
       }
     | undefined;
+  /** The non-emergency counterpart to `escalation` — present iff transferToHuman fired this turn. Always this runtime's cue to execute the actual transfer when present (unlike `escalation`, there's no "checked but not urgent" outcome). */
+  humanTransfer?:
+    | {
+        reason: string;
+        /** Same resolution/fallback contract as `escalation.transferDestination` above. */
+        transferDestination: string | null;
+      }
+    | undefined;
 }
 
 export interface InterruptRequest {

@@ -101,12 +101,12 @@ export const envSchema = z.object({
   /** Required (checked below, not by the field type alone) when AI_RECEPTIONIST_ENABLED=false — the E.164 number/queue every inbound call is unconditionally forwarded to instead. */
   HUMAN_FALLBACK_NUMBER: z.string().optional(),
   /**
-   * CallSessionOrchestrator.executeEmergencyTransfer's destination when
+   * CallSessionOrchestrator.executeTransfer's destination when
    * `escalateEmergency` signals `action: "forward_call"` — a real caller
    * mid-emergency (docs' own example: a gas leak) whom the model has
    * already decided needs a human RIGHT NOW. Required (checked below, not
    * by the field type alone) whenever AI_RECEPTIONIST_ENABLED is true,
-   * falling back to HUMAN_FALLBACK_NUMBER if unset (same executeEmergencyTransfer
+   * falling back to HUMAN_FALLBACK_NUMBER if unset (same executeTransfer
    * comment) — found live, not hypothetical: this var was completely absent
    * from this schema (read raw via `process.env`, bypassing validation
    * entirely) and UNSET in this repo's own local .env, meaning the service

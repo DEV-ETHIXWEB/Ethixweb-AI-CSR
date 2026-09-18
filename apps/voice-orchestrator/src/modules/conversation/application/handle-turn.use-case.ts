@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { classifyZip, coveredZipsFromPrompt, detectServiceAreaFromTranscript } from "../domain/service-area";
 import { Inject, Injectable } from "@nestjs/common";
 import type { IdempotencyStore, StructuredLogger } from "@ethixweb/shared-kernel";
 import { APP_LOGGER } from "../../../shared/observability/app-logger.module";
@@ -68,6 +69,16 @@ export interface HandleTurnResult {
    * outcome, not an error condition.
    */
   escalation?: { severity: string; action: string; transferDestination: string | null };
+  /**
+   * Present iff transferToHuman succeeded this turn — the non-emergency
+   * counterpart to `escalation` above. Always a signal to execute a real
+   * transfer when present (unlike `escalation`, there's no "checked but
+   * not urgent" outcome to filter on — the model only calls this tool when
+   * it has already decided a human handoff is warranted). `transferDestination`
+   * absent/null follows the same degrade-to-static-fallback contract as
+   * `escalation.transferDestination` above.
+   */
+  humanTransfer?: { reason: string; transferDestination: string | null };
 }
 
 /**
@@ -376,6 +387,18 @@ export class HandleTurnUseCase {
       // that is — that's exactly where the real false promise was said.
       annotatedTranscript = annotateCrmUnavailable(annotatedTranscript);
     }
+    // A ZIP the caller just said is checked against the business's own
+    // approved list HERE, deterministically, and handed to the model as an
+    // already-confirmed fact through the existing annotation below. See
+    // service-area.ts for why coverage cannot be left to the model.
+    const coveredZips = coveredZipsFromPrompt(conversation.systemPrompt);
+    const spokenZip = detectServiceAreaFromTranscript(command.transcript, coveredZips);
+    if (spokenZip) {
+      conversation.lastServiceAreaCheck = {
+        zip: spokenZip.zip,
+        inServiceArea: spokenZip.verdict !== "outside",
+      };
+    }
     if (conversation.lastServiceAreaCheck) {
       // H2: same "inject every remaining turn" reliability rationale as
       // annotateCrmUnavailable above — the raw getServiceAreas tool
@@ -440,6 +463,7 @@ export class HandleTurnUseCase {
     let interrupted = false;
     let escalation:
       { severity: string; action: string; transferDestination: string | null } | undefined;
+    let humanTransfer: { reason: string; transferDestination: string | null } | undefined;
 
     // Voice-pipeline latency investigation (real live reports of 30-40s+
     // perceived response time): this loop can run the LLM completion
@@ -503,6 +527,10 @@ export class HandleTurnUseCase {
       // case is a real caller-ID-unavailable scenario, not a bug this
       // backstop should paper over.
       let toolCalls = turn.toolCalls;
+      // True when every tool about to run was injected by a backstop below
+      // rather than requested by the model. See the early `break` after
+      // the tool loop for why that distinction matters.
+      let ranOnlyBackstops = false;
       if (turn.toolCalls.length === 0) {
         const backstops: AiToolCallRequest[] = [];
         // Gated on `!turn.interrupted` — unlike escalateEmergency's own
@@ -568,6 +596,7 @@ export class HandleTurnUseCase {
         }
         if (backstops.length > 0) {
           toolCalls = backstops;
+          ranOnlyBackstops = true;
         }
       }
 
@@ -589,6 +618,8 @@ export class HandleTurnUseCase {
       // for why the honesty-rule injection has to wait until every tool
       // result this iteration has already been pushed.
       let crmJustBecameUnavailable = false;
+      let escalatedThisIteration = false;
+      let humanTransferredThisIteration = false;
       for (const toolCall of toolCalls) {
         toolCallsExecuted.push(toolCall.name);
         if (toolCall.name === "escalateEmergency") {
@@ -610,11 +641,22 @@ export class HandleTurnUseCase {
         if (toolCall.name === "getBusinessHours") {
           conversation.businessHoursChecked = true;
         }
-        const { output, escalation: toolEscalation } = await this.runTool(
-          conversation,
-          toolCall,
-          command.allowedTools,
-        );
+        const ran = await this.runTool(conversation, toolCall, command.allowedTools);
+        let output = ran.output;
+        const toolEscalation = ran.escalation;
+        const toolHumanTransfer = ran.humanTransfer;
+        // getServiceAreas has no real backing implementation and always
+        // answers true. When this business has an approved ZIP list, its
+        // answer comes from that list instead, matching the spoken-ZIP check.
+        if (toolCall.name === "getServiceAreas") {
+          const askedZip =
+            typeof toolCall.arguments["zip"] === "string" ? toolCall.arguments["zip"].trim() : "";
+          const verdict = classifyZip(askedZip, coveredZips);
+          if (verdict !== null) {
+            output = { inServiceArea: verdict !== "outside" };
+            conversation.lastServiceAreaCheck = { zip: askedZip, inServiceArea: verdict !== "outside" };
+          }
+        }
         if (
           (toolCall.name === "createCustomer" || toolCall.name === "createLead") &&
           isCrmUnavailableError(output) &&
@@ -633,6 +675,11 @@ export class HandleTurnUseCase {
         // deterministic rule beats an arbitrary first/last pick left unstated.
         if (toolEscalation) {
           escalation = toolEscalation;
+          escalatedThisIteration = true;
+        }
+        if (toolHumanTransfer) {
+          humanTransfer = toolHumanTransfer;
+          humanTransferredThisIteration = true;
         }
       }
       if (crmJustBecameUnavailable) {
@@ -680,6 +727,87 @@ export class HandleTurnUseCase {
       if (turn.interrupted) {
         break;
       }
+      // FOUND LIVE, and it is the single largest source of both complaints
+      // on calls d2b845c4 (the client, "still bad lag, makes it tough to
+      // interact") and e41dd948. When the model finishes a COMPLETE spoken
+      // reply without calling a tool, the backstops above inject
+      // searchCustomer/escalateEmergency, run them, and the loop then went
+      // round again: a whole second LLM completion whose text was APPENDED
+      // to what the caller had already heard. That second pass is where
+      // "I'm doing well, thanks for asking, how's your day going? Got it,
+      // I've got you in the system. What's going on?" came from. One turn,
+      // two replies, two questions, and a full extra round trip of latency.
+      //
+      // The backstop still ALWAYS runs, so the safety guarantee it exists
+      // for is untouched: the check happens, its result lands in history
+      // for the model to use on the very next caller turn, and flags such
+      // as emergencyEverChecked are set exactly as before. What changes is
+      // only whether the model is forced to speak a SECOND time about it
+      // right now. It is, still, whenever that matters:
+      //   - a real emergency came back (escalatedThisIteration), so the
+      //     model must react now and the transfer signal must fire; or
+      //   - the model produced no spoken text at all, so the caller would
+      //     otherwise hear nothing.
+      // Model-requested tools are unaffected: those still loop, because
+      // there the model is waiting on a result it asked for.
+      //
+      // REFINED after call 9ecc6846 ("whenever she asks something and I
+      // reply, she's stopping the conversation"). Skipping the second pass
+      // is only safe when the first one already handed the conversation
+      // back to the caller with a question. When it was only an
+      // acknowledgment ("You're right, I've got it, Akash. Sorry about
+      // that."), breaking here left Grace with nothing to ask, and the call
+      // stalled into silence. In that case the second pass is what keeps
+      // the conversation moving, and it cannot double-ask because the first
+      // pass asked nothing.
+      const firstPassAskedSomething = /\?/.test(turn.text);
+      //
+      // EXTENDED after the v40 regression sweep: the same double reply happens
+      // when the MODEL calls a lookup itself right after asking its question
+      // ("Is it the same issue, or something different this time? So what's
+      // going on with it now?"), and those glued-together passes were also
+      // behind most replies running past 40 words. A lookup that finds no
+      // emergency gives the caller nothing new to hear right now; its result
+      // is in history for the model's very next turn.
+      const ranOnlySilentLookups =
+        ranOnlyBackstops || toolCalls.every((call) => SILENT_LOOKUP_TOOLS.has(call.name));
+      if (ranOnlySilentLookups && firstPassAskedSomething && !escalatedThisIteration) {
+        break;
+      }
+      // FOUND in the pre-deploy regression sweep, and it would have been
+      // heard on a real call: to "Never mind, I'll call back later" the first
+      // pass correctly said "No problem, talk soon!" and asked nothing, which
+      // is right for a goodbye. The continuation above then ran a second pass
+      // with nothing left to say, and it narrated its own instructions aloud
+      // ("The caller has said goodbye and ended the call. As instructed, I
+      // let them go..."). A closing line is supposed to have no question, so
+      // a caller signing off is never a reason to make Grace speak again.
+      if (
+        ranOnlySilentLookups &&
+        !escalatedThisIteration &&
+        turn.text.trim().length > 0 &&
+        looksLikeSignOff(command.transcript)
+      ) {
+        break;
+      }
+      // A signaled human transfer is, like a sign-off, a moment with
+      // nothing more to add: the transitional line the model just spoke
+      // IS the whole reply, and voice-runtime waits for every queued word
+      // to finish playing before it executes the actual transfer — so any
+      // further text here only delays a caller who explicitly asked to
+      // get off the AI, and risks the model inventing detail about an
+      // outcome it cannot see yet (found live in QA: a second pass
+      // speculated "I'm not able to get someone on the line right now"
+      // from a tool result that said no such thing). Unlike the
+      // escalateEmergency branch above, this is unconditional on
+      // firstPassAskedSomething — transferToHuman is never called as a
+      // silent backstop, only when the model has already decided a
+      // handoff is warranted, so there is no "keep the conversation
+      // moving" case to protect here the way there is for an ordinary
+      // acknowledgment.
+      if (humanTransferredThisIteration && turn.text.trim().length > 0) {
+        break;
+      }
     }
 
     if (responseText) {
@@ -725,6 +853,7 @@ export class HandleTurnUseCase {
       interrupted,
       state: conversation.state,
       ...(escalation ? { escalation } : {}),
+      ...(humanTransfer ? { humanTransfer } : {}),
     };
   }
 
@@ -1041,6 +1170,7 @@ export class HandleTurnUseCase {
   ): Promise<{
     output: unknown;
     escalation?: { severity: string; action: string; transferDestination: string | null };
+    humanTransfer?: { reason: string; transferDestination: string | null };
   }> {
     const at = new Date().toISOString();
     await this.eventBus.publish({
@@ -1083,13 +1213,17 @@ export class HandleTurnUseCase {
       });
 
       if (result.status === "success") {
-        const escalation = await this.reactToToolSuccess(
+        const signal = await this.reactToToolSuccess(
           conversation,
           toolCall.name,
           result.output,
           toolCall.arguments,
         );
-        return { output: result.output, ...(escalation ? { escalation } : {}) };
+        return {
+          output: result.output,
+          ...(signal?.escalation ? { escalation: signal.escalation } : {}),
+          ...(signal?.humanTransfer ? { humanTransfer: signal.humanTransfer } : {}),
+        };
       }
       return { output: { error: "tool_unavailable", detail: result.reason } };
     } catch (error) {
@@ -1122,7 +1256,13 @@ export class HandleTurnUseCase {
     toolName: string,
     output: unknown,
     toolArguments: Record<string, unknown>,
-  ): Promise<{ severity: string; action: string; transferDestination: string | null } | undefined> {
+  ): Promise<
+    | {
+        escalation?: { severity: string; action: string; transferDestination: string | null };
+        humanTransfer?: { reason: string; transferDestination: string | null };
+      }
+    | undefined
+  > {
     if (
       toolName === "createCustomer" &&
       isRecord(output) &&
@@ -1180,7 +1320,22 @@ export class HandleTurnUseCase {
         action,
         at: new Date().toISOString(),
       });
-      return { severity, action, transferDestination };
+      return { escalation: { severity, action, transferDestination } };
+    }
+
+    // The non-emergency counterpart above — see TransferToHumanUseCase's
+    // own comment (core-api) for why this is a SEPARATE signal from
+    // escalation rather than a variant of it. Fires on every successful
+    // call (unlike escalateEmergency, there's no "not actually urgent"
+    // outcome to filter on: the model only calls this tool when it has
+    // already decided a human handoff is warranted) — the destination
+    // being null just means no on-call target resolved, which
+    // voice-runtime's own static fallback chain already handles.
+    if (toolName === "transferToHuman" && isRecord(output)) {
+      const reason = typeof toolArguments["reason"] === "string" ? toolArguments["reason"] : "unknown";
+      const transferDestination =
+        typeof output["transferDestination"] === "string" ? output["transferDestination"] : null;
+      return { humanTransfer: { reason, transferDestination } };
     }
 
     return undefined;
@@ -1223,6 +1378,7 @@ function appendResponseSegment(existing: string, next: string): string {
  * clause," not derived from a benchmark.
  */
 const MIN_SPEECH_SEGMENT_CHARS = 40;
+
 /**
  * Above this length with no sentence boundary at all (a long
  * comma-separated clause), flush anyway rather than let latency grow
@@ -1317,6 +1473,30 @@ function looksLikeAbbreviation(buffer: string, periodEndIndex: number): boolean 
  * falling back to a live message-history scan for a conversation that
  * predates the field (or any path that sets the flag).
  */
+/**
+ * Tools whose result never needs to be spoken back in the same breath when
+ * nothing urgent comes of it. Deliberately excludes getServiceAreas (a
+ * coverage answer the caller is waiting to hear) and getBusinessHours, and
+ * everything that commits data (createCustomer, createLead, updateLead),
+ * where the model genuinely must react to the outcome.
+ */
+const SILENT_LOOKUP_TOOLS: ReadonlySet<string> = new Set([
+  "searchCustomer",
+  "lookupPreviousCalls",
+  "escalateEmergency",
+]);
+
+/**
+ * Whether the caller is winding the call down. Used only to stop an extra
+ * spoken pass, so a false positive costs at most one follow-up question on
+ * that turn, never a dropped call; ending the call is voice-runtime's job.
+ */
+function looksLikeSignOff(transcript: string): boolean {
+  return /\b(bye|goodbye|good bye|take care|talk (to you )?(soon|later)|call (you )?back|never ?mind|that'?s all|i'?m (all )?set|have a (good|great|nice) (day|one|night)|see (you|ya))\b/i.test(
+    transcript,
+  );
+}
+
 function hasCalledEscalateEmergency(conversation: Conversation): boolean {
   if (conversation.emergencyEverChecked === true) {
     return true;

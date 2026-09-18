@@ -7,7 +7,8 @@ import type { ToolDefinition } from "./tool-definition";
  * is exactly this document" (§1). `sendNotification` (§3.5) is
  * deliberately excluded: docs/04 §3.5 states it explicitly, "not exposed
  * to the LLM as a free-form tool," a deterministic side effect of
- * createLead instead. Eight tools here, not nine.
+ * createLead instead. Eight tools from docs/04, plus `transferToHuman`
+ * (added post-docs, see its own comment below) — nine total.
  *
  * Timeout/retry values are transcribed from each tool's own docs/04 §3.x
  * table where stated. `getServiceAreas` (§3.7) has no documented
@@ -127,6 +128,21 @@ export const EscalateEmergencyInputSchema = z.object({
   detected_keywords: z.array(z.string()).optional(),
 });
 export type EscalateEmergencyInput = z.infer<typeof EscalateEmergencyInputSchema>;
+
+/**
+ * The non-emergency counterpart to escalateEmergency — see
+ * TransferToHumanUseCase's own comment (core-api) for why this exists and
+ * why it's kept separate from emergency escalation rather than merged
+ * into it. `reason` is a closed enum, not free text: it exists for
+ * observability/audit (what kinds of calls actually need a human) and to
+ * keep the model from writing something that reads like a hazard
+ * description into a field escalateEmergency doesn't see.
+ */
+export const TransferToHumanInputSchema = z.object({
+  reason: z.enum(["caller_requested", "cannot_help", "caller_frustrated", "business_workflow"]),
+  summary: z.string().min(1),
+});
+export type TransferToHumanInput = z.infer<typeof TransferToHumanInputSchema>;
 
 export const LookupPreviousCallsInputSchema = z.object({
   customer_id: uuid,
@@ -291,6 +307,38 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
         detected_keywords: { type: "array", items: { type: "string" } },
       },
       required: ["description"],
+    },
+    timeoutMs: 1500,
+    retryPolicy: { maxAttempts: 1 },
+  },
+  {
+    name: "transferToHuman",
+    version: "v1",
+    description:
+      "Transfer the live call to a real team member NOW — the caller leaves this system's control. " +
+      "Use only for a NON-emergency handoff: the caller explicitly asked for a person, is clearly " +
+      "unable to make progress with you, or the situation is genuinely outside what you can help " +
+      "with. Call this THE SAME TURN the caller asks for a human — even if that is the very first " +
+      "thing they say, with zero other context. Do not ask what the problem is first; that question " +
+      "can wait for whoever picks up. Never use this to escape a hard question you could still " +
+      "honestly answer as an AI, and never use this for anything that sounds like an emergency — " +
+      "call escalateEmergency for that instead, which has its own, higher-priority transfer path. " +
+      "This tool only SIGNALS the request; the actual transfer may still fail (no one reachable), so " +
+      "never tell the caller it succeeded until you see the result.",
+    inputSchema: TransferToHumanInputSchema,
+    jsonSchema: {
+      type: "object",
+      properties: {
+        reason: {
+          type: "string",
+          enum: ["caller_requested", "cannot_help", "caller_frustrated", "business_workflow"],
+        },
+        summary: {
+          type: "string",
+          description: "One line for the human who picks up: name/problem/address, whatever is known.",
+        },
+      },
+      required: ["reason", "summary"],
     },
     timeoutMs: 1500,
     retryPolicy: { maxAttempts: 1 },

@@ -11,9 +11,12 @@ import { CurrentPrincipal } from "../../../shared/auth/current-principal.decorat
 import type { AuthPrincipal } from "../../../shared/auth/request-principal";
 import { EscalateEmergencyUseCase } from "../application/escalate-emergency.use-case";
 import { GetBusinessHoursUseCase } from "../application/get-business-hours.use-case";
+import { TransferToHumanUseCase } from "../application/transfer-to-human.use-case";
 import { BusinessHoursResponseDto } from "./dto/business-hours-response.dto";
 import { EscalateEmergencyResponseDto } from "./dto/escalate-emergency-response.dto";
 import { EscalateEmergencyToolDto } from "./dto/escalate-emergency-tool.dto";
+import { TransferToHumanResponseDto } from "./dto/transfer-to-human-response.dto";
+import { TransferToHumanToolDto } from "./dto/transfer-to-human-tool.dto";
 
 /**
  * The tool broker's execution surface for docs/04 §3.6 (`getBusinessHours`)
@@ -32,6 +35,7 @@ export class EmergencyRulesToolController {
   constructor(
     private readonly escalateEmergencyUseCase: EscalateEmergencyUseCase,
     private readonly getBusinessHoursUseCase: GetBusinessHoursUseCase,
+    private readonly transferToHumanUseCase: TransferToHumanUseCase,
   ) {}
 
   @Post("escalate")
@@ -51,6 +55,25 @@ export class EmergencyRulesToolController {
       detectedKeywords: dto.detectedKeywords,
     });
     return EscalateEmergencyResponseDto.fromDomain(result);
+  }
+
+  @Post("transfer-to-human")
+  @ApiOperation({
+    summary: "docs/04 §3.9 transferToHuman — tool-broker-facing, API-key auth only",
+  })
+  @ApiResponse({ status: 200, type: TransferToHumanResponseDto })
+  async transferToHuman(
+    @CurrentPrincipal() principal: AuthPrincipal,
+    @Body() dto: TransferToHumanToolDto,
+  ): Promise<TransferToHumanResponseDto> {
+    const result = await this.transferToHumanUseCase.execute({
+      tenantId: principal.tenantId,
+      businessId: dto.businessId,
+      callId: dto.callId,
+      reason: dto.reason,
+      summary: dto.summary,
+    });
+    return TransferToHumanResponseDto.fromDomain(result);
   }
 
   @Get("business-hours")

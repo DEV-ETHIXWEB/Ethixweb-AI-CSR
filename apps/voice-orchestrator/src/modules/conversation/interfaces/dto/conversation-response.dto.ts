@@ -79,6 +79,12 @@ export class TurnResultResponseDto {
       'Present iff escalateEmergency succeeded this turn (docs/28 §M). action === "forward_call" is the runtime\'s signal to execute the actual SIP/PSTN transfer — this service never places or transfers calls itself.',
   })
   escalation?: { severity: string; action: string; transferDestination: string | null };
+  @ApiProperty({
+    required: false,
+    description:
+      "Present iff transferToHuman succeeded this turn — the non-emergency counterpart to `escalation`. Always a signal to execute the actual SIP/PSTN transfer when present; this service never places or transfers calls itself.",
+  })
+  humanTransfer?: { reason: string; transferDestination: string | null };
 
   constructor(result: {
     conversationId: string;
@@ -87,6 +93,7 @@ export class TurnResultResponseDto {
     interrupted: boolean;
     state: ConversationState;
     escalation?: { severity: string; action: string; transferDestination: string | null };
+    humanTransfer?: { reason: string; transferDestination: string | null };
   }) {
     this.conversationId = result.conversationId;
     this.responseText = result.responseText;
@@ -95,6 +102,9 @@ export class TurnResultResponseDto {
     this.state = result.state;
     if (result.escalation) {
       this.escalation = result.escalation;
+    }
+    if (result.humanTransfer) {
+      this.humanTransfer = result.humanTransfer;
     }
   }
 }
