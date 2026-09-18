@@ -18,9 +18,13 @@ primary_region = "sjc"   # San Jose — Managed Postgres is not offered in sea, 
 [http_service]
   internal_port = 3001
   force_https = true
+  # Keep one machine warm. With min_machines_running = 0 the whole app
+  # suspended after a few idle minutes and the first person to open the
+  # dashboard paid the resume. The spare machine still suspends when idle,
+  # so this costs one shared-cpu-1x, not two.
   auto_stop_machines = "suspend"
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
 
 [[vm]]
   size = "shared-cpu-1x"
