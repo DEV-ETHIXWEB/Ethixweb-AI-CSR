@@ -5,10 +5,7 @@ import { setSpanAttributes } from "../../../shared/observability/tracing";
 import { ResolveOnCallUseCase } from "./resolve-oncall.use-case";
 
 export type TransferToHumanReason =
-  | "caller_requested"
-  | "cannot_help"
-  | "caller_frustrated"
-  | "business_workflow";
+  "caller_requested" | "cannot_help" | "caller_frustrated" | "business_workflow";
 
 export interface TransferToHumanCommand {
   tenantId: string;

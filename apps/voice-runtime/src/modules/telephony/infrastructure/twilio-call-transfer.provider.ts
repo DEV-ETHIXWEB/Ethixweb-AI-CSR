@@ -56,6 +56,41 @@ export class TwilioCallTransferProvider implements CallTransferProvider {
       throw new Error(`Twilio call-transfer failed (${response.status}): ${text}`);
     }
   }
+
+  /**
+   * `Status=completed` on the same call-modification resource is Twilio's
+   * own documented way to end a live call, and is deliberately used here
+   * INSTEAD of returning `<Hangup/>` TwiML: both end the call, but the
+   * status form cannot be mistaken for new call instructions if Twilio
+   * ever re-requests the URL, and it leaves Twilio's own CallStatus as a
+   * clean `completed`.
+   */
+  async hangUp(callSid: string): Promise<void> {
+    const accountSid = process.env["TWILIO_ACCOUNT_SID"];
+    const authToken = process.env["TWILIO_AUTH_TOKEN"];
+    if (!accountSid || !authToken) {
+      throw new Error("TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN are not configured");
+    }
+
+    const basicAuth = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls/${callSid}.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${basicAuth}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({ Status: "completed" }).toString(),
+        signal: AbortSignal.timeout(TRANSFER_TIMEOUT_MS),
+      },
+    );
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(`Twilio hang-up failed (${response.status}): ${text}`);
+    }
+  }
 }
 
 function escapeXml(value: string): string {

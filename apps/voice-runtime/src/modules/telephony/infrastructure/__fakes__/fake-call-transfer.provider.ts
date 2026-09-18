@@ -12,4 +12,16 @@ export class FakeCallTransferProvider implements CallTransferProvider {
       throw error;
     }
   }
+
+  readonly hangUps: string[] = [];
+  failNextHangUpWith: Error | null = null;
+
+  async hangUp(callSid: string): Promise<void> {
+    this.hangUps.push(callSid);
+    if (this.failNextHangUpWith) {
+      const error = this.failNextHangUpWith;
+      this.failNextHangUpWith = null;
+      throw error;
+    }
+  }
 }

@@ -63,7 +63,7 @@ export const PAUSE_TAG_SILENCE_MS = 450;
 
 /** mu-law 8kHz silence sample value (confirmed against G.711 references: 0xFF encodes the zero-amplitude/idle signal for mu-law), 8 bytes/ms at 8000 samples/sec, 1 byte/sample. */
 const MULAW_SILENCE_BYTE = 0xff;
-const MULAW_BYTES_PER_MS = 8;
+export const MULAW_BYTES_PER_MS = 8;
 
 export function silenceBuffer(ms: number): Buffer {
   return Buffer.alloc(Math.max(0, Math.round(ms * MULAW_BYTES_PER_MS)), MULAW_SILENCE_BYTE);
@@ -163,6 +163,167 @@ function stripAllTags(text: string): string {
     .trim();
 }
 
+/**
+ * Meta-asides: the model narrating its own reasoning as a parenthetical
+ * inside otherwise-speakable text. Found live on a real call (v31) — a
+ * turn went out as: "...or is water coming from under the sink? (Just
+ * continuing naturally with what I asked, once I've got context that this
+ * is a routine repair, not an emergency.)" — and the caller HEARD the
+ * parenthetical, because every existing defense here targets square
+ * brackets only: `stripAllTags`, prompt-layers.ts v14's "never narrate
+ * your own internal process as spoken text" rule, and its illustrating
+ * example "[calling the tool]". Parentheses walked through all three.
+ *
+ * Same reasoning as the C1 guard in call-session-orchestrator.ts's
+ * `speak()`: prompt wording alone has a reliability ceiling, so the real
+ * backstop is deterministic code. The prompt half is tightened in the
+ * same change; this is what makes it non-negotiable.
+ *
+ * WHY THE 3-WORD FLOOR, and not "strip every parenthesis": a spoken
+ * utterance legitimately contains one parenthesized form — a phone area
+ * code, "(206) 895-6963", which this agent reads back to callers digit by
+ * digit on the confirm-the-number path. Blanket stripping would silently
+ * delete the area code from a number being confirmed, turning a
+ * cosmetic bug into a wrong-callback-number bug. A meta-aside is prose
+ * and always runs several words; "(206)" never does. Bounded content
+ * length for the same scan-cost reason `newTagPattern` documents.
+ */
+function stripMetaAsides(text: string): string {
+  return text
+    .replace(/\(([^()]{0,400})\)/g, (whole, inner: string) =>
+      inner.trim().split(/\s+/).filter(Boolean).length >= 3 ? " " : whole,
+    )
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+/**
+ * Self-narration: Grace announcing that she is about to go look something
+ * up, which the caller then waits through for nothing.
+ *
+ * FOUND LIVE on call 6d3893a0 ("Now let me look up your history with us.")
+ * and again across the qa-suite run at prompt v34: "I'll look you up real
+ * quick," "let me pull up your info real quick," "Actually, let me look
+ * you up first," "Let me look into this for you." A lookup is instant and
+ * invisible; the sentence exists only because the model is narrating its
+ * own tool call, and the caller hears it the moment it is written, before
+ * the tool has even run.
+ *
+ * This is the THIRD prompt version to try to stop it by wording alone
+ * (v14, v32, v34), which is exactly the threshold this codebase's own
+ * established pattern treats as "stop arguing with the model and put a
+ * guard in the code" — the same reasoning as the C1 empty-utterance guard
+ * in `speak()` and stripMetaAsides above.
+ *
+ * SCOPED TIGHTLY to announcements of a LOOKUP. Sentences that sound
+ * similar but genuinely tell the caller something are deliberately left
+ * alone: "let me get your information over to the team" (a real action
+ * they care about), "let me make sure I've got that right" (a
+ * confirmation the prompt actively wants). Only a lookup/check verb
+ * triggers removal.
+ */
+function stripSelfNarration(text: string): string {
+  const withoutLeaks = text
+    .split(/(?<=[.?!])\s+/)
+    .filter((sentence) => !INSTRUCTION_LEAK.test(sentence));
+  // Unlike lookup narration below, a reply made ENTIRELY of instruction
+  // narration must not be spoken at all. Returning nothing hands speak() its
+  // existing C1 fallback, a safe short line, instead of reading the model's
+  // instructions to the caller.
+  if (withoutLeaks.length === 0) {
+    return "";
+  }
+  const sentences = withoutLeaks;
+  const kept = sentences
+    .map((sentence) => removeNarrationSpan(sentence))
+    .filter((sentence) => sentence.trim().length > 0);
+  // Never strip the entire utterance away on this rule alone: if narration
+  // was all there was, the words still beat silence on a live call, and
+  // the `speak()` caller has no other content to fall back on.
+  if (kept.length === 0) {
+    return text.trim();
+  }
+  return kept
+    .join(" ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+/**
+ * Removes the narration SPAN from a sentence rather than the clause or the
+ * sentence containing it.
+ *
+ * An earlier version dropped whole clauses, which required the narration to
+ * begin one. The qa-suite run showed it rarely does: "Wait — before I ask
+ * more, let me look up your info real quick.", "A jammed disposal. Let me
+ * look at what we've done before.", "I'll get someone out to you, let me
+ * just check your address." Anchoring to a clause start missed the first
+ * two, and dropping the whole clause would have taken "I'll get someone out
+ * to you" with it in the third. Matching from the narration verb to the end
+ * of the sentence keeps the real content on either side and removes exactly
+ * the announcement.
+ */
+function removeNarrationSpan(sentence: string): string {
+  const cleaned = sentence.replace(SELF_NARRATION, " ");
+  if (cleaned === sentence) {
+    // Nothing matched. Return the sentence EXACTLY as written rather than
+    // normalising punctuation the author chose.
+    return sentence;
+  }
+  const tidied = cleaned
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([.?!,])/g, "$1")
+    .replace(/[,;]\s*([.?!])/g, "$1")
+    .replace(/\s+[—–-]\s*$/, "")
+    .replace(/[,;]\s*$/, "")
+    .trim();
+  // The span regex stops before the sentence's terminator, so a sentence
+  // that was ENTIRELY narration leaves a bare "." behind. Anything with no
+  // letters or digits left in it is not a sentence any more.
+  if (!/[a-z0-9]/i.test(tidied)) {
+    return "";
+  }
+  return /[.?!]$/.test(tidied) ? tidied : `${tidied}.`;
+}
+
+/**
+ * A sentence that describes the call from OUTSIDE it, the model reporting
+ * on its own instructions instead of talking to the person on the line.
+ *
+ * FOUND in the pre-deploy regression sweep, as text that would have been
+ * spoken: "No problem, talk soon! The caller has said goodbye and ended the
+ * call. As instructed, I let them go with a warm closing line and did not
+ * ask any qualifying questions." Grace always speaks TO the caller, so "the
+ * caller" in the third person, or any reference to her instructions, is
+ * never something a real caller should hear. The whole sentence goes, since
+ * none of it was meant for them.
+ */
+const INSTRUCTION_LEAK =
+  /\b(the caller (has|is|was|said|wants|asked|didn'?t|did not|hung|ended)|as instructed|per my instructions|my instructions|i was instructed|following (my|the) (instructions|rules|guidelines)|system prompt)\b/i;
+
+/**
+ * A narration announcement: an opener promising an action ("let me", "I'll",
+ * "I'm going to") followed within the same sentence by a lookup/check verb.
+ * The TAIL is bounded the same way the gap is. "Let me check that for you
+ * — what's your ZIP code?" used to match to the end of the sentence and
+ * swallow the real question with the announcement, which left nothing to
+ * speak and so (by the never-strip-everything guard) silently kept the
+ * announcement instead. Stopping the tail at a dash or semicolon removes
+ * exactly the announcement and leaves the question standing.
+ *
+ * The gap between the two halves deliberately cannot cross a comma,
+ * semicolon or dash: without that, "I'll get someone out to you, let me
+ * just check your address" matched from its very first word and took the
+ * real content with it. The announcement and its verb always sit in the
+ * same clause.
+ *
+ * BOTH halves are required, which is what keeps genuinely informative
+ * sentences ("let me get your information over to the team", "let me make
+ * sure I've got that right") out of its reach.
+ */
+const SELF_NARRATION =
+  /(?:^|[,;]\s*|\s+[—–-]\s*)(?:before\s+(?:we|i)\b[^,.?!]{0,40},\s*)?(?:(?:actually|now|first|okay|alright|so|wait|but|and|then)[,\s]+)*(?:let me(?: just)?|let's|i'?ll|i will|i'?m going to|i am going to|give me (?:a|one) (?:second|moment|sec))\b[^.?!,;—–]*?\b(?:look(?:ing)?\s+(?:you|that|this|it)?\s*up|look\s+(?:at|into)\s+(?:what|this|that|it|your|our|the)|pull(?:ing)?\s+up|check\s+(?:on\s+)?(?:that|if|whether|what|our|the|your|my|a\s+couple|some)|see what we have)[^.?!—–;]*/gi;
+
 function resolveVoiceSettings(raw: string): VoiceDeliverySettings {
   const tagPattern = newTagPattern();
   let match: RegExpExecArray | null;
@@ -193,7 +354,11 @@ function resolveVoiceSettings(raw: string): VoiceDeliverySettings {
   return DEFAULT_VOICE_DELIVERY_SETTINGS;
 }
 
-export function parseDelivery(raw: string): ParsedDelivery {
+export function parseDelivery(rawInput: string): ParsedDelivery {
+  // Meta-asides are removed BEFORE anything else looks at the string, so
+  // every downstream index (`tagPattern.lastIndex`, each `flush` cursor)
+  // is computed against the one string that actually gets spoken.
+  const raw = stripSelfNarration(stripMetaAsides(rawInput));
   const voiceSettings = resolveVoiceSettings(raw);
   const segments: DeliverySegment[] = [];
 

@@ -335,7 +335,8 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
         },
         summary: {
           type: "string",
-          description: "One line for the human who picks up: name/problem/address, whatever is known.",
+          description:
+            "One line for the human who picks up: name/problem/address, whatever is known.",
         },
       },
       required: ["reason", "summary"],

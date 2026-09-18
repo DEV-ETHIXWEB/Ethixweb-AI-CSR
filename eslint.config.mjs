@@ -24,6 +24,16 @@ export default tseslint.config(
       "**/*.mjs",
       "apps/dashboard/.next/**",
       "apps/dashboard/.next-types/**",
+      // Ignored rather than listed in `allowDefaultProject` below:
+      // typescript-eslint caps that list at 8 files matched per project,
+      // and voice-orchestrator's eight measure-*.ts scripts already sit
+      // exactly on that cap, so adding a ninth fails the whole lint run
+      // with "Too many files (>8) have matched the default project."
+      // This is a standalone CLI QA harness, never imported by src and
+      // never compiled into the app, so lint coverage of it buys little;
+      // `pnpm run typecheck` and the suite's own execution are what
+      // actually keep it honest.
+      "apps/voice-orchestrator/scripts/qa-suite.ts",
     ],
   },
   js.configs.recommended,

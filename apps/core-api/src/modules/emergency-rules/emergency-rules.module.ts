@@ -25,6 +25,11 @@ import { EmergencyRulesToolController } from "./interfaces/emergency-rules-tool.
     ResolveOnCallUseCase,
     TransferToHumanUseCase,
   ],
-  exports: [ResolveOnCallUseCase, EscalateEmergencyUseCase, GetBusinessHoursUseCase, TransferToHumanUseCase],
+  exports: [
+    ResolveOnCallUseCase,
+    EscalateEmergencyUseCase,
+    GetBusinessHoursUseCase,
+    TransferToHumanUseCase,
+  ],
 })
 export class EmergencyRulesModule {}

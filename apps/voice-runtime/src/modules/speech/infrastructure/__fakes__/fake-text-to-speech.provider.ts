@@ -17,6 +17,13 @@ export class FakeTextToSpeechProvider implements TextToSpeechProvider {
   chunksPerCall = 3;
   /** Delay (ms) before each chunk — 0 by default so unit tests run instantly; a test can raise this to create a window for an abort signal to fire mid-stream. */
   chunkDelayMs = 0;
+  /**
+   * When set, each chunk is this many bytes of mu-law audio (8 bytes = 1ms)
+   * instead of a tiny text marker. Needed to model the live barge-in bug:
+   * seconds of audio handed over instantly, still playing on the caller's
+   * phone after the provider has finished yielding it.
+   */
+  chunkBytes: number | null = null;
   /** When set, synthesize throws this instead of yielding — simulates ElevenLabs failure. */
   failNextWith: Error | null = null;
 
@@ -42,7 +49,9 @@ export class FakeTextToSpeechProvider implements TextToSpeechProvider {
       if (signal?.aborted) {
         return;
       }
-      yield Buffer.from(`chunk-${i}`);
+      yield this.chunkBytes === null
+        ? Buffer.from(`chunk-${i}`)
+        : Buffer.alloc(this.chunkBytes, 0xff);
     }
   }
 }

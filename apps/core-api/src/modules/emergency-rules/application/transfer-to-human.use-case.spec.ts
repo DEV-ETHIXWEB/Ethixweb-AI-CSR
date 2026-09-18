@@ -63,9 +63,7 @@ describe("TransferToHumanUseCase", () => {
 
   it("resolves to null (not a thrown error) when on-call resolution itself fails — a lookup failure must never block the handoff signal", async () => {
     const onCallRepository = new FakeOnCallRepository();
-    jest
-      .spyOn(onCallRepository, "listRotationsByBusiness")
-      .mockRejectedValue(new Error("db down"));
+    jest.spyOn(onCallRepository, "listRotationsByBusiness").mockRejectedValue(new Error("db down"));
     const useCase = buildUseCase(onCallRepository);
 
     const result = await useCase.execute({

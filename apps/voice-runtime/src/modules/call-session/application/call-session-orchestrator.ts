@@ -31,7 +31,12 @@ import {
   TWILIO_MEDIA_SAMPLE_RATE_HZ,
 } from "../../telephony/domain/twilio-media-stream.types";
 import { isPureBackchannel } from "./backchannel-detector";
-import { MULAW_BYTES_PER_MS, parseDelivery, silenceBuffer, type DeliverySegment } from "./emotional-delivery";
+import {
+  MULAW_BYTES_PER_MS,
+  parseDelivery,
+  silenceBuffer,
+  type DeliverySegment,
+} from "./emotional-delivery";
 import { looksLikeIncompleteFragment } from "./fragment-detector";
 
 /**
@@ -1417,7 +1422,8 @@ export class CallSessionOrchestrator {
    */
   private recordSentAudio(sink: MediaStreamSink, chunk: Buffer): void {
     sink.sendAudio(chunk);
-    this.playbackEndsAt = Math.max(Date.now(), this.playbackEndsAt) + chunk.length / MULAW_BYTES_PER_MS;
+    this.playbackEndsAt =
+      Math.max(Date.now(), this.playbackEndsAt) + chunk.length / MULAW_BYTES_PER_MS;
   }
 
   /** True while the caller can still HEAR Grace, not merely while audio is still being sent. */

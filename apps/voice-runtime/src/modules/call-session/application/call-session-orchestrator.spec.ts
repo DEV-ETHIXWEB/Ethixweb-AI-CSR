@@ -1783,7 +1783,8 @@ describe("CallSessionOrchestrator", () => {
     it("speaks an honest fallback and re-arms the silence check-in when no destination is configured at all — never claims a transfer that didn't happen", async () => {
       delete process.env["HUMAN_FALLBACK_NUMBER"];
       delete process.env["EMERGENCY_TRANSFER_NUMBER"];
-      const { orchestrator, orchestratorClient, stt, callTransfer, tts } = buildOrchestratorUnderTest();
+      const { orchestrator, orchestratorClient, stt, callTransfer, tts } =
+        buildOrchestratorUnderTest();
       const sink = new FakeMediaStreamSink();
       orchestratorClient.turnResponses = [
         {

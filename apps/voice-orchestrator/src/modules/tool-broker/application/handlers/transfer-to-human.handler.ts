@@ -14,9 +14,10 @@ export interface TransferToHumanOutput {
  * a separate signal from emergency escalation rather than a variant of it.
  */
 @Injectable()
-export class TransferToHumanHandler
-  implements ToolHandler<TransferToHumanInput, TransferToHumanOutput>
-{
+export class TransferToHumanHandler implements ToolHandler<
+  TransferToHumanInput,
+  TransferToHumanOutput
+> {
   constructor(@Inject(CORE_API_CLIENT) private readonly coreApiClient: CoreApiClientPort) {}
 
   async execute(

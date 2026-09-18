@@ -105,6 +105,152 @@ describe("parseDelivery", () => {
       DEFAULT_VOICE_DELIVERY_SETTINGS.similarityBoost,
     );
   });
+
+  // v31 regression — the exact turn that shipped to a real caller on call
+  // 515d3539 (2026-09-12). Reproduces before the stripMetaAsides fix.
+  it("REAL CALL REGRESSION: a narrated meta-aside in parentheses never reaches the spoken text", () => {
+    const result = parseDelivery(
+      "What does the leak look like, is it dripping from the spout, or is water " +
+        "coming from under the sink? (Just continuing naturally with what I asked, " +
+        "once I've got context that this is a routine repair, not an emergency.)",
+    );
+    expect(result.segments).toHaveLength(1);
+    expect(result.segments[0]!.text).toBe(
+      "What does the leak look like, is it dripping from the spout, or is water " +
+        "coming from under the sink?",
+    );
+    expect(result.segments[0]!.text).not.toContain("(");
+    expect(result.segments[0]!.text).not.toContain(")");
+  });
+
+  it("a phone area code in parentheses is NOT stripped — it is under the 3-word floor and callers are read these back", () => {
+    const result = parseDelivery("Let me confirm that: (206) 895-6963?");
+    expect(result.segments[0]!.text).toBe("Let me confirm that: (206) 895-6963?");
+  });
+
+  it("a meta-aside as the ENTIRE turn leaves nothing to speak, same as a bare cue", () => {
+    expect(parseDelivery("(Calling the tool now to check on that.)").segments).toEqual([]);
+  });
+
+  it("a meta-aside mid-sentence does not glue the surrounding words together", () => {
+    const result = parseDelivery("Okay (noting this is not urgent) what's the address?");
+    expect(result.segments[0]!.text).toBe("Okay what's the address?");
+  });
+
+  // v34 regression — the lead-ins the model kept producing across the
+  // qa-suite run even after three prompt versions banned them.
+  it.each([
+    [
+      "Got it, a clogged kitchen sink. Let me pull up your info real quick. What's your name?",
+      "Got it, a clogged kitchen sink. What's your name?",
+    ],
+    [
+      "I'll look you up real quick. Which drain are we talking about?",
+      "Which drain are we talking about?",
+    ],
+    [
+      "Got it. Actually, let me look you up first. Is that the right number?",
+      "Got it. Is that the right number?",
+    ],
+    ["Let me look into this for you. What's happening with it?", "What's happening with it?"],
+    ["Let me check our hours for you. We do handle emergencies.", "We do handle emergencies."],
+  ])("strips the lookup lead-in from %p", (input, expected) => {
+    expect(parseDelivery(input).segments[0]!.text).toBe(expected);
+  });
+
+  it.each([
+    "Let me get your information over to the team so they can help.",
+    "Let me make sure I've got that right.",
+    "I'll have someone follow up with you today.",
+    "Let's get that sorted for you.",
+  ])("leaves the genuinely informative sentence %p alone", (input) => {
+    expect(parseDelivery(input).segments[0]!.text).toBe(input);
+  });
+
+  it("strips a narration clause without taking the real content of its sentence with it", () => {
+    const result = parseDelivery(
+      "Got it, Akash. A jammed disposal — let me pull up your history real quick. Is it stuck the same way as before?",
+    );
+    expect(result.segments[0]!.text).toBe(
+      "Got it, Akash. A jammed disposal. Is it stuck the same way as before?",
+    );
+  });
+
+  it("does not split hyphenated words while removing narration clauses", () => {
+    const input = "We do 24/7 emergency work and I'll have someone follow-up with you.";
+    expect(parseDelivery(input).segments[0]!.text).toBe(input);
+  });
+
+  // Variants the qa-suite run surfaced after the first pattern shipped.
+  it.each([
+    [
+      "Got it, a running toilet. Let me look into your account real quick. You're not in the system yet.",
+      "Got it, a running toilet. You're not in the system yet.",
+    ],
+    ["Let me check our service area for you. What's your zip code?", "What's your zip code?"],
+    [
+      "Before we get into details, let me just check that we cover your area. That zip is outside it.",
+      "That zip is outside it.",
+    ],
+  ])("strips the lookup variant in %p", (input, expected) => {
+    expect(parseDelivery(input).segments[0]!.text).toBe(expected);
+  });
+
+  // The mid-sentence forms that only span removal catches, all observed in
+  // the qa-suite run against prompt v36.
+  it.each([
+    [
+      "Akash — I've got you in the system. A jammed disposal again. Let me look at what we've done before. How's it jammed this time?",
+      "Akash — I've got you in the system. A jammed disposal again. How's it jammed this time?",
+    ],
+    [
+      "I need to get you some immediate help. Let me check what we're working with here. What's your name?",
+      "I need to get you some immediate help. What's your name?",
+    ],
+    [
+      "Wait — before I ask more, let me look up your info real quick. What's your name?",
+      "Wait. What's your name?",
+    ],
+  ])("removes a narration span that does not start its own clause: %p", (input, expected) => {
+    expect(parseDelivery(input).segments[0]!.text).toBe(expected);
+  });
+
+  it("keeps the real content on BOTH sides of a removed narration span", () => {
+    const result = parseDelivery("I'll get someone out to you, let me just check your address.");
+    expect(result.segments[0]!.text).toBe("I'll get someone out to you.");
+  });
+
+  it("PRE-DEPLOY REGRESSION: never speaks the model narrating its own instructions", () => {
+    const result = parseDelivery(
+      "No problem, talk soon! The caller has said goodbye and ended the call. As instructed, I let them go with a warm closing line and did not ask any qualifying questions.",
+    );
+    expect(result.segments[0]!.text).toBe("No problem, talk soon!");
+  });
+
+  it.each([
+    "Per my instructions, I can't quote a price.",
+    "Following the guidelines, I'll keep this short.",
+  ])("removes the instruction reference in %p", (input) => {
+    expect(parseDelivery(`Got it. ${input} What's going on?`).segments[0]!.text).toBe(
+      "Got it. What's going on?",
+    );
+  });
+
+  it("speaks nothing at all when the whole reply is instruction narration, leaving speak() to use its safe fallback", () => {
+    expect(parseDelivery("The caller has said goodbye and ended the call.").segments).toEqual([]);
+  });
+
+  it("leaves ordinary speech TO the caller untouched", () => {
+    const input =
+      "Thanks for calling! Can I get your name, and is this the best number to reach you?";
+    expect(parseDelivery(input).segments[0]!.text).toBe(input);
+  });
+
+  it("never strips an utterance down to nothing on the narration rule alone", () => {
+    const result = parseDelivery("Let me pull up your info real quick.");
+    expect(result.segments).toHaveLength(1);
+    expect(result.segments[0]!.text).toBe("Let me pull up your info real quick.");
+  });
 });
 
 describe("silenceBuffer", () => {
