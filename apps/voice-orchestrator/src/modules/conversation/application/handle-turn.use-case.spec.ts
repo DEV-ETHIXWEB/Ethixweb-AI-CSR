@@ -1813,7 +1813,9 @@ describe("HandleTurnUseCase", () => {
     );
 
     expect(transferHandler.execute).toHaveBeenCalledTimes(1);
-    expect(transferHandler.execute.mock.calls[0]?.[0]).toMatchObject({ reason: "caller_requested" });
+    expect(transferHandler.execute.mock.calls[0]?.[0]).toMatchObject({
+      reason: "caller_requested",
+    });
     expect(result.toolCallsExecuted).toEqual(["transferToHuman"]);
     expect(result.humanTransfer).toEqual({
       reason: "caller_requested",
