@@ -728,7 +728,7 @@ describe("assembleLayeredPrompt", () => {
   it("instructs the model to actually call transferToHuman rather than just talking about connecting, and never to claim the handoff already succeeded", () => {
     const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
     expect(prompt).toContain("call transfertohuman this same turn");
-    expect(prompt).toContain("never say \"you're connected,\"");
+    expect(prompt).toContain('never say "you\'re connected,"');
   });
 
   /**

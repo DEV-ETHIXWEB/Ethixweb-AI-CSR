@@ -5,3 +5,8 @@ coverage
 pnpm-lock.yaml
 packages/database/prisma/migrations
 apps/dashboard/.next
+# One scenario per line is a deliberate design choice for scannability
+# across 150+ entries (grep/skim by id) — Prettier's printWidth would
+# expand every scenario into an 8+ line block, which is a real
+# readability regression for this specific file, not a style nit.
+apps/voice-orchestrator/scripts/qa-suite.ts

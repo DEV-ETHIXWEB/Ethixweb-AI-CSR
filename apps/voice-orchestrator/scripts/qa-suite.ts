@@ -1249,6 +1249,12 @@ const SCENARIOS: Scenario[] = [
   { id: "edge-06-repeat-thrice", category: "edge", turns: ["Leak.", "Leak.", "Leak."], checks: [custom("does not repeat itself verbatim", (ctx) => ctx.agentTurns.length >= 3 && ctx.agentTurns[0]!.trim() === ctx.agentTurns[2]!.trim() ? "gave the identical reply twice" : null)] },
   { id: "edge-07-interrupting-self", category: "edge", turns: ["My sink is", "leaking under the cabinet"], checks: [atMostQuestions(1)] },
   { id: "edge-08-question-only", category: "edge", turns: ["Do you guys do emergency calls at night?"], checks: [atMostQuestions(1)] },
+  // "Caller says wait" — a bare pause request, distinct from an
+  // incomplete-sentence fragment (fragment-detector.ts's own job, a
+  // voice-runtime concern this text-level harness can't exercise). The
+  // right reaction at the conversation-logic layer is to give the caller
+  // room: a brief, patient acknowledgment, no new question piled on.
+  { id: "edge-09-caller-says-wait", category: "edge", turns: ["My kitchen sink is leaking pretty bad.", "Wait, hold on a second."], checks: [atMostQuestions(0)] },
 
 ];
 
