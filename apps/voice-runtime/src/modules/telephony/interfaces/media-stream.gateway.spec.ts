@@ -357,3 +357,64 @@ describe("MediaStreamGateway — graceful shutdown drain", () => {
     expect(Date.now() - started).toBeLessThan(500);
   });
 });
+
+describe("MediaStreamGateway — concurrency log", () => {
+  beforeEach(() => {
+    process.env["TWILIO_AUTH_TOKEN"] = TEST_AUTH_TOKEN;
+  });
+
+  function loggerRecording(lines: Array<{ msg: string; fields: Record<string, unknown> }>) {
+    const logger = createNoopLogger();
+    logger.info = (msg: string, fields?: Record<string, unknown>) => {
+      lines.push({ msg, fields: fields ?? {} });
+    };
+    return logger;
+  }
+
+  async function connect(gateway: MediaStreamGateway): Promise<FakeSocket> {
+    const socket = new FakeSocket();
+    let connected: Promise<void> = Promise.resolve();
+    gateway.register({
+      get: (_p: string, _o: unknown, handler: (conn: unknown) => Promise<void>) => {
+        connected = handler({ socket });
+      },
+    } as never);
+    await connected;
+    return socket;
+  }
+
+  it("logs the live call count on each call start and end, so peak concurrency can be read back later", async () => {
+    const lines: Array<{ msg: string; fields: Record<string, unknown> }> = [];
+    const moduleRef = { resolve: async () => buildFakeOrchestrator() } as unknown as ModuleRef;
+    const gateway = new MediaStreamGateway(moduleRef, loggerRecording(lines));
+
+    const first = await connect(gateway);
+    first.emit("message", Buffer.from(startMessage()));
+    const second = await connect(gateway);
+    second.emit("message", Buffer.from(startMessage()));
+    first.close();
+    second.close();
+
+    const events = lines
+      .filter((line) => line.msg === "call concurrency")
+      .map((line) => [line.fields["event"], line.fields["activeCalls"]]);
+    expect(events).toEqual([
+      ["call_start", 1],
+      ["call_start", 2],
+      ["call_end", 1],
+      ["call_end", 0],
+    ]);
+  });
+
+  it("does not log concurrency for an unauthenticated connection that never became a call", async () => {
+    const lines: Array<{ msg: string; fields: Record<string, unknown> }> = [];
+    const moduleRef = { resolve: async () => buildFakeOrchestrator() } as unknown as ModuleRef;
+    const gateway = new MediaStreamGateway(moduleRef, loggerRecording(lines));
+
+    const socket = await connect(gateway);
+    socket.emit("message", Buffer.from(startMessage({ mediaStreamToken: "forged" })));
+    socket.close();
+
+    expect(lines.filter((line) => line.msg === "call concurrency")).toEqual([]);
+  });
+});

@@ -134,12 +134,28 @@ export class MediaStreamGateway implements BeforeApplicationShutdown {
 
   private trackCall(socket: WebSocket): void {
     this.activeCalls.add(socket);
+    this.logConcurrency("call_start");
+  }
+
+  /**
+   * One line per call start/end with this process's live call count, so
+   * peak concurrency can be read back from the logs later (sum the latest
+   * `activeCalls` per `machineId` at any moment). Log-only: no metrics
+   * dependency and no effect on call handling.
+   */
+  private logConcurrency(event: "call_start" | "call_end"): void {
+    this.logger.info("call concurrency", {
+      event,
+      activeCalls: this.activeCalls.size,
+      machineId: process.env["FLY_MACHINE_ID"] ?? "local",
+    });
   }
 
   private untrackCall(socket: WebSocket): void {
     if (!this.activeCalls.delete(socket)) {
       return;
     }
+    this.logConcurrency("call_end");
     if (this.activeCalls.size === 0 && this.drainWaiters.length > 0) {
       const waiters = this.drainWaiters;
       this.drainWaiters = [];
