@@ -4,12 +4,12 @@ Decision: no changes. Kept voice-runtime at 2 machines and kept every setting be
 
 ## Apps and machines (region sjc for all)
 
-| App | Machines | Size | Auto-stop | Notes |
-|---|---|---|---|---|
-| ethixweb-voice-runtime | 2 (both started) | performance-1x, 2 GB | off, min 1 | Holds live Twilio call state. Performance CPU avoids audio stutter. |
-| ethixweb-voice-orchestrator | 2 (1 started, 1 suspended) | shared-cpu-1x, 1 GB | suspend, min 1 | |
-| ethixweb-core-api | 1 (started) | shared-cpu-1x, 1 GB | off, min 1 | Sends lead SMS on a timer, so it must not stop. |
-| ethixweb-dashboard | 2 (1 started, 1 suspended) | shared-cpu-1x, 1 GB | suspend, min 1 | |
+| App                         | Machines                   | Size                 | Auto-stop      | Notes                                                               |
+| --------------------------- | -------------------------- | -------------------- | -------------- | ------------------------------------------------------------------- |
+| ethixweb-voice-runtime      | 2 (both started)           | performance-1x, 2 GB | off, min 1     | Holds live Twilio call state. Performance CPU avoids audio stutter. |
+| ethixweb-voice-orchestrator | 2 (1 started, 1 suspended) | shared-cpu-1x, 1 GB  | suspend, min 1 |                                                                     |
+| ethixweb-core-api           | 1 (started)                | shared-cpu-1x, 1 GB  | off, min 1     | Sends lead SMS on a timer, so it must not stop.                     |
+| ethixweb-dashboard          | 2 (1 started, 1 suspended) | shared-cpu-1x, 1 GB  | suspend, min 1 |                                                                     |
 
 Total: 7 machines. Managed Postgres `ethixweb-db`: basic plan, 10 GB, 1 replica, used only by core-api.
 
