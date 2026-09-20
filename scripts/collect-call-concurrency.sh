@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Appends new "call concurrency" log lines from ethixweb-voice-runtime to
+# MANUAL BACKFILL. Prefer the live stream (stream-call-concurrency.sh);
+# use this to fill gaps. Appends new "call concurrency" log lines from ethixweb-voice-runtime to
 # docs/call-concurrency.log as: <ISO time> <event> <activeCalls> <machineId>
 # Fly only returns the latest ~100 log lines per pull, so run this often
 # enough that no call scrolls out between runs. Read-only against Fly.

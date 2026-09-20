@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Example only; nothing installs this automatically.
+  Copy to ~/Library/LaunchAgents/com.ethixweb.call-concurrency.plist
+
+  Load (start now and at every login):
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ethixweb.call-concurrency.plist
+  Check it is running:
+    launchctl print gui/$(id -u)/com.ethixweb.call-concurrency | head -20
+  Unload (stop and stop starting at login):
+    launchctl bootout gui/$(id -u)/com.ethixweb.call-concurrency
+  Older equivalents: launchctl load -w <plist> / launchctl unload -w <plist>
+-->
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.ethixweb.call-concurrency</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/bin/bash</string>
+      <string>/Users/akash_ethixweb/AKASH_ETHIXWEB/CSR/Ethixweb-AI-CSR/scripts/stream-call-concurrency.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/akash_ethixweb/AKASH_ETHIXWEB/CSR/Ethixweb-AI-CSR</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>PATH</key>
+      <string>/Users/akash_ethixweb/.fly/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/akash_ethixweb/Library/Logs/call-concurrency.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/akash_ethixweb/Library/Logs/call-concurrency.err.log</string>
+  </dict>
+</plist>
