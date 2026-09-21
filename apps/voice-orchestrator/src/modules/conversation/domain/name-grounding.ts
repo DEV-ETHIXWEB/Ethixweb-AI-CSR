@@ -26,7 +26,7 @@ const normalize = (text: string): string =>
     .replace(/[’']/g, "")
     .replace(/[^a-z\s]/g, " ");
 
-function editDistanceAtMostOne(a: string, b: string): boolean {
+export function editDistanceAtMostOne(a: string, b: string): boolean {
   if (a === b) {
     return true;
   }

@@ -70,7 +70,7 @@ export function classifyZip(zip: string, covered: ReadonlySet<string>): ServiceA
 }
 
 /** Spoken digits ("nine eight zero one four") become "98014"; everything else is left as it was. */
-function collapseSpokenDigits(text: string): string {
+export function collapseSpokenDigits(text: string): string {
   return text
     .toLowerCase()
     .replace(

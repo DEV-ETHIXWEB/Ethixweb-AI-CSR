@@ -804,6 +804,7 @@ describe("HandleTurnUseCase", () => {
               arguments: {
                 name: { first: "Akash", last: "Kumar" },
                 phone: "+91123",
+                address: { street: "1200 Pine Street" },
                 source: "ai_csr",
               },
             },
@@ -836,7 +837,10 @@ describe("HandleTurnUseCase", () => {
       });
 
       await useCase.execute(
-        baseCommand({ transcript: "my name is akash kumar", allowedTools: ["createCustomer"] }),
+        baseCommand({
+          transcript: "my name is akash kumar, 1200 Pine Street",
+          allowedTools: ["createCustomer"],
+        }),
       );
 
       const saved = await repo.findById("tenant-1", "conv-1");
@@ -930,6 +934,7 @@ describe("HandleTurnUseCase", () => {
               arguments: {
                 name: { first: "Catherine", last: "Lin" },
                 phone: "+15552014477",
+                address: { street: "1200 Pine Street" },
                 source: "ai_csr",
               },
             },
@@ -962,7 +967,7 @@ describe("HandleTurnUseCase", () => {
 
       await useCase.execute(
         baseCommand({
-          transcript: "I'm Catherine Lin, that's everything, thanks",
+          transcript: "I'm Catherine Lin, 1200 Pine Street, that's everything, thanks",
           allowedTools: ["createCustomer"],
         }),
       );
@@ -1000,6 +1005,7 @@ describe("HandleTurnUseCase", () => {
               arguments: {
                 name: { first: "Akash", last: "Kumar" },
                 phone: "+91123",
+                address: { street: "1200 Pine Street" },
                 source: "ai_csr",
               },
             },
@@ -1021,7 +1027,10 @@ describe("HandleTurnUseCase", () => {
       });
 
       await useCase.execute(
-        baseCommand({ transcript: "my name is akash kumar", allowedTools: ["createCustomer"] }),
+        baseCommand({
+          transcript: "my name is akash kumar, 1200 Pine Street",
+          allowedTools: ["createCustomer"],
+        }),
       );
 
       const saved = await repo.findById("tenant-1", "conv-1");
@@ -1208,7 +1217,10 @@ describe("HandleTurnUseCase", () => {
       });
 
       await useCase.execute(
-        baseCommand({ transcript: "my name is akash kumar", allowedTools: ["createCustomer"] }),
+        baseCommand({
+          transcript: "my name is akash kumar, 1200 Pine Street",
+          allowedTools: ["createCustomer"],
+        }),
       );
 
       const saved = await repo.findById("tenant-1", "conv-1");
@@ -3305,5 +3317,87 @@ describe("shouldNudgeForName (client feedback: a call must not run on without a 
     expect(shouldNudgeForName(baseConversation({ transcript: three, customerId: "c1" }))).toBe(
       false,
     );
+  });
+});
+
+describe("address check (client feedback: random street plus ZIP was accepted)", () => {
+  async function sentToModel(callerLines: string[]): Promise<string[]> {
+    const repository = new FakeConversationRepository();
+    repository.seed(
+      baseConversation({
+        systemPrompt: "[service_area]\n98101, 98102, 98103, 98104",
+      }),
+    );
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = callerLines.map(() => [
+      { type: "text_delta", text: "Okay." },
+      { type: "done", stopReason: "end_turn" },
+    ]);
+    const { useCase } = buildUseCase({ aiProvider, repository });
+    for (const line of callerLines) {
+      await useCase.execute(baseCommand({ transcript: line, idempotencyKey: `k-${line}` }));
+    }
+    const lastRequest = aiProvider.requests[aiProvider.requests.length - 1];
+    return (lastRequest?.messages ?? [])
+      .filter((message) => message.role === "user")
+      .map((message) => (typeof message.content === "string" ? message.content : ""));
+  }
+
+  it("tells the model an invented street was not found, once", async () => {
+    const sent = await sentToModel([
+      "it's 4471 Zorblax Boulevard, Seattle, zip 98101",
+      "yes that's right",
+    ]);
+    expect(sent[0]).toContain("Address check");
+    expect(sent[0]).toContain("zorblax");
+    expect(sent[1]).not.toContain("Address check");
+  });
+
+  it("adds nothing for a real street in its ZIP", async () => {
+    const sent = await sentToModel(["it's 1200 Pine Street, Seattle, zip 98101"]);
+    expect(sent[0]).not.toContain("Address check");
+  });
+  it("flags an unverified address on the lead itself, and leaves a real one untouched", async () => {
+    const run = async (address: string): Promise<string> => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation({ systemPrompt: "[service_area]\n98101, 98102, 98103" }));
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          {
+            type: "tool_call",
+            toolCall: {
+              id: "call-1",
+              name: "createLead",
+              arguments: {
+                customer_id: "3f0c2b1e-9d5a-4c8e-8a57-0b1c2d3e4f50",
+                problem_summary: "Clogged sink",
+                priority: "routine",
+                lead_type: "residential",
+              },
+            },
+          },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [
+          { type: "text_delta", text: "Done." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const createLeadHandler = {
+        execute: jest.fn().mockResolvedValue({ lead_id: "l1", status: "created" }),
+      };
+      const { useCase } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "createLead", handler: createLeadHandler }],
+      });
+      await useCase.execute(baseCommand({ transcript: address, allowedTools: ["createLead"] }));
+      return (createLeadHandler.execute.mock.calls[0]?.[0] as { problem_summary: string })
+        .problem_summary;
+    };
+
+    expect(await run("it's 4471 Zorblax Boulevard, zip 98101")).toContain("ADDRESS NOT VERIFIED");
+    expect(await run("it's 1200 Pine Street, zip 98101")).toBe("Clogged sink");
   });
 });

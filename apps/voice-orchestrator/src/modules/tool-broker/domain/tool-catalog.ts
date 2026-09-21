@@ -179,10 +179,10 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
     version: "v1",
     description:
       "Create a new CRM customer record — only called after searchCustomer returns found: false. " +
-      "address is OPTIONAL — call this with whatever you actually have. Do not withhold this call, " +
-      "or keep asking the caller for their address, just to fill in a field nothing downstream " +
-      "requires yet; a customer record with a name and phone but no address is a normal, complete " +
-      "outcome, not a partial failure.",
+      "Get the caller's street address BEFORE calling this and pass it in the address field: it " +
+      "cannot be added afterwards. The call is refused until the caller has given a street address, " +
+      "except in a real emergency, or when they have declined to give one or were already asked " +
+      "three times. If they decline, call it without an address and carry on.",
     inputSchema: CreateCustomerInputSchema,
     jsonSchema: {
       type: "object",

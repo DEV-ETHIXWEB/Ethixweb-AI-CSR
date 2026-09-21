@@ -623,13 +623,11 @@ describe("assembleLayeredPrompt", () => {
    * "self-imposed constraint" pattern v15 already named, resurfacing on
    * a fresh field.
    */
-  it("instructs the model that a name plus the caller's own ANI is enough to call createCustomer immediately, not something to defer until address/zip are settled", () => {
-    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
-      "that's genuinely enough to call createcustomer",
-    );
-    expect(PLATFORM_BASE_PROMPT_V1.toLowerCase()).toContain(
-      "don't keep collecting address, zip code, or anything",
-    );
+  it("saves only after the confirmed name, the confirmed street address and a phone number, in that order (client feedback supersedes the old save-immediately rule)", () => {
+    const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+    expect(prompt).toContain("confirmed name");
+    expect(prompt).toContain("confirmed street address");
+    expect(prompt).toContain("never ask for the address before they have explained");
   });
 
   /**
@@ -941,6 +939,19 @@ describe("assembleLayeredPrompt", () => {
     it("never re-asks a name already given, and judges emergencies by situation not tone", () => {
       expect(prompt).toContain("never ask for it again");
       expect(prompt).toContain("judge by what is happening, never by how they sound");
+    });
+  });
+
+  describe("v50 long-call gaps", () => {
+    const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+
+    it("bans diagnosing in any reply, not only when asked", () => {
+      expect(prompt).toContain("never say or hint what is causing a problem, in any reply");
+    });
+
+    it("collects the address before saving and asks about timing at most once", () => {
+      expect(prompt).toContain("get the street address, with the house number, before you save");
+      expect(prompt).toContain("at most once in a whole call");
     });
   });
 });

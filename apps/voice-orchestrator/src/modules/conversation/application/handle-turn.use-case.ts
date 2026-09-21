@@ -1,3 +1,10 @@
+import {
+  addressCheckKey,
+  checkAddress,
+  describeAddressCheck,
+  loadStreetIndex,
+} from "../domain/address-check";
+import { saveBlockedReason } from "../domain/save-readiness";
 import { isNameGroundedInCaller, NAME_NOT_GIVEN_ERROR } from "../domain/name-grounding";
 import { randomUUID } from "node:crypto";
 import {
@@ -397,6 +404,7 @@ export class HandleTurnUseCase {
     // already-confirmed fact through the existing annotation below. See
     // service-area.ts for why coverage cannot be left to the model.
     const coveredZips = coveredZipsFromPrompt(conversation.systemPrompt);
+    const zipBeforeThisTurn = conversation.lastServiceAreaCheck?.zip ?? null;
     const spokenZip = detectServiceAreaFromTranscript(command.transcript, coveredZips);
     if (spokenZip) {
       conversation.lastServiceAreaCheck = {
@@ -416,6 +424,14 @@ export class HandleTurnUseCase {
         annotatedTranscript,
         conversation.lastServiceAreaCheck,
       );
+    }
+    const addressNote = this.addressCheckNote(
+      conversation,
+      spokenZip?.zip ?? zipBeforeThisTurn,
+      zipBeforeThisTurn,
+    );
+    if (addressNote) {
+      annotatedTranscript = `${addressNote} ${annotatedTranscript}`;
     }
     if (conversation.lastBusinessHoursCheck) {
       annotatedTranscript = annotateBusinessHoursResult(
@@ -1198,6 +1214,62 @@ export class HandleTurnUseCase {
     return { text: "", stop: true };
   }
 
+  /**
+   * Checks the street the caller gave against the offline Census index (see
+   * address-check.ts) and returns a note ONLY when the verdict is new or
+   * changed this turn, so the model asks once and is never nagged about an
+   * address the caller has already confirmed.
+   */
+  private addressCheckNote(
+    conversation: Conversation,
+    zipNow: string | null,
+    zipBefore: string | null,
+  ): string | null {
+    const index = loadStreetIndex();
+    if (!index) {
+      return null;
+    }
+    const callerTexts = conversation.transcript
+      .filter((entry) => entry.speaker === "caller")
+      .map((entry) => entry.text);
+    const current = checkAddress(callerTexts.slice(-6).join(" . "), zipNow, index);
+    const previous = checkAddress(callerTexts.slice(-7, -1).join(" . "), zipBefore, index);
+    if (!current || addressCheckKey(current) === addressCheckKey(previous)) {
+      return null;
+    }
+    return describeAddressCheck(current);
+  }
+
+  /**
+   * The lead's summary is the only text the team reads, so when the street
+   * could not be matched to public records the flag is added here rather
+   * than left to the model to remember. Never blocks the lead: a caller may
+   * live on a road newer than the data.
+   */
+  private withAddressFlag(
+    conversation: Conversation,
+    toolCall: AiToolCallRequest,
+  ): Record<string, unknown> {
+    const summary = toolCall.arguments["problem_summary"];
+    const index = loadStreetIndex();
+    if (toolCall.name !== "createLead" || typeof summary !== "string" || !index) {
+      return toolCall.arguments;
+    }
+    const callerText = conversation.transcript
+      .filter((entry) => entry.speaker === "caller")
+      .slice(-6)
+      .map((entry) => entry.text)
+      .join(" . ");
+    const check = checkAddress(callerText, conversation.lastServiceAreaCheck?.zip ?? null, index);
+    if (!check || check.kind === "found") {
+      return toolCall.arguments;
+    }
+    return {
+      ...toolCall.arguments,
+      problem_summary: `${summary.slice(0, 3700)} [ADDRESS NOT VERIFIED: street "${check.street}" not matched to public street records. Confirm before dispatch.]`,
+    };
+  }
+
   /** See `name-grounding.ts`: a saved name must be one the caller actually said. */
   private nameIsGrounded(conversation: Conversation, toolCall: AiToolCallRequest): boolean {
     const name = toolCall.arguments["name"];
@@ -1226,6 +1298,25 @@ export class HandleTurnUseCase {
       at,
     });
 
+    if (toolCall.name === "createCustomer") {
+      const blocked = saveBlockedReason({
+        callerTexts: conversation.transcript
+          .filter((entry) => entry.speaker === "caller")
+          .map((entry) => entry.text),
+        agentTexts: conversation.transcript
+          .filter((entry) => entry.speaker === "agent")
+          .map((entry) => entry.text),
+        address: toolCall.arguments["address"],
+      });
+      if (blocked) {
+        this.logger.warn("createCustomer blocked: address not ready", {
+          tenantId: conversation.tenantId,
+          conversationId: conversation.id,
+          reason: blocked.error,
+        });
+        return { output: blocked };
+      }
+    }
     if (toolCall.name === "createCustomer" && !this.nameIsGrounded(conversation, toolCall)) {
       this.logger.warn("createCustomer blocked: name was never said by the caller", {
         tenantId: conversation.tenantId,
@@ -1240,7 +1331,7 @@ export class HandleTurnUseCase {
         businessId: conversation.businessId,
         callId: conversation.callId,
         toolName: toolCall.name,
-        arguments: toolCall.arguments,
+        arguments: this.withAddressFlag(conversation, toolCall),
         allowedTools,
       });
 
