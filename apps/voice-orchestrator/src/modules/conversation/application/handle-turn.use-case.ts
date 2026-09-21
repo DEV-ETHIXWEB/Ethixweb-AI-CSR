@@ -1,3 +1,4 @@
+import { isNameGroundedInCaller, NAME_NOT_GIVEN_ERROR } from "../domain/name-grounding";
 import { randomUUID } from "node:crypto";
 import {
   classifyZip,
@@ -442,6 +443,13 @@ export class HandleTurnUseCase {
       // model was likely to follow anyway, while under-triggering is the
       // exact, real conversion loss this was found causing.
       annotatedTranscript = annotateCloseConsent(annotatedTranscript);
+    }
+    if (shouldNudgeForName(conversation)) {
+      // Client feedback: a call could run several turns of triage without
+      // ever asking for the caller's name, and prompt wording alone did not
+      // hold (a real-model QA scenario failed 4/4 on it). Same "reliability
+      // ceiling" reasoning as the reminders above: a deterministic note.
+      annotatedTranscript = annotateNameMissing(annotatedTranscript);
     }
     pushMessage({
       role: "user",
@@ -1190,6 +1198,16 @@ export class HandleTurnUseCase {
     return { text: "", stop: true };
   }
 
+  /** See `name-grounding.ts`: a saved name must be one the caller actually said. */
+  private nameIsGrounded(conversation: Conversation, toolCall: AiToolCallRequest): boolean {
+    const name = toolCall.arguments["name"];
+    const first = isRecord(name) && typeof name["first"] === "string" ? name["first"] : "";
+    const callerTexts = conversation.transcript
+      .filter((entry) => entry.speaker === "caller")
+      .map((entry) => entry.text);
+    return isNameGroundedInCaller(first, callerTexts);
+  }
+
   private async runTool(
     conversation: Conversation,
     toolCall: AiToolCallRequest,
@@ -1207,6 +1225,14 @@ export class HandleTurnUseCase {
       toolName: toolCall.name,
       at,
     });
+
+    if (toolCall.name === "createCustomer" && !this.nameIsGrounded(conversation, toolCall)) {
+      this.logger.warn("createCustomer blocked: name was never said by the caller", {
+        tenantId: conversation.tenantId,
+        conversationId: conversation.id,
+      });
+      return { output: NAME_NOT_GIVEN_ERROR };
+    }
 
     try {
       const result = await this.executeTool.execute({
@@ -1740,6 +1766,34 @@ const CLOSE_CONSENT_NOTE =
   "the issue (e.g. 'sink problem, caller couldn't describe specifics') " +
   "— that's still a complete, honest problem_summary; don't ask another " +
   "question first. A technician assesses the specifics in person.]";
+
+const NAME_ASKED_PATTERN = /\b(your name|who am i speaking|what'?s your name|who is this)\b/i;
+const NAME_GIVEN_PATTERN = /\b(my name|name is|name's|i am|i'm|this is|call me)\b/i;
+const NAME_NUDGE_AFTER_CALLER_TURNS = 3;
+const NAME_MISSING_NOTE =
+  "[System note: you still do not have this caller's name and have not asked for it. " +
+  "In THIS reply, the ONLY question you ask is for their name, after a brief acknowledgment. " +
+  "Do not ask anything else this turn.]";
+
+/** True when the call is several caller turns in, nobody has asked for or given a name, and nothing is saved yet. */
+export function shouldNudgeForName(conversation: Conversation): boolean {
+  if (conversation.customerId || conversation.leadEverAttempted) {
+    return false;
+  }
+  const callerTurns = conversation.transcript.filter((entry) => entry.speaker === "caller");
+  if (callerTurns.length < NAME_NUDGE_AFTER_CALLER_TURNS) {
+    return false;
+  }
+  const asked = conversation.transcript.some(
+    (entry) => entry.speaker === "agent" && NAME_ASKED_PATTERN.test(entry.text),
+  );
+  const given = callerTurns.some((entry) => NAME_GIVEN_PATTERN.test(entry.text));
+  return !asked && !given;
+}
+
+function annotateNameMissing(transcript: string): string {
+  return `${NAME_MISSING_NOTE} ${transcript}`;
+}
 
 function annotateCloseConsent(transcript: string): string {
   return `${CLOSE_CONSENT_NOTE} ${transcript}`;

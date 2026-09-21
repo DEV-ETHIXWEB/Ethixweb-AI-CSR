@@ -170,6 +170,26 @@ describe("EscalateEmergencyUseCase", () => {
     expect(result.action).toBe("forward_call");
   });
 
+  it.each([
+    "yeah so it kinda smells like gas in my kitchen, probably nothing though",
+    "no rush but sewage is coming up in the shower",
+    "the toilet is bubbling and sewage keeps backing up, no big deal",
+    "so there's water pouring out of the ceiling, kinda annoying",
+    "my basement has water up to my ankles, not a huge deal",
+  ])("treats a casual-toned emergency as an emergency: %s", async (description) => {
+    const useCase = buildUseCase();
+
+    const result = await useCase.execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      callId: "call-1",
+      description,
+    });
+
+    expect(result.isEmergency).toBe(true);
+    expect(result.action).toBe("forward_call");
+  });
+
   it("does NOT false-positive on a short pattern appearing inside an unrelated word (whole-word matching)", async () => {
     const useCase = buildUseCase();
 

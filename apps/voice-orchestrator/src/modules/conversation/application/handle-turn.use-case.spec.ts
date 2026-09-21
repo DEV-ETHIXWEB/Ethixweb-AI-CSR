@@ -16,7 +16,11 @@ import { FakeAiProvider } from "./__fakes__/fake-ai-provider";
 import { FakeConversationRepository } from "./__fakes__/fake-conversation-repository";
 import { FakeEventBus } from "./__fakes__/fake-event-bus";
 import { createNoopLogger } from "./__fakes__/fake-logger";
-import { HandleTurnUseCase, type HandleTurnCommand } from "./handle-turn.use-case";
+import {
+  HandleTurnUseCase,
+  shouldNudgeForName,
+  type HandleTurnCommand,
+} from "./handle-turn.use-case";
 
 function fakeToolDefinition(name: string): ToolDefinition {
   return {
@@ -858,6 +862,43 @@ describe("HandleTurnUseCase", () => {
       expect(sentMessage?.content).toContain("CRM/lead system is not available");
     });
 
+    it("CLIENT FEEDBACK: refuses createCustomer with a name the caller never said, and returns an error the model can recover from", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          {
+            type: "tool_call",
+            toolCall: {
+              id: "call-1",
+              name: "createCustomer",
+              arguments: { name: { first: "Unknown" }, phone: "+15552014477", source: "ai_csr" },
+            },
+          },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [
+          { type: "text_delta", text: "Can I get your name?" },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const createCustomerHandler = {
+        execute: jest.fn().mockResolvedValue({ customer_id: "c1", created: true }),
+      };
+      const { useCase } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "createCustomer", handler: createCustomerHandler }],
+      });
+
+      await useCase.execute(
+        baseCommand({ transcript: "my water heater is leaking", allowedTools: ["createCustomer"] }),
+      );
+
+      expect(createCustomerHandler.execute).not.toHaveBeenCalled();
+    });
+
     /**
      * Found LIVE, on the real freshly-deployed build, while verifying this
      * session's own C3 fix end-to-end: a real business with genuinely no
@@ -920,7 +961,10 @@ describe("HandleTurnUseCase", () => {
       });
 
       await useCase.execute(
-        baseCommand({ transcript: "that's everything, thanks", allowedTools: ["createCustomer"] }),
+        baseCommand({
+          transcript: "I'm Catherine Lin, that's everything, thanks",
+          allowedTools: ["createCustomer"],
+        }),
       );
 
       // The SECOND completion (after the tool result) is the one that
@@ -3213,5 +3257,53 @@ describe("HandleTurnUseCase", () => {
       const content = await sentCallerMessage("it's 13005 SE 245th Street in Kent");
       expect(content).not.toContain("service area");
     });
+  });
+});
+
+describe("shouldNudgeForName (client feedback: a call must not run on without a name)", () => {
+  const turn = (speaker: "caller" | "agent", text: string, index: number): TranscriptTurn => ({
+    turnIndex: index,
+    speaker,
+    text,
+    confidence: null,
+    offsetMs: 0,
+    at: new Date().toISOString(),
+  });
+
+  it("nudges after three caller turns with no name asked or given", () => {
+    const conversation = baseConversation({
+      transcript: [
+        turn("caller", "my water heater is leaking", 0),
+        turn("agent", "where is it leaking from?", 1),
+        turn("caller", "it's actively leaking", 2),
+        turn("agent", "is it pooling?", 3),
+        turn("caller", "i don't know where from", 4),
+      ],
+    });
+    expect(shouldNudgeForName(conversation)).toBe(true);
+  });
+
+  it("does not nudge before three caller turns, once the name was asked, given, or saved", () => {
+    const three = [
+      turn("caller", "a", 0),
+      turn("agent", "b", 1),
+      turn("caller", "c", 2),
+      turn("agent", "d", 3),
+      turn("caller", "e", 4),
+    ];
+    expect(shouldNudgeForName(baseConversation({ transcript: three.slice(0, 3) }))).toBe(false);
+    expect(
+      shouldNudgeForName(
+        baseConversation({ transcript: [...three, turn("agent", "What's your name?", 5)] }),
+      ),
+    ).toBe(false);
+    expect(
+      shouldNudgeForName(
+        baseConversation({ transcript: [turn("caller", "my name is Priya", 0), ...three] }),
+      ),
+    ).toBe(false);
+    expect(shouldNudgeForName(baseConversation({ transcript: three, customerId: "c1" }))).toBe(
+      false,
+    );
   });
 });

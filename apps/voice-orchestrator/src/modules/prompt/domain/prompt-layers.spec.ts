@@ -910,4 +910,37 @@ describe("assembleLayeredPrompt", () => {
       expect(prompt).toContain("never ask for something they already said");
     });
   });
+  describe("v49 client feedback", () => {
+    const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+
+    it("never confirms a technician by name", () => {
+      expect(prompt).toContain("no roster of the company's technicians");
+      expect(prompt).toContain("never say or imply the person exists");
+    });
+
+    it("states causes as a few possibilities a technician must inspect, never one fact", () => {
+      expect(prompt).toContain("a technician would need to inspect it to confirm");
+      expect(prompt).not.toContain("name at most one cause");
+    });
+
+    it("bans DIY repair walkthroughs and keeps safety to one sentence", () => {
+      expect(prompt).toContain("never walk a caller through fixing");
+      expect(prompt).toContain("never say where the valve is");
+    });
+
+    it("bans callback timing promises and requires confirmed contact details first", () => {
+      expect(prompt).toContain("never promise when anyone will call");
+      expect(prompt).toContain("a phone number they have confirmed");
+    });
+
+    it("requires an answered read-back before saving and never calls an address verified", () => {
+      expect(prompt).toContain("a read-back only counts once they answered it");
+      expect(prompt).toContain("never call an address verified");
+    });
+
+    it("never re-asks a name already given, and judges emergencies by situation not tone", () => {
+      expect(prompt).toContain("never ask for it again");
+      expect(prompt).toContain("judge by what is happening, never by how they sound");
+    });
+  });
 });

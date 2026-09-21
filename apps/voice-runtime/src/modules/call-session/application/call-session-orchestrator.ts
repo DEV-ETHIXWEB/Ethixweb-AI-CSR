@@ -239,6 +239,21 @@ const SILENCE_TROUBLE_HEARING_PHRASE =
 const MAX_SILENCE_CHECK_INS = 2;
 
 /**
+ * Client feedback: a caller talking for a minute straight was interrupted
+ * by "hello" / "take your time, I'm still here". The timer is only
+ * disarmed by RECOGNIZED interim text, so a long speech with a stretch of
+ * STT silence (buffering, a noisy line, a pause between clauses) let it
+ * fire on top of a live caller. Before speaking, the check-in now defers
+ * while the caller made ANY sound (raw VAD or interim) within this window,
+ * or while a fragment is still being coalesced. Bounded: the earlier
+ * real-call finding that noisy VAD must not silence the check-in forever
+ * still holds, because at most `MAX_SILENCE_CHECK_IN_DEFERRALS` deferrals
+ * happen per check-in.
+ */
+const CALLER_ACTIVE_GRACE_MS = 3000;
+const MAX_SILENCE_CHECK_IN_DEFERRALS = 4;
+
+/**
  * The one class that actually drives a phone call end to end — receives
  * Twilio Media Stream lifecycle events + STT results from the WebSocket
  * gateway (interfaces layer, which owns nothing but wiring this class to a
@@ -355,6 +370,10 @@ export class CallSessionOrchestrator {
   private silenceCheckInTimer: ReturnType<typeof setTimeout> | null = null;
   /** How many check-ins this silence episode has already produced — reset by `armSilenceCheckIn`, which only runs when Grace speaks for a REAL reason (i.e. a new episode). See `MAX_SILENCE_CHECK_INS`. */
   private silenceCheckInCount = 0;
+  /** Last time the caller made any sound (raw VAD onset or recognized interim text). Used only to defer a silence check-in, never to cancel it. */
+  private lastCallerActivityAt = 0;
+  /** How many times the current check-in has been deferred because the caller was audibly active. */
+  private silenceCheckInDeferrals = 0;
   /** See `buildSilentTurnFallback`'s own comment — round-robins so a call that happens to hit this fallback more than once doesn't repeat the exact same line. */
   private silentTurnFallbackIndex = 0;
   /** See `handleFinalTranscriptCandidate`'s own comment — a finalized transcript flagged as a likely fragment, accumulated here while waiting to see if more follows, instead of starting a turn immediately. */
@@ -1006,6 +1025,7 @@ export class CallSessionOrchestrator {
    * preventing a stale response from lingering.
    */
   private handleSpeechStarted(): void {
+    this.lastCallerActivityAt = Date.now();
     // Found live on a real call: this used to reset the silence check-in
     // here too, on the reasoning that ANY detected audio proves presence.
     // A real ~2.5-minute call proved that wrong in practice — a raw VAD
@@ -1066,6 +1086,7 @@ export class CallSessionOrchestrator {
     // nothing to check in about; the timer is armed again only where it
     // belongs — after Grace has finished speaking and is genuinely waiting
     // (see armSilenceCheckIn's call sites at the end of a turn).
+    this.lastCallerActivityAt = Date.now();
     this.disarmSilenceCheckIn();
     if (!this.pendingBargeInTimer) {
       return;
@@ -1098,14 +1119,39 @@ export class CallSessionOrchestrator {
     // below deliberately does not touch it, or the repeats would never
     // reach their cap.
     this.silenceCheckInCount = 0;
+    this.silenceCheckInDeferrals = 0;
     this.scheduleSilenceCheckIn(sink);
+  }
+
+  /** Speaks the check-in unless the caller was audibly active a moment ago (see `CALLER_ACTIVE_GRACE_MS`), in which case it re-checks after that grace window, up to `MAX_SILENCE_CHECK_IN_DEFERRALS` times. */
+  private fireOrDeferSilenceCheckIn(sink: MediaStreamSink): void {
+    if (this.ended) {
+      return;
+    }
+    const graceMs = Math.min(CALLER_ACTIVE_GRACE_MS, silenceCheckInTimeoutMs());
+    const callerActive =
+      this.pendingFragment !== null || Date.now() - this.lastCallerActivityAt < graceMs;
+    if (callerActive && this.silenceCheckInDeferrals < MAX_SILENCE_CHECK_IN_DEFERRALS) {
+      this.silenceCheckInDeferrals += 1;
+      this.logger.info("silence check-in deferred: caller was active a moment ago", {
+        conversationId: this.conversationId,
+        deferral: this.silenceCheckInDeferrals,
+      });
+      this.silenceCheckInTimer = setTimeout(() => {
+        this.silenceCheckInTimer = null;
+        this.fireOrDeferSilenceCheckIn(sink);
+      }, graceMs);
+      return;
+    }
+    this.silenceCheckInDeferrals = 0;
+    this.speakSilenceCheckIn(sink);
   }
 
   /** Schedules the next check-in WITHOUT resetting the repeat budget — see `armSilenceCheckIn`. */
   private scheduleSilenceCheckIn(sink: MediaStreamSink): void {
     this.silenceCheckInTimer = setTimeout(() => {
       this.silenceCheckInTimer = null;
-      this.speakSilenceCheckIn(sink);
+      this.fireOrDeferSilenceCheckIn(sink);
       // Counted from when the caller STOPS HEARING Grace, not from when her
       // audio finished sending. With fast TTS those differ by seconds, and
       // counting from send-end cut the caller's time to answer by exactly

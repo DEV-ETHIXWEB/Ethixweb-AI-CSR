@@ -1965,6 +1965,29 @@ describe("CallSessionOrchestrator", () => {
       }
     });
 
+    it("CLIENT FEEDBACK: does NOT speak over a caller who is audibly mid-speech when the timer expires, and still checks in once they go quiet", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, stt, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+
+        await orchestrator.onCallStart(baseParams(), sink);
+        // A long speech: raw sound right before the timer expires, with no
+        // recognized interim text yet (STT lag), so nothing disarmed it.
+        await jest.advanceTimersByTimeAsync(900);
+        stt.sessions[0]!.emitSpeechStarted();
+        await jest.advanceTimersByTimeAsync(100); // timer expires here
+
+        expect(tts.synthesizeCalls).toEqual(["Thanks for calling, how can I help?"]);
+
+        // Caller goes quiet: the deferred check-in still happens.
+        await jest.advanceTimersByTimeAsync(2000);
+        expect(tts.synthesizeCalls).toContain("Take your time. I'm still here.");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it("does NOT fire when the caller responds before the timeout", async () => {
       jest.useFakeTimers();
       try {
@@ -2165,7 +2188,7 @@ describe("CallSessionOrchestrator", () => {
      * checked in. A bare, content-free blip now does NOT reset the
      * timer — only `handleInterimSpeech` (real recognized text) does.
      */
-    it("a bare SpeechStarted blip with no recognized content does NOT reset the timer — only real recognized speech does", async () => {
+    it("a bare SpeechStarted blip with no recognized content only DEFERS the check-in by one grace window — it never cancels or resets it", async () => {
       jest.useFakeTimers();
       try {
         const { orchestrator, stt, tts } = buildOrchestratorUnderTest();
@@ -2180,16 +2203,20 @@ describe("CallSessionOrchestrator", () => {
         session.emitSpeechStarted();
         await jest.advanceTimersByTimeAsync(0);
 
-        // The check-in still fires at the ORIGINAL 1000ms mark, not a
-        // fresh window from the blip.
+        // Client feedback changed this: a caller may be mid-speech with no
+        // recognized text yet, so the check-in holds off at the original
+        // mark rather than talk over them...
         await jest.advanceTimersByTimeAsync(200);
+        expect(tts.synthesizeCalls).not.toContain("Take your time. I'm still here.");
+        // ...but only by one grace window; a blip never cancels it.
+        await jest.advanceTimersByTimeAsync(1000);
         expect(tts.synthesizeCalls).toContain("Take your time. I'm still here.");
       } finally {
         jest.useRealTimers();
       }
     });
 
-    it("continuous content-free SpeechStarted blips (simulating background noise) do not prevent the check-in from firing at all — the exact real-call failure this fix closes", async () => {
+    it("continuous content-free SpeechStarted blips (simulating background noise) only defer the check-in a bounded number of times, then it still fires — never silenced forever", async () => {
       jest.useFakeTimers();
       try {
         const { orchestrator, stt, tts } = buildOrchestratorUnderTest();
@@ -2206,7 +2233,15 @@ describe("CallSessionOrchestrator", () => {
           session.emitSpeechStarted();
         }
         await jest.advanceTimersByTimeAsync(100); // crosses the original 1000ms mark
+        expect(tts.synthesizeCalls).not.toContain("Take your time. I'm still here.");
 
+        // Noise continues, but deferral is capped (MAX_SILENCE_CHECK_IN_DEFERRALS),
+        // so the check-in still fires: the real-call failure of a check-in
+        // that never arrives stays closed.
+        for (let elapsed = 0; elapsed < 6000; elapsed += 300) {
+          await jest.advanceTimersByTimeAsync(300);
+          session.emitSpeechStarted();
+        }
         expect(tts.synthesizeCalls).toContain("Take your time. I'm still here.");
       } finally {
         jest.useRealTimers();
