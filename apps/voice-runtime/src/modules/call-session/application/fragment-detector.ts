@@ -108,30 +108,66 @@ const TRAILING_WORDS = new Set([
   "so",
   "um",
   "uh",
+  "is",
+  "was",
+  "are",
+  "am",
+  "because",
+  "if",
+  "when",
+  "where",
+  "which",
+  "by",
+  "from",
+  "into",
+  "than",
+  "also",
+  "as",
+  "some",
+  "any",
+  "we",
 ]);
 
 function normalizeWord(word: string): string {
   return word.toLowerCase().replace(/[^a-z']/g, "");
 }
 
-export function looksLikeIncompleteFragment(transcript: string): boolean {
+export type FragmentStrength = "none" | "weak" | "strong";
+
+/**
+ * "strong": the words end on something no finished sentence ends on ("...
+ * let me check on", "... my name is") or the caller is spelling something
+ * out. The caller is plainly still talking, so the runtime waits long for
+ * the rest, in silence. "weak": only the OPENING of the utterance looks
+ * unfinished ("so", "actually my"), which a short complete answer can also
+ * do, so the wait stays short. "none": treat it as a finished utterance.
+ *
+ * Client feedback: Grace answered mid-sentence fragments with "go ahead",
+ * "take your time" and "I'm still here" while the caller was still talking,
+ * and the reply to the fragment then talked over the real answer.
+ */
+export function fragmentStrength(transcript: string): FragmentStrength {
   const words = transcript
     .trim()
     .split(/\s+/)
     .filter((word) => word.length > 0);
   if (words.length === 0) {
-    return false;
+    return "none";
   }
   if (PHONETIC_SPELLING_PATTERN.test(transcript.trim())) {
-    return true;
+    return "strong";
   }
   const last = normalizeWord(words[words.length - 1]!);
   if (TRAILING_WORDS.has(last)) {
-    return true;
+    return "strong";
   }
   if (words.length > OPENING_WORD_COUNT_MAX) {
-    return false;
+    return "none";
   }
   const first = normalizeWord(words[0]!);
-  return OPENING_WORDS.has(first);
+  return OPENING_WORDS.has(first) ? "weak" : "none";
+}
+
+export function looksLikeIncompleteFragment(transcript: string): boolean {
+  return fragmentStrength(transcript) !== "none";
 }

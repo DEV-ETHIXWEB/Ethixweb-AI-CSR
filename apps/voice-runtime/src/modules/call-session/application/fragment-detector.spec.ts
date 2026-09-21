@@ -1,4 +1,4 @@
-import { looksLikeIncompleteFragment } from "./fragment-detector";
+import { fragmentStrength, looksLikeIncompleteFragment } from "./fragment-detector";
 
 describe("looksLikeIncompleteFragment", () => {
   it.each([
@@ -124,5 +124,26 @@ describe("looksLikeIncompleteFragment", () => {
     expect(looksLikeIncompleteFragment("this is for a person")).toBe(false);
     expect(looksLikeIncompleteFragment("thanks for waiting")).toBe(false);
     expect(looksLikeIncompleteFragment("looking for the water heater")).toBe(false);
+  });
+});
+
+describe("fragmentStrength (client feedback: silent hold for a caller who is still talking)", () => {
+  it.each([
+    ["let me check on", "strong"],
+    ["wrong my name is", "strong"],
+    ["the issue is", "strong"],
+    ["so", "strong"],
+    ["can you help", "weak"],
+    ["actually my", "strong"],
+    ["my sink is leaking", "none"],
+    ["yes I do", "none"],
+    ["thank you", "none"],
+  ])("%s -> %s", (text, expected) => {
+    expect(fragmentStrength(text)).toBe(expected);
+  });
+
+  it("keeps looksLikeIncompleteFragment consistent with the strength", () => {
+    expect(looksLikeIncompleteFragment("let me check on")).toBe(true);
+    expect(looksLikeIncompleteFragment("my sink is leaking")).toBe(false);
   });
 });

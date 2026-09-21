@@ -4,7 +4,12 @@ import {
   describeAddressCheck,
   loadStreetIndex,
 } from "../domain/address-check";
-import { saveBlockedReason } from "../domain/save-readiness";
+import { OutputGuard } from "../domain/output-guard";
+import {
+  CALLBACK_NUMBER_NOTE,
+  saveBlockedReason,
+  shouldNudgeForCallbackNumber,
+} from "../domain/save-readiness";
 import { isNameGroundedInCaller, NAME_NOT_GIVEN_ERROR } from "../domain/name-grounding";
 import { randomUUID } from "node:crypto";
 import {
@@ -459,6 +464,23 @@ export class HandleTurnUseCase {
       // model was likely to follow anyway, while under-triggering is the
       // exact, real conversion loss this was found causing.
       annotatedTranscript = annotateCloseConsent(annotatedTranscript);
+    }
+    const callerTextsSoFar = conversation.transcript
+      .filter((entry) => entry.speaker === "caller")
+      .map((entry) => entry.text);
+    const agentTextsSoFar = conversation.transcript
+      .filter((entry) => entry.speaker === "agent")
+      .map((entry) => entry.text);
+    if (
+      !shouldNudgeForName(conversation) &&
+      shouldNudgeForCallbackNumber({
+        callerTexts: callerTextsSoFar,
+        agentTexts: agentTextsSoFar,
+        customerId: conversation.customerId,
+        leadEverAttempted: conversation.leadEverAttempted,
+      })
+    ) {
+      annotatedTranscript = `${CALLBACK_NUMBER_NOTE} ${annotatedTranscript}`;
     }
     if (shouldNudgeForName(conversation)) {
       // Client feedback: a call could run several turns of triage without
@@ -1048,6 +1070,17 @@ export class HandleTurnUseCase {
     onChunk?: (text: string) => void,
   ): Promise<{ text: string; toolCalls: AiToolCallRequest[]; interrupted: boolean }> {
     let text = "";
+    // What is actually spoken and saved: `text` with the output guard applied
+    // to every segment (see output-guard.ts).
+    let spokenText = "";
+    const guard = new OutputGuard();
+    const emit = (segment: string): void => {
+      const guarded = guard.apply(segment);
+      if (guarded.trim()) {
+        spokenText += guarded;
+        onChunk?.(guarded);
+      }
+    };
     // Text accumulated since the last onChunk flush — NOT yet spoken.
     // Deliberately separate from `text` (the full running total this
     // method returns): a natural speech boundary is found relative to
@@ -1097,7 +1130,7 @@ export class HandleTurnUseCase {
             const segment = pendingSegment.slice(0, boundary);
             pendingSegment = pendingSegment.slice(boundary);
             if (segment.trim()) {
-              onChunk?.(segment);
+              emit(segment);
             }
           }
         }
@@ -1145,7 +1178,14 @@ export class HandleTurnUseCase {
     // spoken," interrupted or not (see this class's own top-level
     // comment on barge-in).
     if (pendingSegment.trim()) {
-      onChunk?.(pendingSegment);
+      emit(pendingSegment);
+    }
+    if (guard.actions.length > 0) {
+      this.logger.warn("output guard changed what would have been spoken", {
+        tenantId: conversation.tenantId,
+        conversationId: conversation.id,
+        actions: guard.actions,
+      });
     }
 
     // Found live, not hypothetical: with every LLM provider unavailable
@@ -1193,7 +1233,7 @@ export class HandleTurnUseCase {
       interrupted,
     });
 
-    return { text, toolCalls, interrupted };
+    return { text: spokenText, toolCalls, interrupted };
   }
 
   private applyChunk(
@@ -1307,6 +1347,7 @@ export class HandleTurnUseCase {
           .filter((entry) => entry.speaker === "agent")
           .map((entry) => entry.text),
         address: toolCall.arguments["address"],
+        phone: toolCall.arguments["phone"],
       });
       if (blocked) {
         this.logger.warn("createCustomer blocked: address not ready", {

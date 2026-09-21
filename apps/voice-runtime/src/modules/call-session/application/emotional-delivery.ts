@@ -117,6 +117,10 @@ const EMOTION_PROFILES: Record<string, DeliveryProfile> = {
   // short of the real thing.
   sighs: { ...QUIET_SUBDUED, speed: 0.9 },
   slower: { speed: 0.85 },
+  // Added by the orchestrator's output guard, never by the model: address and phone
+  // read-backs were "not clearly hearable" (client feedback), so they are spoken
+  // slower than any emotional cue ever goes.
+  slowly: { speed: 0.78 },
 };
 
 const PAUSE_WORD = "pause";

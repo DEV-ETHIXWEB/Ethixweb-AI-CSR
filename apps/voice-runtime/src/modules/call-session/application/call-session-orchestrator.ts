@@ -37,7 +37,7 @@ import {
   silenceBuffer,
   type DeliverySegment,
 } from "./emotional-delivery";
-import { looksLikeIncompleteFragment } from "./fragment-detector";
+import { fragmentStrength } from "./fragment-detector";
 
 /**
  * H1 — how long to wait, for a SHORT finalized transcript that
@@ -65,6 +65,14 @@ import { looksLikeIncompleteFragment } from "./fragment-detector";
  * STT/network latency already exists).
  */
 const FRAGMENT_COALESCE_WINDOW_MS = 1200;
+
+/**
+ * How long a STRONG fragment (the words end on "on", "is", "my", ...) is held
+ * in silence waiting for the rest. Client feedback: the caller was still
+ * talking, Grace answered the fragment with "go ahead" / "take your time",
+ * and that reply then talked over the real answer. See `fragmentStrength`.
+ */
+const STRONG_FRAGMENT_HOLD_MS = 4000;
 
 /** Bounds a capacity-429 wait loop — a caller genuinely on hold this long has almost certainly already hung up or should hit the tenant's configured overflowNumber instead of waiting forever. Not a documented constant, an INFERRED safety limit (same honesty convention as voice-orchestrator's own MAX_TOOL_ITERATIONS). */
 const MAX_CAPACITY_RETRY_ATTEMPTS = 3;
@@ -191,7 +199,7 @@ function bargeInConfirmationTimeoutMs(): number {
  * the whole process alive for the full 10s after the test run finished
  * — found live running this file's own suite, not a hypothetical.
  */
-const DEFAULT_SILENCE_CHECK_IN_TIMEOUT_MS = 12_000;
+const DEFAULT_SILENCE_CHECK_IN_TIMEOUT_MS = 15_000;
 function silenceCheckInTimeoutMs(): number {
   const raw = process.env["SILENCE_CHECK_IN_TIMEOUT_MS"];
   const parsed = raw ? Number(raw) : NaN;
@@ -374,6 +382,10 @@ export class CallSessionOrchestrator {
   private lastCallerActivityAt = 0;
   /** How many times the current check-in has been deferred because the caller was audibly active. */
   private silenceCheckInDeferrals = 0;
+  /** True only while a silence check-in utterance is being spoken, so a caller starting to talk can cut it off immediately. */
+  private checkInSpeaking = false;
+  /** Wall-clock time the last check-in finishes PLAYING on the phone, which is later than when its audio finished being sent. */
+  private checkInPlaybackUntil = 0;
   /** See `buildSilentTurnFallback`'s own comment — round-robins so a call that happens to hit this fallback more than once doesn't repeat the exact same line. */
   private silentTurnFallbackIndex = 0;
   /** See `handleFinalTranscriptCandidate`'s own comment — a finalized transcript flagged as a likely fragment, accumulated here while waiting to see if more follows, instead of starting a turn immediately. */
@@ -513,7 +525,7 @@ export class CallSessionOrchestrator {
     this.sttSession.onFinalTranscript((result) => {
       this.handleFinalTranscriptCandidate(params, sink, result, log);
     });
-    this.sttSession.onSpeechStarted(() => this.handleSpeechStarted());
+    this.sttSession.onSpeechStarted(() => this.handleSpeechStarted(sink));
     this.sttSession.onInterimSpeech((transcript) =>
       this.handleInterimSpeech(params, sink, transcript),
     );
@@ -620,14 +632,18 @@ export class CallSessionOrchestrator {
     // incomplete word. What matters for "should I keep waiting" is
     // whether the caller's latest words sound unfinished, not how long
     // the conversation-so-far has gotten.
-    if (!looksLikeIncompleteFragment(result.transcript)) {
+    const strength = fragmentStrength(result.transcript);
+    if (strength === "none") {
       this.commitPendingFragment(params, sink, log);
       return;
     }
-    this.fragmentCoalesceTimer = setTimeout(() => {
-      this.fragmentCoalesceTimer = null;
-      this.commitPendingFragment(params, sink, log);
-    }, FRAGMENT_COALESCE_WINDOW_MS);
+    this.fragmentCoalesceTimer = setTimeout(
+      () => {
+        this.fragmentCoalesceTimer = null;
+        this.commitPendingFragment(params, sink, log);
+      },
+      strength === "strong" ? STRONG_FRAGMENT_HOLD_MS : FRAGMENT_COALESCE_WINDOW_MS,
+    );
   }
 
   /** Sends whatever's currently buffered in `pendingFragment` (if anything) to `handleFinalTranscript` as one ordinary turn, and clears the buffer. A no-op if nothing is pending (defensive — every real caller of this method only calls it when it knows something's there). */
@@ -754,6 +770,8 @@ export class CallSessionOrchestrator {
     let turnAttempts = 0;
     this.bargedInDuringCurrentTurn = false;
     let speakQueue: Promise<void> = Promise.resolve();
+    const quietOk =
+      fragmentStrength(result.transcript) !== "none" || isPureBackchannel(result.transcript);
 
     while (turnResult === null) {
       const abortController = new AbortController();
@@ -777,7 +795,7 @@ export class CallSessionOrchestrator {
               if (this.bargedInDuringCurrentTurn) {
                 return;
               }
-              return this.speak(text, sink);
+              return this.speak(text, sink, quietOk);
             });
           },
         );
@@ -1047,8 +1065,16 @@ export class CallSessionOrchestrator {
    * without waiting for full finalization), not the only thing
    * preventing a stale response from lingering.
    */
-  private handleSpeechStarted(): void {
+  private handleSpeechStarted(sink: MediaStreamSink): void {
     this.lastCallerActivityAt = Date.now();
+    if ((this.checkInSpeaking || Date.now() < this.checkInPlaybackUntil) && this.isAudible()) {
+      // A silence check-in is disposable and the caller just started to
+      // answer. Client feedback: it kept playing over them ("the long
+      // silence is broken exactly when the user is trying to answer").
+      // Stopped on the raw voice onset, with no wait for recognized words,
+      // because there is nothing here worth protecting from a false trigger.
+      this.stopAudibleAudio(sink);
+    }
     // Found live on a real call: this used to reset the silence check-in
     // here too, on the reasoning that ANY detected audio proves presence.
     // A real ~2.5-minute call proved that wrong in practice — a raw VAD
@@ -1214,6 +1240,7 @@ export class CallSessionOrchestrator {
       timeoutMs: silenceCheckInTimeoutMs(),
       checkInNumber: this.silenceCheckInCount,
     });
+    this.checkInSpeaking = true;
     this.speak(phrase, sink)
       .catch((error: unknown) => {
         this.logger.warn("silence check-in TTS failed", {
@@ -1222,6 +1249,8 @@ export class CallSessionOrchestrator {
         });
       })
       .finally(() => {
+        this.checkInSpeaking = false;
+        this.checkInPlaybackUntil = Date.now() + this.millisUntilPlaybackEnds();
         // Re-arm (without resetting the budget) so a caller Grace
         // genuinely can't hear isn't left in permanent silence after one
         // reassurance — bounded by MAX_SILENCE_CHECK_INS so a caller who
@@ -1519,7 +1548,15 @@ export class CallSessionOrchestrator {
     this.playbackEndsAt = 0;
   }
 
-  private async speak(text: string, sink: MediaStreamSink): Promise<void> {
+  /**
+   * `silentOk`: the caller's last words were a mid-sentence fragment or a bare
+   * "mm-hm", so a reply with nothing to say is the RIGHT reply and the
+   * fallback below must not fire. Client feedback: every time a caller paused
+   * mid-sentence the model answered with a bare "[pause]", this method
+   * replaced it with "I'm here." / "Go ahead." / "I'm listening.", and Grace
+   * talked over callers who were still speaking.
+   */
+  private async speak(text: string, sink: MediaStreamSink, silentOk = false): Promise<void> {
     const { voiceSettings, segments: parsedSegments } = parseDelivery(text);
     // C1, found live on a real call, source-confirmed: a turn's ENTIRE
     // LLM output was the literal 7-character string "[pause]" — no words
@@ -1540,6 +1577,12 @@ export class CallSessionOrchestrator {
     // to the same `segments: []` here, and none of them should ever
     // produce total silence.
     let segments = parsedSegments;
+    if (segments.length === 0 && silentOk) {
+      this.logger.info("nothing to say after a fragment or backchannel — staying quiet", {
+        conversationId: this.conversationId,
+      });
+      return;
+    }
     if (segments.length === 0) {
       const fallback = this.buildSilentTurnFallback();
       this.logger.warn(
@@ -1619,7 +1662,12 @@ export class CallSessionOrchestrator {
    * this fallback can safely read as warranting one.
    */
   private buildSilentTurnFallback(): DeliverySegment {
-    const fallbackPhrases = ["I'm here.", "I'm listening.", "Go ahead.", "I'm with you."];
+    // Only reached when the caller said a COMPLETE sentence and the model
+    // produced no words, so the honest line is that it was not caught. The old
+    // rotation ("I'm here.", "Go ahead.") told a caller who had just finished
+    // speaking to start again, and was what callers heard over their own
+    // pauses.
+    const fallbackPhrases = ["Sorry, could you say that again?", "Sorry, I missed that."];
     const text = fallbackPhrases[this.silentTurnFallbackIndex % fallbackPhrases.length]!;
     this.silentTurnFallbackIndex += 1;
     return { text, pauseBeforeMs: 0 };

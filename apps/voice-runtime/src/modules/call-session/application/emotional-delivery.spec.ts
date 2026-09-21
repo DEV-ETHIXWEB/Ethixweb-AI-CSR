@@ -264,4 +264,16 @@ describe("silenceBuffer", () => {
     expect(silenceBuffer(0).length).toBe(0);
     expect(silenceBuffer(-50).length).toBe(0);
   });
+
+  it("[slowly] resolves to a slower speed than any emotional cue (used for address and phone read-backs)", () => {
+    const slowly = parseDelivery("[slowly] 1200 Pine Street, Seattle.");
+    const slower = parseDelivery("[slower] Okay.");
+    expect(slowly.voiceSettings.speed).toBeLessThan(slower.voiceSettings.speed);
+    expect(
+      slowly.segments
+        .map((segment) => segment.text)
+        .join("")
+        .trim(),
+    ).toBe("1200 Pine Street, Seattle.");
+  });
 });

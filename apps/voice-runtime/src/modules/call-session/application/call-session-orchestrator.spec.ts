@@ -813,7 +813,7 @@ describe("CallSessionOrchestrator", () => {
    * unaffected.
    */
   describe("silent-response guard — speak() never produces total silence — C1", () => {
-    const FALLBACK_PHRASES = ["I'm here.", "I'm listening.", "Go ahead.", "I'm with you."];
+    const FALLBACK_PHRASES = ["Sorry, could you say that again?", "Sorry, I missed that."];
 
     it("MISSION EXAMPLE: a response that is ONLY '[pause]' — no words at all — speaks a real fallback phrase instead of nothing", async () => {
       const { orchestrator, orchestratorClient, stt, tts, sink } = buildOrchestratorWithSink();
@@ -855,6 +855,26 @@ describe("CallSessionOrchestrator", () => {
       const turnCalls = tts.synthesizeCalls.slice(1);
       expect(turnCalls).toHaveLength(1);
       expect(FALLBACK_PHRASES).toContain(turnCalls[0]);
+    });
+
+    it("CLIENT FEEDBACK: a bare '[pause]' after a mid-sentence fragment stays SILENT instead of saying 'I'm here' or 'Go ahead' over the caller", async () => {
+      const { orchestrator, orchestratorClient, stt, tts, sink } = buildOrchestratorWithSink();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "[pause]",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+      await orchestrator.onCallStart(baseParams(), sink);
+      // Not held by the coalescing timer: "i was telling you about" would be,
+      // so use a backchannel, which is committed straight away.
+      stt.sessions[0]!.emitFinalTranscript("yeah", 0.9);
+      await flushMicrotasks();
+
+      expect(tts.synthesizeCalls.slice(1)).toEqual([]);
     });
 
     it("a whitespace-only response gets a real fallback, not silence", async () => {
@@ -993,6 +1013,37 @@ describe("CallSessionOrchestrator", () => {
         delete process.env["SILENCE_CHECK_IN_TIMEOUT_MS"];
       } else {
         process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = originalSilenceTimeout;
+      }
+    });
+
+    it("CLIENT FEEDBACK: a strong fragment (ends on 'on') is held in SILENCE for the rest of the sentence, and merged with it, instead of being answered", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, orchestratorClient, stt, tts, sink } = buildOrchestratorWithSink();
+        orchestratorClient.turnResponses = [
+          {
+            conversationId: "conv-1",
+            responseText: "Got it.",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+        ];
+
+        await orchestrator.onCallStart(baseParams(), sink);
+        stt.sessions[0]!.emitFinalTranscript("let me check on", 0.95);
+        await jest.advanceTimersByTimeAsync(3000); // well past the old 1.2s window
+        expect(orchestratorClient.turnCalls).toHaveLength(0);
+        expect(tts.synthesizeCalls).toEqual(["Thanks for calling, how can I help?"]); // nothing said over the caller
+
+        stt.sessions[0]!.emitFinalTranscript("the address for you", 0.95);
+        await jest.advanceTimersByTimeAsync(0);
+        expect(orchestratorClient.turnCalls).toHaveLength(1);
+        expect(orchestratorClient.turnCalls[0]?.req.transcript).toBe(
+          "let me check on the address for you",
+        );
+      } finally {
+        jest.useRealTimers();
       }
     });
 
@@ -1243,7 +1294,7 @@ describe("CallSessionOrchestrator", () => {
 
         // Only call A's fragment is completed by a follow-up piece.
         callA.stt.sessions[0]!.emitFinalTranscript("answer my question first", 0.99);
-        await jest.advanceTimersByTimeAsync(1300); // past the window for both
+        await jest.advanceTimersByTimeAsync(4100); // past the window for both (strong fragments hold 4s)
 
         expect(callA.orchestratorClient.turnCalls).toHaveLength(1);
         expect(callA.orchestratorClient.turnCalls[0]?.req.transcript).toBe(
@@ -2007,6 +2058,26 @@ describe("CallSessionOrchestrator", () => {
         // Caller goes quiet: the deferred check-in still happens.
         await jest.advanceTimersByTimeAsync(2000);
         expect(tts.synthesizeCalls).toContain("Take your time. I'm still here.");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("CLIENT FEEDBACK: a check-in that is playing is cut off the instant the caller starts speaking", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, stt, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+
+        await orchestrator.onCallStart(baseParams(), sink);
+        tts.chunkBytes = 8 * 3000; // the check-in is 3s of audio per chunk, so it is still playing
+        await jest.advanceTimersByTimeAsync(1000); // check-in starts speaking
+        expect(tts.synthesizeCalls).toContain("Take your time. I'm still here.");
+        const clearsBefore = sink.clearCount;
+
+        stt.sessions[0]!.emitSpeechStarted(); // raw voice onset, no recognized words yet
+
+        expect(sink.clearCount).toBeGreaterThan(clearsBefore);
       } finally {
         jest.useRealTimers();
       }

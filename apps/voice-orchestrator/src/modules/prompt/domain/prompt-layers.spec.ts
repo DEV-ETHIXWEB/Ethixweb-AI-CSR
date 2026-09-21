@@ -954,4 +954,35 @@ describe("assembleLayeredPrompt", () => {
       expect(prompt).toContain("at most once in a whole call");
     });
   });
+
+  describe("v51 second round of client feedback", () => {
+    const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+
+    it("never treats a reschedule or cancel as done, and never says it is looking up an appointment", () => {
+      expect(prompt).toContain("you cannot see, change, book, reschedule or cancel appointments");
+      expect(prompt).toContain("verify the existing appointment");
+    });
+
+    it("keeps same-day service optional, never guaranteed", () => {
+      expect(prompt).toContain("same-day service is never guaranteed");
+    });
+
+    it("confirms the callback number before saving and uses a number the caller gives", () => {
+      expect(prompt).toContain("confirm the callback number");
+      expect(prompt).toContain("use that one, read it back, and save that one");
+    });
+
+    it("answers fee questions directly instead of changing the subject", () => {
+      expect(prompt).toContain("answer that first, in one sentence");
+    });
+
+    it("repeats the problem only in the caller's words", () => {
+      expect(prompt).toContain("only in words the caller used");
+    });
+
+    it("stays quiet on a mid-sentence pause instead of saying take your time or go ahead", () => {
+      expect(prompt).toContain("say nothing if you can");
+      expect(prompt).not.toContain("give a tiny neutral cue");
+    });
+  });
 });

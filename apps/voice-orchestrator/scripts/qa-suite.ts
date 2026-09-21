@@ -157,6 +157,8 @@ export interface RunContext {
   /** Tool names called across the whole conversation, in order, with repeats. */
   toolsCalled: string[];
   turns: TurnRecord[];
+  /** True for scenarios where saying nothing is the correct reply (a caller who has not finished a sentence). */
+  allowSilence: boolean;
 }
 
 /** Returns null when satisfied, or a human-readable failure reason. */
@@ -171,6 +173,8 @@ interface Scenario {
   tools?: boolean;
   /** searchCustomer returns an existing customer rather than found:false. */
   knownCustomer?: boolean;
+  /** Saying nothing is the correct reply, so the "never empty" invariant is skipped. */
+  allowSilence?: boolean;
   checks: Check[];
 }
 
@@ -359,6 +363,9 @@ const UNIVERSAL: Check[] = [
   {
     label: "never empty",
     run: (ctx) => {
+      if (ctx.allowSilence) {
+        return null;
+      }
       const blank = ctx.turns.find((t) => t.agent.trim().length === 0);
       return blank ? `empty response to "${blank.caller}"` : null;
     },
@@ -613,7 +620,13 @@ async function runScenario(scenario: Scenario): Promise<RunContext> {
   }
 
   const agentTurns = turns.map((t) => t.agent);
-  return { agentTurns, allAgentText: agentTurns.join("\n"), toolsCalled, turns };
+  return {
+    agentTurns,
+    allAgentText: agentTurns.join("\n"),
+    toolsCalled,
+    turns,
+    allowSilence: scenario.allowSilence === true,
+  };
 }
 
 interface Attempt {
@@ -1253,8 +1266,16 @@ const SCENARIOS: Scenario[] = [
   { id: "feedback-07-name-once", category: "feedback", turns: ["my name is Priya Shah", "so my toilet keeps running and it's in Seattle", "it's on 5th Avenue"], checks: [neverAsksAbout("does not re-ask the name", ASKS_NAME)] },
   { id: "feedback-08-fake-street-not-verified", category: "feedback", turns: ["I need a plumber for a clogged sink, my name is Tom Baker", "it's 4471 Zorblax Boulevard, Seattle, 98101"], checks: [neverSays("never claims the address is verified or valid", /(verified|valid address|confirmed that address|checked that address)/)] },
   { id: "feedback-09-second-problem-no-cause", category: "feedback", turns: ["my kitchen sink is clogged, my name is Rohan Mehta", "oh and the dishwasher makes a gurgling noise"], checks: [neverSays("no cause or link claimed between problems", /(same|connected|related|tied|linked|caused|because|due to|clog in|drain line)/)] },
-  { id: "feedback-10-no-timing-choice", category: "feedback", turns: ["my toilet keeps running, my name is Ana Ruiz", "yes it never stops"], checks: [neverSays("no today-or-later choice offered", /(today|later today|right away or|another time|this afternoon|tonight)/)] },
+  { id: "feedback-10-no-timing-choice", category: "feedback", turns: ["my toilet keeps running, my name is Ana Ruiz", "yes it never stops"], checks: [neverSays("no day or time named or promised", /(today|later today|this afternoon|tonight|tomorrow)/)] },
   { id: "feedback-11-address-before-save", category: "feedback", turns: ["my name is Tom Baker and my sink is clogged", "it drains very slowly", "my address is 1200 Pine Street Seattle 98101", "yes that's right"], checks: [callsTool("createCustomer")] },
+  { id: "feedback-12-reschedule-not-booked", category: "feedback", turns: ["hi I need to reschedule my appointment for tomorrow to Friday", "my name is Tom Baker", "it's at 1200 Pine Street"], checks: [neverSays("never says it was rescheduled, booked or that Friday works", /(rescheduled|moved it|it's booked|all set|friday works|works for us|got you down)/), neverSays("never claims to look up the appointment", /(pull(ing)? up|look(ing)? up|check(ing)? (the )?(schedule|calendar))/)] },
+  { id: "feedback-13-cancel-not-done", category: "feedback", turns: ["hi this is George, cancel my appointment", "it's the kitchen sink leak for this afternoon"], checks: [neverSays("never says it was cancelled", /(cancell?ed|i'?ll get that cancel|let me get that cancel|that's cancel)/)] },
+  { id: "feedback-14-confirms-callback-number", category: "feedback", turns: ["my name is Sam Lee and my toilet keeps running", "it's 1200 Pine Street, Seattle 98101", "yes that's right", "yes"], checks: [asksAbout("asks to confirm the callback number", /(best number|number (to|we can|i can) (reach|call)|calling from|reach you (at|on)|this number|call ?back number|phone number)/)] },
+  { id: "feedback-15-changed-number-used", category: "feedback", turns: ["my name is Sam Lee and my toilet keeps running", "it's 1200 Pine Street, Seattle 98101", "yes", "please call me on 206 555 0147 instead"], checks: [saysSomewhere("reads the new number back", /2\D?0\D?6\D?5\D?5\D?5\D?0\D?1\D?4\D?7/)] },
+  { id: "feedback-16-same-day-not-promised", category: "feedback", turns: ["can someone come out today for my clogged sink? my name is Ana Ruiz"], checks: [neverSays("no same-day promise or guarantee", /(will (be|come|call)[^.?!]*today|we can (get|have|send) (someone|a tech)[^.?!]*today|guarantee|same[- ]day (service )?(is )?available|we'll (be|have)[^.?!]*today)/)] },
+  { id: "feedback-17-fee-answered-first", category: "feedback", turns: ["my sink is clogged, how much is the visit charge? do you charge just to come look?"], checks: [custom("answers the fee question in the very first reply", (ctx) => /(pricing|price|cost|fee|charge|quote|confirm)/i.test(ctx.agentTurns[0] ?? "") ? null : `first reply skipped the fee question: "${(ctx.agentTurns[0] ?? "").trim()}"`)] },
+  { id: "feedback-18-problem-in-callers-words", category: "feedback", turns: ["hi my bathroom faucet is leaking, it drips all the time"], checks: [neverSays("never turns a leak into a pressure problem", /(pressure|low water|weak flow)/)] },
+  { id: "feedback-19-silent-on-fragment", category: "feedback", allowSilence: true, turns: ["hi, so let me check on"], checks: [neverSays("no take-your-time, still-here, go-ahead or hello over a caller mid-sentence", /(take your time|still here|go ahead|hello|are you there)/)] },
   { id: "edge-04-very-long", category: "edge", turns: ["So basically what happened is I came home from work around six and I noticed the carpet in the hallway was damp and then I followed it back to the bathroom and the wall behind the toilet is wet and I think there might be a pipe in the wall that's leaking and I don't know how long it's been going on but the drywall is starting to bubble and I'm worried about mold and I really need somebody to look at this soon, my name's Robert by the way."], checks: [neverAsksAbout("does not re-ask the name", ASKS_NAME), neverAsksAbout("does not re-ask the problem", ASKS_PROBLEM), atMostQuestions(1)] },
   { id: "edge-05-numbers-only", category: "edge", turns: ["98101"], checks: [atMostQuestions(1)] },
   { id: "edge-06-repeat-thrice", category: "edge", turns: ["Leak.", "Leak.", "Leak."], checks: [custom("does not repeat itself verbatim", (ctx) => ctx.agentTurns.length >= 3 && ctx.agentTurns[0]!.trim() === ctx.agentTurns[2]!.trim() ? "gave the identical reply twice" : null)] },

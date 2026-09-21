@@ -803,7 +803,7 @@ describe("HandleTurnUseCase", () => {
               name: "createCustomer",
               arguments: {
                 name: { first: "Akash", last: "Kumar" },
-                phone: "+91123",
+                phone: "+12065550147",
                 address: { street: "1200 Pine Street" },
                 source: "ai_csr",
               },
@@ -838,7 +838,7 @@ describe("HandleTurnUseCase", () => {
 
       await useCase.execute(
         baseCommand({
-          transcript: "my name is akash kumar, 1200 Pine Street",
+          transcript: "my name is akash kumar, 1200 Pine Street, my number is 206 555 0147",
           allowedTools: ["createCustomer"],
         }),
       );
@@ -933,7 +933,7 @@ describe("HandleTurnUseCase", () => {
               name: "createCustomer",
               arguments: {
                 name: { first: "Catherine", last: "Lin" },
-                phone: "+15552014477",
+                phone: "+12065550147",
                 address: { street: "1200 Pine Street" },
                 source: "ai_csr",
               },
@@ -967,7 +967,8 @@ describe("HandleTurnUseCase", () => {
 
       await useCase.execute(
         baseCommand({
-          transcript: "I'm Catherine Lin, 1200 Pine Street, that's everything, thanks",
+          transcript:
+            "I'm Catherine Lin, 1200 Pine Street, 206 555 0147, that's everything, thanks",
           allowedTools: ["createCustomer"],
         }),
       );
@@ -1004,7 +1005,7 @@ describe("HandleTurnUseCase", () => {
               name: "createCustomer",
               arguments: {
                 name: { first: "Akash", last: "Kumar" },
-                phone: "+91123",
+                phone: "+12065550147",
                 address: { street: "1200 Pine Street" },
                 source: "ai_csr",
               },
@@ -1028,7 +1029,7 @@ describe("HandleTurnUseCase", () => {
 
       await useCase.execute(
         baseCommand({
-          transcript: "my name is akash kumar, 1200 Pine Street",
+          transcript: "my name is akash kumar, 1200 Pine Street, my number is 206 555 0147",
           allowedTools: ["createCustomer"],
         }),
       );
@@ -1218,7 +1219,7 @@ describe("HandleTurnUseCase", () => {
 
       await useCase.execute(
         baseCommand({
-          transcript: "my name is akash kumar, 1200 Pine Street",
+          transcript: "my name is akash kumar, 1200 Pine Street, my number is 206 555 0147",
           allowedTools: ["createCustomer"],
         }),
       );
@@ -3399,5 +3400,47 @@ describe("address check (client feedback: random street plus ZIP was accepted)",
 
     expect(await run("it's 4471 Zorblax Boulevard, zip 98101")).toContain("ADDRESS NOT VERIFIED");
     expect(await run("it's 1200 Pine Street, zip 98101")).toBe("Clogged sink");
+  });
+});
+
+describe("output guard in the live streaming path (client feedback: leaked reasoning, timing promises)", () => {
+  async function spoken(modelText: string): Promise<{ responseText: string; chunks: string[] }> {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: modelText },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+    const chunks: string[] = [];
+    const result = await useCase.execute(baseCommand({ transcript: "okay" }), (text) =>
+      chunks.push(text),
+    );
+    return { responseText: result.responseText, chunks };
+  }
+
+  it("never speaks or saves reasoning that leaked into the reply", async () => {
+    const { responseText, chunks } = await spoken(
+      "George already said goodbye. Per the instructions, a caller who signs off gets let go. Take care!",
+    );
+    expect(responseText).not.toMatch(/instructions|already said goodbye/i);
+    expect(chunks.join("")).not.toMatch(/instructions|already said goodbye/i);
+    expect(responseText).toContain("Take care!");
+  });
+
+  it("replaces a same-day promise with an honest line, in both the spoken text and the saved reply", async () => {
+    const { responseText, chunks } = await spoken(
+      "Perfect, they'll call you back to lock in a time today.",
+    );
+    expect(responseText).not.toMatch(/today/i);
+    expect(chunks.join("")).toContain("The team will confirm the timing with you.");
+  });
+
+  it("asks for a slower read-back of an address", async () => {
+    const { chunks } = await spoken("Just to confirm, 1200 Pine Street, Seattle 98101?");
+    expect(chunks.join("")).toMatch(/^\[slowly\] /);
   });
 });
