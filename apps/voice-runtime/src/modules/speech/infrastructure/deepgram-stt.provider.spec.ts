@@ -171,7 +171,13 @@ describe("DeepgramSttProvider", () => {
     expect(lastSocket!.sent).toEqual([frame]);
   });
 
-  it("fires onFinalTranscript only for a Results message with speech_final: true, not merely is_final: true", async () => {
+  // Assertion updated with the `finalizedSegments` fix: an is_final chunk
+  // still must not FIRE the handler on its own (the original point of this
+  // test, unchanged below), but it is no longer discarded either — it is
+  // held and delivered as part of the utterance its speech_final closes.
+  // Real call 6e60ad31 is the evidence: the old behaviour shipped a caller
+  // sentence to the model with its first half missing.
+  it("holds an is_final chunk without firing, then delivers it joined to the speech_final chunk", async () => {
     const provider = new DeepgramSttProvider(createNoopLogger());
     const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
     const handler = jest.fn();
@@ -192,8 +198,8 @@ describe("DeepgramSttProvider", () => {
       channel: { alternatives: [{ transcript: "burst pipe in the basement", confidence: 0.95 }] },
     });
     expect(handler).toHaveBeenCalledWith({
-      transcript: "burst pipe in the basement",
-      confidence: 0.95,
+      transcript: "mid-utterance pause burst pipe in the basement",
+      confidence: 0.9,
     });
   });
 
@@ -449,5 +455,113 @@ describe("DeepgramSttProvider", () => {
 
     expect(lastSocket!.sent).toEqual([]);
     expect(lastSocket!.closed).toBe(true);
+  });
+
+  // Regression for call 6e60ad31 — see `finalizedSegments`' own comment.
+  it("REAL CALL REGRESSION: joins every is_final chunk of one utterance, instead of delivering only the speech_final chunk", async () => {
+    const provider = new DeepgramSttProvider(createNoopLogger());
+    const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
+    const finals: Array<{ transcript: string; confidence: number }> = [];
+    session.onFinalTranscript((result) => finals.push(result));
+    lastSocket!.simulateOpen();
+
+    // Exactly the shape Deepgram sends for one long sentence: a run of
+    // is_final chunks, the last of which is also speech_final.
+    lastSocket!.simulateMessage({
+      type: "Results",
+      is_final: true,
+      speech_final: false,
+      channel: {
+        alternatives: [{ transcript: "hi i'm akash my kitchen sink is leaking", confidence: 0.97 }],
+      },
+    });
+    lastSocket!.simulateMessage({
+      type: "Results",
+      is_final: true,
+      speech_final: false,
+      channel: { alternatives: [{ transcript: "pretty bad under the cabinet", confidence: 0.91 }] },
+    });
+    lastSocket!.simulateMessage({
+      type: "Results",
+      is_final: true,
+      speech_final: true,
+      channel: {
+        alternatives: [
+          { transcript: "and it's going right now and i need someone today", confidence: 0.99 },
+        ],
+      },
+    });
+
+    expect(finals).toHaveLength(1);
+    expect(finals[0]!.transcript).toBe(
+      "hi i'm akash my kitchen sink is leaking pretty bad under the cabinet and it's going right now and i need someone today",
+    );
+    // Lowest chunk confidence wins — one badly-heard chunk makes the
+    // whole sentence untrustworthy downstream.
+    expect(finals[0]!.confidence).toBeCloseTo(0.91);
+  });
+
+  it("an empty speech_final still delivers the is_final run it closes out, rather than discarding it", async () => {
+    const provider = new DeepgramSttProvider(createNoopLogger());
+    const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
+    const finals: Array<{ transcript: string; confidence: number }> = [];
+    session.onFinalTranscript((result) => finals.push(result));
+    lastSocket!.simulateOpen();
+
+    lastSocket!.simulateMessage({
+      type: "Results",
+      is_final: true,
+      speech_final: false,
+      channel: { alternatives: [{ transcript: "my water heater is leaking", confidence: 0.95 }] },
+    });
+    lastSocket!.simulateMessage({
+      type: "Results",
+      is_final: true,
+      speech_final: true,
+      channel: { alternatives: [{ transcript: "", confidence: 0 }] },
+    });
+
+    expect(finals).toHaveLength(1);
+    expect(finals[0]!.transcript).toBe("my water heater is leaking");
+  });
+
+  it("a silence-tail empty speech_final with nothing accumulated still delivers nothing", async () => {
+    const provider = new DeepgramSttProvider(createNoopLogger());
+    const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
+    const finals: Array<{ transcript: string; confidence: number }> = [];
+    session.onFinalTranscript((result) => finals.push(result));
+    lastSocket!.simulateOpen();
+
+    lastSocket!.simulateMessage({
+      type: "Results",
+      is_final: true,
+      speech_final: true,
+      channel: { alternatives: [{ transcript: "   ", confidence: 0 }] },
+    });
+
+    expect(finals).toHaveLength(0);
+  });
+
+  it("consecutive utterances do not bleed into each other", async () => {
+    const provider = new DeepgramSttProvider(createNoopLogger());
+    const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
+    const finals: Array<{ transcript: string; confidence: number }> = [];
+    session.onFinalTranscript((result) => finals.push(result));
+    lastSocket!.simulateOpen();
+
+    lastSocket!.simulateMessage({
+      type: "Results",
+      is_final: true,
+      speech_final: true,
+      channel: { alternatives: [{ transcript: "first thing", confidence: 0.9 }] },
+    });
+    lastSocket!.simulateMessage({
+      type: "Results",
+      is_final: true,
+      speech_final: true,
+      channel: { alternatives: [{ transcript: "second thing", confidence: 0.9 }] },
+    });
+
+    expect(finals.map((f) => f.transcript)).toEqual(["first thing", "second thing"]);
   });
 });

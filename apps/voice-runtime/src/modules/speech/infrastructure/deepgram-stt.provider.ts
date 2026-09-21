@@ -139,6 +139,34 @@ class DeepgramSttSession implements SpeechToTextSession {
   private readonly pendingAudio: Buffer[] = [];
   private ready = false;
   private framesSent = 0;
+  /**
+   * Every `is_final: true` chunk Deepgram has sent for the utterance
+   * currently in progress, in order, still waiting on its `speech_final`.
+   *
+   * FOUND LIVE on call 6e60ad31, and it is the reason that call failed.
+   * Deepgram does NOT send one message per utterance: it sends a run of
+   * `is_final: true` messages, each carrying only ITS OWN newly-finalized
+   * words, and marks the last one `speech_final: true`. The complete
+   * utterance is the concatenation of that run. This class used to pass
+   * only the `speech_final` message's own `transcript` to `finalHandler`
+   * and silently drop every earlier chunk, so a caller who said
+   *
+   *   "hi I'm Akash, my kitchen sink is leaking pretty bad under the
+   *    cabinet, and it's going right now and I need someone today"
+   *
+   * reached voice-orchestrator as nothing but "and it's going right now
+   * and i need someone today" — the tail, starting mid-sentence on the
+   * word "and". Grace was then asked to work with a sentence containing
+   * no problem, no name and no location, asked what the problem was, and
+   * the caller answered "i already told you." She had, but nothing above
+   * this line had ever let it through.
+   *
+   * This also retroactively explains the live report already recorded in
+   * `handleMessage`'s own diagnostic comment below, that the name "Akash
+   * Lakwhan" registered as a first name only: two chunks, one surname,
+   * dropped exactly the same way.
+   */
+  private finalizedSegments: Array<{ transcript: string; confidence: number }> = [];
   /** See `SPEECH_FINAL_FALLBACK_MS`'s own comment for why this exists. */
   private pendingFallback: { transcript: string; confidence: number } | null = null;
   private pendingFallbackTimer: ReturnType<typeof setTimeout> | null = null;
@@ -223,6 +251,81 @@ class DeepgramSttSession implements SpeechToTextSession {
       this.socket.send(JSON.stringify({ type: "CloseStream" }));
     }
     this.socket.close();
+  }
+
+  /**
+   * Joins the accumulated `is_final` run into the one utterance the
+   * caller actually spoke and empties the buffer. Confidence is the
+   * LOWEST of the chunks, not an average: one badly-heard chunk makes the
+   * whole sentence untrustworthy, and downstream (handle-turn's own
+   * low-confidence gate) needs to see that rather than have it averaged
+   * away by cleaner neighbours. Matches the same `Math.min` choice
+   * CallSessionOrchestrator already makes when it coalesces fragments.
+   */
+  /**
+   * Adds one `is_final` chunk to the utterance being assembled, handling
+   * BOTH shapes Deepgram is observed to produce on this socket:
+   *
+   *  - DISJOINT chunks, each carrying only its own new words ("hi I'm
+   *    Akash my kitchen sink is leaking" then "and it's going right now").
+   *    These are appended, and dropping them is what broke call 6e60ad31.
+   *  - CUMULATIVE chunks, where a later one restates the previous one and
+   *    extends it ("my sewer line" then "my sewer line is backed up").
+   *    A chunk that starts with the whole previous chunk SUPERSEDES it
+   *    rather than being appended, so the shared words are not spoken
+   *    back twice ("my sewer line my sewer line is backed up").
+   *
+   * Handling both is deliberate rather than picking whichever one the
+   * live call happened to show: the cost of guessing wrong in either
+   * direction (a lost sentence, or a stuttered one) lands on a real
+   * caller, and one comparison distinguishes them with certainty.
+   */
+  private accumulateSegment(transcript: string, confidence: number): void {
+    const trimmed = transcript.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+    const previous = this.finalizedSegments[this.finalizedSegments.length - 1];
+    if (previous) {
+      const previousText = previous.transcript.trim();
+      if (trimmed.startsWith(previousText)) {
+        this.finalizedSegments[this.finalizedSegments.length - 1] = {
+          transcript: trimmed,
+          confidence,
+        };
+        return;
+      }
+      if (previousText.startsWith(trimmed)) {
+        // Strictly older/shorter than what is already held — nothing new.
+        return;
+      }
+    }
+    this.finalizedSegments.push({ transcript: trimmed, confidence });
+  }
+
+  private takeAccumulatedUtterance(): {
+    transcript: string;
+    confidence: number;
+    segments: number;
+  } | null {
+    const segments = this.finalizedSegments;
+    this.finalizedSegments = [];
+    if (segments.length === 0) {
+      return null;
+    }
+    const transcript = segments
+      .map((segment) => segment.transcript.trim())
+      .filter((text) => text.length > 0)
+      .join(" ")
+      .trim();
+    if (transcript.length === 0) {
+      return null;
+    }
+    return {
+      transcript,
+      confidence: Math.min(...segments.map((segment) => segment.confidence)),
+      segments: segments.length,
+    };
   }
 
   private clearPendingFallback(): void {
@@ -314,16 +417,20 @@ class DeepgramSttSession implements SpeechToTextSession {
           transcript.trim().length > 0 &&
           transcript !== this.pendingFallback?.transcript
         ) {
+          this.accumulateSegment(transcript, confidence);
           this.pendingFallback = { transcript, confidence };
           if (this.pendingFallbackTimer) {
             clearTimeout(this.pendingFallbackTimer);
           }
           this.pendingFallbackTimer = setTimeout(() => {
-            const pending = this.pendingFallback;
+            const accumulated = this.takeAccumulatedUtterance();
+            const pending = accumulated
+              ? { transcript: accumulated.transcript, confidence: accumulated.confidence }
+              : this.pendingFallback;
             this.clearPendingFallback();
             if (pending) {
               this.logger.warn(
-                "speech_final never arrived — falling back to the last recognized transcript",
+                "speech_final never arrived — falling back to the recognized transcript so far",
                 { transcriptLength: pending.transcript.length, confidence: pending.confidence },
               );
               this.finalHandler?.(pending);
@@ -333,10 +440,18 @@ class DeepgramSttSession implements SpeechToTextSession {
         return;
       }
       this.clearPendingFallback();
-      if (transcript.trim().length === 0) {
+      if (transcript.trim().length > 0) {
+        this.accumulateSegment(transcript, confidence);
+      }
+      const utterance = this.takeAccumulatedUtterance();
+      if (!utterance) {
         // Deepgram emits a final, empty-transcript result at the tail of
         // silence — not a caller utterance, must not reach /turns as an
         // empty transcript (HandleTurnDto requires @Length(1, 8000)).
+        // Reached here only when this speech_final is empty AND no
+        // earlier is_final chunk is outstanding; an empty speech_final
+        // that DOES close out a real run still delivers that run, rather
+        // than discarding it the way an early return once did.
         return;
       }
       // Temporary, targeted addition (not the general Results log above,
@@ -347,8 +462,15 @@ class DeepgramSttSession implements SpeechToTextSession {
       // speech_final cycling seen in Results logs is a real candidate
       // for fragmenting one utterance into pieces; only the actual
       // finalized text proves it either way.
-      this.logger.info("Deepgram finalized transcript", { transcript, confidence });
-      this.finalHandler?.({ transcript, confidence });
+      this.logger.info("Deepgram finalized transcript", {
+        transcript: utterance.transcript,
+        confidence: utterance.confidence,
+        segments: utterance.segments,
+      });
+      this.finalHandler?.({
+        transcript: utterance.transcript,
+        confidence: utterance.confidence,
+      });
       return;
     }
 
