@@ -147,4 +147,66 @@ describe("RedisCallAdmissionAdapter", () => {
     expect(admitted).toHaveLength(5);
     expect(rejected).toHaveLength(5);
   });
+  describe("leaked reservations heal themselves (production outage: counter stuck at the ceiling with zero live calls)", () => {
+    const MINUTE = 60 * 1000;
+    let now: number;
+    let spy: jest.SpyInstance<number, []>;
+
+    beforeEach(() => {
+      now = 1_800_000_000_000;
+      spy = jest.spyOn(Date, "now").mockImplementation(() => now);
+    });
+
+    afterEach(() => {
+      spy.mockRestore();
+    });
+
+    it("frees slots whose calls never reached release() once they age out, so new callers are admitted again", async () => {
+      for (let i = 0; i < 3; i += 1) {
+        await adapter.reserve("tenant-a", "biz-a", NORMAL_LIMITS);
+      }
+      await expect(adapter.reserve("tenant-a", "biz-a", NORMAL_LIMITS)).rejects.toMatchObject({
+        scope: "tenant",
+      });
+
+      now += 46 * MINUTE;
+
+      await expect(adapter.reserve("tenant-a", "biz-a", NORMAL_LIMITS)).resolves.toBeTruthy();
+      expect(await adapter.getActiveCounts("tenant-a")).toEqual({
+        tenantActive: 1,
+        globalActive: 1,
+      });
+    });
+
+    it("does NOT free a slot for a call that is still within its window", async () => {
+      for (let i = 0; i < 3; i += 1) {
+        await adapter.reserve("tenant-a", "biz-a", NORMAL_LIMITS);
+      }
+      now += 30 * MINUTE;
+      await expect(adapter.reserve("tenant-a", "biz-a", NORMAL_LIMITS)).rejects.toMatchObject({
+        scope: "tenant",
+      });
+    });
+
+    it("reports the true count after leaked slots age out, not a drifted counter", async () => {
+      await adapter.reserve("tenant-a", "biz-a", NORMAL_LIMITS);
+      await adapter.reserve("tenant-a", "biz-a", NORMAL_LIMITS);
+      now += 46 * MINUTE;
+      expect(await adapter.getActiveCounts("tenant-a")).toEqual({
+        tenantActive: 0,
+        globalActive: 0,
+      });
+    });
+
+    it("release() after the slot already aged out is harmless and never drives a count negative", async () => {
+      const { reservationId } = await adapter.reserve("tenant-a", "biz-a", NORMAL_LIMITS);
+      now += 46 * MINUTE;
+      await adapter.release("tenant-a", reservationId);
+      await adapter.reserve("tenant-a", "biz-a", NORMAL_LIMITS);
+      expect(await adapter.getActiveCounts("tenant-a")).toEqual({
+        tenantActive: 1,
+        globalActive: 1,
+      });
+    });
+  });
 });

@@ -472,6 +472,29 @@ export class CallSessionOrchestrator {
         return;
       }
     }
+    if (this.ended) {
+      // The caller hung up while the start was in flight or waiting out a
+      // capacity retry. onCallEnd already ran with no conversationId and
+      // returned, so nothing else will ever end this conversation. Left
+      // alone, its capacity slot stays counted until it ages out, and enough
+      // of these (a burst of short test calls) filled the tenant ceiling and
+      // made the line reject every new caller with nobody actually on it.
+      log.warn("caller hung up during call start — ending the conversation just created", {
+        conversationId,
+      });
+      await this.orchestrator
+        .endConversation(conversationId, {
+          tenantId: params.tenantId,
+          endReason: "caller_hangup",
+        })
+        .catch((error: unknown) => {
+          log.warn("failed to end a conversation created after hangup — its slot ages out", {
+            conversationId,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        });
+      return;
+    }
     this.conversationId = conversationId;
 
     try {

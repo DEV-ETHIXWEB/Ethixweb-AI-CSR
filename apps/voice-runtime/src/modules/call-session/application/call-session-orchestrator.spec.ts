@@ -1865,6 +1865,30 @@ describe("CallSessionOrchestrator", () => {
       }
     });
 
+    it("PRODUCTION OUTAGE: a caller who hangs up while the start is retrying still has the conversation ended, so its capacity slot is released", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, orchestratorClient, stt } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+        orchestratorClient.startResponses = [
+          new OrchestratorCapacityExceededError(5, { brochureSegment: null, overflowNumber: null }),
+        ];
+
+        const startPromise = orchestrator.onCallStart(baseParams(), sink);
+        await jest.advanceTimersByTimeAsync(0);
+        await orchestrator.onCallEnd(baseParams(), "caller_hangup"); // hangs up during the wait
+        await jest.advanceTimersByTimeAsync(5000); // retry now succeeds
+        await startPromise;
+
+        expect(orchestratorClient.startCalls).toHaveLength(2);
+        expect(orchestratorClient.endCalls).toHaveLength(1);
+        expect(orchestratorClient.endCalls[0]?.req.endReason).toBe("caller_hangup");
+        expect(stt.sessions).toHaveLength(0);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it("gives up and apologizes once the call-start capacity retry budget is exhausted", async () => {
       jest.useFakeTimers();
       try {
