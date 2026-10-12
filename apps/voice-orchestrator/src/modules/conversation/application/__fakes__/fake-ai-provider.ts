@@ -9,7 +9,7 @@ export class FakeAiProvider implements AiProviderPort {
   /** Each call to streamCompletion consumes the next queued response in order — lets a test script a multi-turn tool-calling loop (first response: tool_call, second response: text). */
   public responses: AiCompletionChunk[][] = [
     [
-      { type: "text_delta", text: "hi" },
+      { type: "text_delta", text: "hi, how can I help?" },
       { type: "done", stopReason: "end_turn" },
     ],
   ];

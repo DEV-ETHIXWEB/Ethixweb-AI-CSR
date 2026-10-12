@@ -34,6 +34,7 @@ import { EVENT_BUS, type EventBusPort } from "../../events/domain/orchestrator-e
 import { ExecuteToolUseCase } from "../../tool-broker/application/execute-tool.use-case";
 import { ToolRegistry } from "../../tool-broker/application/tool-registry";
 import { compressMessages } from "../domain/context-window";
+import { isStalledReply, KEEP_CALL_MOVING_NOTE } from "../domain/stalled-reply";
 import type { Conversation, TranscriptTurn } from "../domain/conversation.entity";
 import {
   ConversationAlreadyEndedError,
@@ -112,6 +113,14 @@ export type TurnAdmission =
 
 /** Bounds a pathological model tool-loop. Not a documented constant — an INFERRED safety limit; a real call needs at most a handful (searchCustomer → escalateEmergency → createLead). */
 const MAX_TOOL_ITERATIONS = 5;
+
+interface CompletionResult {
+  text: string;
+  toolCalls: AiToolCallRequest[];
+  interrupted: boolean;
+  /** The provider reported an error, though some text or a tool call may still have come out. */
+  providerFailed: boolean;
+}
 
 /**
  * Below this Deepgram confidence score, the transcript is flagged to the
@@ -527,18 +536,37 @@ export class HandleTurnUseCase {
     // so the "turn HTTP round-trip completed" log below states the exact
     // number regardless of how the loop exits.
     let iterationCount = 0;
+    let keptCallMoving = false;
+    let continuingStalledReply = false;
 
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       iterationCount += 1;
       conversation.messages = compressMessages(conversation.messages);
 
-      const turn = await this.streamOneCompletion(
-        conversation,
-        tools,
-        command.signal,
-        iteration,
-        onChunk,
-      );
+      let turn: CompletionResult;
+      try {
+        turn = await this.streamOneCompletion(
+          conversation,
+          tools,
+          command.signal,
+          iteration,
+          onChunk,
+        );
+      } catch (error) {
+        // The caller already heard this turn's first reply. A failed
+        // follow-up question must not turn that into a failed turn, which
+        // voice-runtime would retry and speak a second time.
+        if (!continuingStalledReply) {
+          throw error;
+        }
+        this.logger.warn("keep-the-call-moving pass failed; keeping the reply already spoken", {
+          tenantId: conversation.tenantId,
+          conversationId: conversation.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        break;
+      }
+      continuingStalledReply = false;
       responseText = appendResponseSegment(responseText, turn.text);
       interrupted = turn.interrupted;
       // Sub-segment flushing (natural sentence/clause boundaries) already
@@ -679,6 +707,25 @@ export class HandleTurnUseCase {
       }
 
       if (toolCalls.length === 0) {
+        // See stalled-reply.ts: a reply that only acknowledged leaves the
+        // caller waiting on Grace and Grace waiting on the caller, which the
+        // runtime then fills with "I'm still here". One more short pass asks
+        // the next question instead. At most once per turn, never after an
+        // interruption, a goodbye, an emergency or a handoff.
+        if (
+          !keptCallMoving &&
+          !turn.interrupted &&
+          !turn.providerFailed &&
+          !escalation &&
+          !humanTransfer &&
+          !looksLikeSignOff(command.transcript) &&
+          isStalledReply(responseText)
+        ) {
+          keptCallMoving = true;
+          continuingStalledReply = true;
+          pushMessage({ role: "system", content: KEEP_CALL_MOVING_NOTE });
+          continue;
+        }
         break;
       }
 
@@ -1068,7 +1115,7 @@ export class HandleTurnUseCase {
     signal: AbortSignal | undefined,
     iteration: number,
     onChunk?: (text: string) => void,
-  ): Promise<{ text: string; toolCalls: AiToolCallRequest[]; interrupted: boolean }> {
+  ): Promise<CompletionResult> {
     let text = "";
     // What is actually spoken and saved: `text` with the output guard applied
     // to every segment (see output-guard.ts).
@@ -1233,7 +1280,7 @@ export class HandleTurnUseCase {
       interrupted,
     });
 
-    return { text: spokenText, toolCalls, interrupted };
+    return { text: spokenText, toolCalls, interrupted, providerFailed: providerErrorMessage !== null };
   }
 
   private applyChunk(

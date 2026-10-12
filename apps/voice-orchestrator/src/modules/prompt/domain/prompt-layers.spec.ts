@@ -1,4 +1,8 @@
-import { assembleLayeredPrompt, PLATFORM_BASE_PROMPT_V1 } from "./prompt-layers";
+import {
+  assembleLayeredPrompt,
+  PLATFORM_BASE_PROMPT_V1,
+  PLATFORM_BASE_PROMPT_VERSION,
+} from "./prompt-layers";
 
 describe("assembleLayeredPrompt", () => {
   it("assembles all four layers in order, each under its own labeled section", () => {
@@ -985,4 +989,22 @@ describe("assembleLayeredPrompt", () => {
       expect(prompt).not.toContain("give a tiny neutral cue");
     });
   });
+
+  describe("v52 third round of client feedback (Prateek, 2026-10-09)", () => {
+    const prompt = PLATFORM_BASE_PROMPT_V1.toLowerCase();
+
+    it("never ends a read-back or acknowledgment in silence", () => {
+      expect(prompt).toContain("every reply must leave the caller something to answer");
+      expect(prompt).toContain("never stop on a statement and wait in silence");
+    });
+
+    it("never restarts the intake after a refused save", () => {
+      expect(prompt).toContain("never restart the intake");
+    });
+
+    it("is versioned v52", () => {
+      expect(PLATFORM_BASE_PROMPT_VERSION).toBe("v52");
+    });
+  });
 });
+

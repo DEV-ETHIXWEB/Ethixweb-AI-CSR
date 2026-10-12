@@ -320,7 +320,7 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       const conversation = started.json();
       sim.aiProvider.responses = [
         [
-          { type: "text_delta", text: "first and only real invocation" },
+          { type: "text_delta", text: "first and only real invocation?" },
           { type: "done", stopReason: "end_turn" },
         ],
       ];
@@ -363,11 +363,11 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       const conversation = started.json();
       sim.aiProvider.responses = [
         [
-          { type: "text_delta", text: "response one" },
+          { type: "text_delta", text: "response one?" },
           { type: "done", stopReason: "end_turn" },
         ],
         [
-          { type: "text_delta", text: "response two" },
+          { type: "text_delta", text: "response two?" },
           { type: "done", stopReason: "end_turn" },
         ],
       ];
@@ -585,7 +585,7 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       const conversation = started.json();
       sim.aiProvider.responses = [
         [
-          { type: "text_delta", text: "only one real invocation" },
+          { type: "text_delta", text: "only one real invocation?" },
           { type: "done", stopReason: "end_turn" },
         ],
       ];

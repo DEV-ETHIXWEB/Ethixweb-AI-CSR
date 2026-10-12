@@ -126,7 +126,7 @@ describe("HandleTurnUseCase", () => {
       baseCommand({ transcript: "Hi, my water heater is broken" }),
     );
 
-    expect(result.responseText).toBe("hi");
+    expect(result.responseText).toBe("hi, how can I help?");
     expect(result.interrupted).toBe(false);
     const saved = await repository.findById("tenant-1", "conv-1");
     expect(saved?.transcript.map((t) => t.speaker)).toEqual(["caller", "agent"]);
@@ -216,7 +216,7 @@ describe("HandleTurnUseCase", () => {
         { type: "done", stopReason: "tool_use" },
       ],
       [
-        { type: "text_delta", text: "Found you!" },
+        { type: "text_delta", text: "Found you! What's going on?" },
         { type: "done", stopReason: "end_turn" },
       ],
     ];
@@ -233,7 +233,7 @@ describe("HandleTurnUseCase", () => {
 
     expect(toolExecuted).toHaveBeenCalledTimes(1);
     expect(result.toolCallsExecuted).toEqual(["searchCustomer"]);
-    expect(result.responseText).toBe("Found you!");
+    expect(result.responseText).toBe("Found you! What's going on?");
     expect(eventBus.eventsOfType("tool.called")).toHaveLength(1);
     expect(eventBus.eventsOfType("tool.completed")).toHaveLength(1);
   });
@@ -350,7 +350,7 @@ describe("HandleTurnUseCase", () => {
           { type: "done", stopReason: "tool_use" },
         ],
         [
-          { type: "text_delta", text: "Found you!" },
+          { type: "text_delta", text: "Found you! What's going on?" },
           { type: "done", stopReason: "end_turn" },
         ],
       ];
@@ -367,7 +367,7 @@ describe("HandleTurnUseCase", () => {
         (text) => chunks.push(text),
       );
 
-      expect(chunks).toEqual(["Found you!"]);
+      expect(chunks).toEqual(["Found you! What's going on?"]);
     });
 
     it("fires once with the full cached responseText on an idempotent replay — the callback contract stays the same whether or not the LLM actually ran", async () => {
@@ -1568,8 +1568,8 @@ describe("HandleTurnUseCase", () => {
       const chunks: string[] = [];
       const result = await admission.run((text) => chunks.push(text));
 
-      expect(result.responseText).toBe("hi");
-      expect(chunks).toEqual(["hi"]);
+      expect(result.responseText).toBe("hi, how can I help?");
+      expect(chunks).toEqual(["hi, how can I help?"]);
       const saved = await repository.findById("tenant-1", "conv-1");
       expect(saved?.transcript.map((t) => t.speaker)).toEqual(["caller", "agent"]);
     });
@@ -1585,7 +1585,7 @@ describe("HandleTurnUseCase", () => {
 
       expect(replay.kind).toBe("cached");
       if (replay.kind !== "cached") throw new Error("unreachable");
-      expect(replay.result.responseText).toBe("hi");
+      expect(replay.result.responseText).toBe("hi, how can I help?");
       expect("run" in replay).toBe(false);
     });
   });
@@ -2843,7 +2843,7 @@ describe("HandleTurnUseCase", () => {
       // before the hangup was processed — the turn must still return it,
       // not throw, even though its state update is about to be discarded.
       const result = await useCase.execute(baseCommand());
-      expect(result.responseText).toBe("hi");
+      expect(result.responseText).toBe("hi, how can I help?");
 
       const stored = await repository.findById("tenant-1", "conv-1");
       expect(stored?.endedAt).toBe("2026-01-01T00:00:00.000Z");
@@ -2872,7 +2872,7 @@ describe("HandleTurnUseCase", () => {
 
       const result = await useCase.execute(baseCommand());
 
-      expect(result.responseText).toBe("hi");
+      expect(result.responseText).toBe("hi, how can I help?");
       const stored = await repository.findById("tenant-1", "conv-1");
       expect(stored?.transcript.map((t) => t.speaker)).toEqual(["caller", "agent"]);
       expect(stored?.endedAt).toBeNull();
@@ -2941,7 +2941,7 @@ describe("HandleTurnUseCase", () => {
       const aiProvider2 = new FakeAiProvider();
       aiProvider2.responses = [
         [
-          { type: "text_delta", text: "I'm here." },
+          { type: "text_delta", text: "I'm here. What's going on?" },
           { type: "done", stopReason: "end_turn" },
         ],
       ];
@@ -2981,7 +2981,7 @@ describe("HandleTurnUseCase", () => {
       // Turn 2's own caller utterance AND response also survive — neither
       // turn's work was discarded by the other's.
       expect(texts).toContain("i think");
-      expect(texts).toContain("I'm here.");
+      expect(texts).toContain("I'm here. What's going on?");
       // F/G: turn 1's own response is present too — the model's own
       // memory of the call and the durable transcript agree with each
       // other; nothing was silently dropped on either side.
@@ -3001,7 +3001,7 @@ describe("HandleTurnUseCase", () => {
         baseCommand({ transcript: "Hi, my water heater is broken" }),
       );
 
-      expect(result.responseText).toBe("hi");
+      expect(result.responseText).toBe("hi, how can I help?");
       const saved = await repository.findById("tenant-1", "conv-1");
       expect(saved?.transcript.map((t) => t.speaker)).toEqual(["caller", "agent"]);
       expect(saved?.transcript[0]?.text).toBe("Hi, my water heater is broken");
@@ -3035,7 +3035,7 @@ describe("HandleTurnUseCase", () => {
       };
 
       const result = await useCase.execute(baseCommand({ transcript: "one last thing" }));
-      expect(result.responseText).toBe("hi");
+      expect(result.responseText).toBe("hi, how can I help?");
 
       const stored = await repository.findById("tenant-1", "conv-1");
       expect(stored?.endedAt).toBe("2026-01-01T00:00:00.000Z");
@@ -3154,7 +3154,7 @@ describe("HandleTurnUseCase", () => {
           { type: "done", stopReason: "tool_use" },
         ],
         [
-          { type: "text_delta", text: "Found you!" },
+          { type: "text_delta", text: "Found you! What's going on?" },
           { type: "done", stopReason: "end_turn" },
         ],
       ];
@@ -3226,7 +3226,7 @@ describe("HandleTurnUseCase", () => {
       // The reservation was released, so this retry proceeds and re-invokes
       // the model rather than hanging behind a permanently in-flight key.
       const result = await useCase.execute(command);
-      expect(result.responseText).toBe("hi");
+      expect(result.responseText).toBe("hi, how can I help?");
       expect(aiProvider.requests).toHaveLength(1);
     });
   });
@@ -3442,5 +3442,88 @@ describe("output guard in the live streaming path (client feedback: leaked reaso
   it("asks for a slower read-back of an address", async () => {
     const { chunks } = await spoken("Just to confirm, 1200 Pine Street, Seattle 98101?");
     expect(chunks.join("")).toMatch(/^\[slowly\] /);
+  });
+});
+
+/**
+ * Client feedback (Prateek, 2026-10-09): "she confirmed the details and then
+ * went silent, after some time she started saying 'I am here'". A reply that
+ * only acknowledged, with no tool call, used to end the turn with nothing for
+ * the caller to answer. See stalled-reply.ts.
+ */
+describe("HandleTurnUseCase keeps the call moving after an acknowledgment-only reply", () => {
+  const text = (value: string) => [
+    { type: "text_delta" as const, text: value },
+    { type: "done" as const, stopReason: "end_turn" as const },
+  ];
+
+  async function run(responses: string[], transcript = "it's 42 maple street, 30301") {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = responses.map(text);
+    const { useCase } = buildUseCase({ aiProvider, repository });
+    const chunks: string[] = [];
+    const result = await useCase.execute(baseCommand({ transcript }), (chunk) => chunks.push(chunk));
+    return { result, aiProvider, chunks };
+  }
+
+  it("asks the next question when the reply was only a read-back", async () => {
+    const { result, aiProvider, chunks } = await run([
+      "Perfect, I have 42 Maple Street, 3 0 3 0 1.",
+      "And is the number you're calling from the best one to reach you?",
+    ]);
+
+    expect(aiProvider.requests).toHaveLength(2);
+    const nudge = aiProvider.requests[1]!.messages.find((message) => message.role === "system");
+    expect(nudge?.content).toContain("did not move the call forward");
+    expect(result.responseText).toContain("42 Maple Street");
+    expect(result.responseText).toContain("best one to reach you?");
+    expect(chunks.join(" ")).toContain("best one to reach you?");
+  });
+
+  it("does not add a pass when the reply already asked something", async () => {
+    const { aiProvider } = await run(["Got it, 42 Maple Street. Is that right?"]);
+    expect(aiProvider.requests).toHaveLength(1);
+  });
+
+  it("does not add a pass when the reply already invites the caller to talk", async () => {
+    const { aiProvider } = await run(["Sure. Please spell your last name for me."]);
+    expect(aiProvider.requests).toHaveLength(1);
+  });
+
+  it("never speaks again after Grace's own goodbye", async () => {
+    const { aiProvider } = await run(["You're all set. Have a great day!"]);
+    expect(aiProvider.requests).toHaveLength(1);
+  });
+
+  it("never speaks again when the caller is signing off", async () => {
+    const { aiProvider } = await run(["No problem."], "ok that's all, bye");
+    expect(aiProvider.requests).toHaveLength(1);
+  });
+
+  it("stays silent on an empty reply (a held fragment), as before", async () => {
+    const { aiProvider, result } = await run([""], "my address is");
+    expect(aiProvider.requests).toHaveLength(1);
+    expect(result.responseText).toBe("");
+  });
+
+  it("adds at most one extra pass per turn", async () => {
+    const { aiProvider } = await run(["Okay.", "Alright."]);
+    expect(aiProvider.requests).toHaveLength(2);
+  });
+
+  it("keeps the spoken reply and does not fail the turn when the extra pass fails", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [text("Perfect, I have 42 Maple Street."), []];
+    aiProvider.throwAfterChunks = [null, new Error("provider down")];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    const result = await useCase.execute(baseCommand({ transcript: "42 maple street" }));
+
+    expect(result.responseText).toContain("Perfect, I have 42 Maple Street.");
+    expect(aiProvider.requests).toHaveLength(2);
   });
 });

@@ -531,6 +531,12 @@ export const PLATFORM_BASE_PROMPT_V1 = [
   "that limit: at most a few words reacting to what they said, then ",
   "EXACTLY ONE thing, either one question or one statement. Nothing ",
   "before the reaction and nothing after the one thing. ",
+  "Every reply must leave the caller something to answer. After a ",
+  'read-back or an acknowledgment, end with "Is that right?" or the next ',
+  "question you need; never stop on a statement and wait in silence. ",
+  "Never restart the intake: every answer the caller already gave stays ",
+  "valid, even when a save is refused, so ask only for the one thing ",
+  "that is missing. ",
   "Cut every sentence that only reassures without telling the caller ",
   "anything, because these are what push replies past forty words: ",
   '"let me get that handled for you," "let me get some information down ',
@@ -2028,4 +2034,13 @@ export const PLATFORM_BASE_PROMPT_V1 = [
  * callers; she now stays quiet. Also enforced in code, because prompts
  * alone did not hold: output-guard.ts, save-readiness.ts.
  */
-export const PLATFORM_BASE_PROMPT_VERSION = "v51";
+/**
+ * v52: third round of client feedback (Prateek, 2026-10-09). (1) Grace read
+ * details back, asked nothing, and waited until the silence check-in said
+ * "I'm still here"; every reply now ends with something to answer, also
+ * enforced in code (stalled-reply.ts). (2) After answering a series of
+ * questions the caller was asked everything again from the first one; a
+ * refused save no longer reads as "start over" (name-grounding.ts,
+ * save-readiness.ts) and the prompt says never to restart the intake.
+ */
+export const PLATFORM_BASE_PROMPT_VERSION = "v52";

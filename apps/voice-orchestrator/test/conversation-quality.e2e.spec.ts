@@ -217,6 +217,13 @@ describe("Conversation quality — orchestration-layer correctness across turns"
       // Model does NOT call escalateEmergency itself — the backstop
       // (HandleTurnUseCase) must still force the real check on turn 1.
       scriptText("Let's get you help right away.");
+      // After the backstop's result the model asks its next question, as a
+      // real one does; a repeated statement would now (correctly) earn one
+      // more short pass, see stalled-reply.ts.
+      sim.aiProvider.responses.push([
+        { type: "text_delta", text: "What's the address there?" },
+        { type: "done", stopReason: "end_turn" },
+      ]);
 
       const res = await turn(
         conversation.id,

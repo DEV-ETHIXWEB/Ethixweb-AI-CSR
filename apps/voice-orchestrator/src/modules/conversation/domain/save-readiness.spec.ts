@@ -173,3 +173,29 @@ describe("shouldNudgeForCallbackNumber (client feedback: ask the callback number
     ).toBe(false);
   });
 });
+
+describe("client feedback (Prateek, 2026-10-09): an address given early in a long call still counts", () => {
+  const early = ["my name is pratik", "the address is 42 Maple Street, Atlanta 30301"];
+  const later = Array.from({ length: 14 }, (_, i) => `answer number ${i + 1}`);
+
+  it("does not refuse the save as address_needed when the street came more than 12 replies ago", () => {
+    const result = saveBlockedReason({
+      ...base,
+      callerTexts: [...early, ...later],
+      address: { street: "42 Maple Street" },
+    });
+    expect(result).toBeNull();
+  });
+
+  it("does not nag for the callback number as if no address existed", () => {
+    expect(
+      shouldNudgeForCallbackNumber({ callerTexts: [...early, ...later], agentTexts: [] }),
+    ).toBe(true);
+  });
+
+  it("tells the model to keep everything else when it does refuse", () => {
+    const result = saveBlockedReason({ ...base, callerTexts: ["my sink is clogged"] });
+    expect(result?.detail).toContain("do not ask for it again");
+  });
+});
+

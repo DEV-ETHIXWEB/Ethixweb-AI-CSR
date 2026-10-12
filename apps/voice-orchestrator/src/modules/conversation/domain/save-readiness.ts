@@ -22,13 +22,13 @@ const ASKED_FOR_ADDRESS =
 export const ADDRESS_NEEDED_ERROR = {
   error: "address_needed",
   detail:
-    "Do not save yet. You do not have the caller's street address (house number and street name). Ask for it in one short question and read it back. Then save it, passing the address in this same call.",
+    "Do not save yet. You do not have the caller's street address (house number and street name). Ask for it in one short question and read it back. Then save it, passing the address in this same call. Everything else the caller already gave you is still valid: do not ask for it again.",
 } as const;
 
 export const ADDRESS_NOT_PASSED_ERROR = {
   error: "address_not_passed",
   detail:
-    "The caller already gave a street address. Call this again and include it in the address field (street, city, state, zip). It cannot be added later.",
+    "The caller already gave a street address. Call this again and include it in the address field (street, city, state, zip). It cannot be added later. Do not ask the caller for it again.",
 } as const;
 
 export const NUMBER_ASKED =
@@ -37,7 +37,7 @@ export const NUMBER_ASKED =
 export const PHONE_NOT_CONFIRMED_ERROR = {
   error: "callback_number_not_confirmed",
   detail:
-    "Do not save yet. You have not confirmed the callback number. Ask once whether the number they are calling from is the best one to reach them, reading it back slowly, or take a different one. Then save it.",
+    "Do not save yet. You have not confirmed the callback number. Ask once whether the number they are calling from is the best one to reach them, reading it back slowly, or take a different one. Then save it. Everything else the caller already gave you is still valid: do not ask for it again.",
 } as const;
 
 /** The last 10-digit US phone number the caller SAID (spoken digits included), or null. */
@@ -55,7 +55,7 @@ export function spokenPhoneDigits(callerTexts: readonly string[]): string | null
 export function phoneMismatchError(spoken: string) {
   return {
     error: "phone_differs_from_what_caller_said",
-    detail: `The caller gave the number ${spoken.slice(0, 3)}-${spoken.slice(3, 6)}-${spoken.slice(6)}. Use exactly that number as the phone (E.164, +1${spoken}), not the caller ID, and read it back to them.`,
+    detail: `The caller gave the number ${spoken.slice(0, 3)}-${spoken.slice(3, 6)}-${spoken.slice(6)}. Use exactly that number as the phone (E.164, +1${spoken}), not the caller ID, and read it back to them. Do not ask for anything else again.`,
   } as const;
 }
 
@@ -98,7 +98,9 @@ export function saveBlockedReason(args: Args) {
 }
 
 function addressBlockedReason({ callerTexts, agentTexts, address }: Args) {
-  const callerText = callerTexts.slice(-12).join(" . ");
+  // The whole call, not a recent window: on a long call an address given
+  // early read as "never given", and the refusal sent Grace back to re-ask it.
+  const callerText = callerTexts.join(" . ");
   const streetGiven = extractStreet(callerText) !== null;
   if (streetGiven) {
     return hasStreetArg(address) ? null : ADDRESS_NOT_PASSED_ERROR;
@@ -138,7 +140,7 @@ export function shouldNudgeForCallbackNumber(args: {
   if (args.callerTexts.some((text) => HARD_EMERGENCY.test(text))) {
     return false;
   }
-  if (extractStreet(args.callerTexts.slice(-12).join(" . ")) === null) {
+  if (extractStreet(args.callerTexts.join(" . ")) === null) {
     return false;
   }
   if (spokenPhoneDigits(args.callerTexts) !== null) {
