@@ -12,6 +12,7 @@ import {
   CRM_CUSTOMER_SYNC_PORT,
   type CrmCustomerSyncPort,
 } from "../domain/ports/crm-customer-sync.port";
+import { CUSTOMER_REPOSITORY, type CustomerRepository } from "../domain/ports/customer-repository.port";
 import { CustomerCacheUpserter } from "./customer-cache-upserter";
 
 export interface CreateCustomerCommand {
@@ -43,6 +44,7 @@ export class CreateCustomerUseCase {
     @Inject(OUTBOX_WRITER_FACTORY) private readonly outboxWriterFactory: OutboxWriterFactory,
     private readonly cacheUpserter: CustomerCacheUpserter,
     @Inject(APP_LOGGER) private readonly logger: StructuredLogger,
+    @Inject(CUSTOMER_REPOSITORY) private readonly customerRepository: CustomerRepository,
   ) {}
 
   async execute(command: CreateCustomerCommand): Promise<Customer> {
@@ -54,7 +56,7 @@ export class CreateCustomerUseCase {
     const crmResult = await this.attemptCrmSync(command);
 
     return this.tenantContext.run(command.tenantId, async (db) => {
-      const { customer, created } = await this.cacheUpserter.upsert(db, {
+      const { customer: upserted, created } = await this.cacheUpserter.upsert(db, {
         tenantId: command.tenantId,
         businessId: command.businessId,
         phoneE164: command.phoneE164,
@@ -64,6 +66,19 @@ export class CreateCustomerUseCase {
         crmCustomerId: crmResult?.crmCustomerId,
         crmRawCache: crmResult?.raw,
       });
+
+      // Client feedback (2026-10-13 test calls): a number that already had a
+      // row (an earlier test saved it as "unknown" with no address) came back
+      // unchanged here, so every name and address the caller confirmed on a
+      // later call was dropped. What the caller just confirmed is the newest
+      // truth, so it fills in or replaces the stored name and address. CRM
+      // data still wins for the name when a CRM answered.
+      const customer = created
+        ? upserted
+        : await this.customerRepository.updateCrmCache(db, upserted.tenantId, upserted.id, {
+            name: crmResult?.name ?? command.name,
+            ...(command.address !== undefined ? { address: command.address } : {}),
+          });
 
       if (created) {
         await this.outboxWriterFactory.forDb(db).write({
@@ -85,7 +100,7 @@ export class CreateCustomerUseCase {
         });
       } else {
         this.logger.info(
-          "customer creation raced with a concurrent call — returned the existing row",
+          "customer already existed for this number: updated its name and address with what the caller confirmed",
           {
             tenantId: customer.tenantId,
             businessId: customer.businessId,

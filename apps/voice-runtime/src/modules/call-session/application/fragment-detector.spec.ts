@@ -27,7 +27,6 @@ describe("looksLikeIncompleteFragment", () => {
     ["that's right"],
     ["not right now"],
     ["water heater"],
-    ["nine three one one"],
     ["bye"],
     ["hello"],
   ])("MISSION EXAMPLE: %p is a genuinely complete short utterance, NOT flagged", (transcript) => {
@@ -146,4 +145,36 @@ describe("fragmentStrength (client feedback: silent hold for a caller who is sti
     expect(looksLikeIncompleteFragment("let me check on")).toBe(true);
     expect(looksLikeIncompleteFragment("my sink is leaking")).toBe(false);
   });
+
+  describe("client feedback: a number said in groups is not cut off mid-way (vendor calls Oct 4 and Oct 7)", () => {
+    // "nine three one one" used to be listed as a complete utterance. A bare
+    // 4-digit run is more often the first part of a ZIP or an address than a
+    // whole answer, and cutting a caller off mid-ZIP was a real failure, so it
+    // is now held (up to 4 s) for the rest.
+    it("holds a bare 4-digit run that used to be treated as complete", () => {
+      expect(fragmentStrength("nine three one one")).toBe("strong");
+    });
+
+    it.each([
+      ["nine eight", "strong"],
+      ["two oh six", "strong"],
+      ["206 409", "strong"],
+      ["3810", "strong"],
+      ["nine eight one one", "strong"],
+    ])("holds the partial number %p", (utterance, expected) => {
+      expect(fragmentStrength(utterance)).toBe(expected);
+    });
+
+    it.each([
+      ["98119"],
+      ["nine eight one one nine"],
+      ["206 409 2093"],
+      ["two"],
+      ["it's 98119"],
+      ["s u d e e t"],
+    ])("does not hold %p (complete number, single digit, or not only digits)", (utterance) => {
+      expect(fragmentStrength(utterance)).toBe("none");
+    });
+  });
 });
+

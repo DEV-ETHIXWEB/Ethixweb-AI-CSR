@@ -18,6 +18,7 @@ function buildUseCase(
     outboxWriterFactory,
     new CustomerCacheUpserter(customerRepository),
     createNoopLogger(),
+    customerRepository,
   );
 }
 
@@ -105,4 +106,40 @@ describe("CreateCustomerUseCase", () => {
       expect(items).toHaveLength(1);
     },
   );
+
+  it("CLIENT FEEDBACK (2026-10-13): a number that already had an incomplete row gets the name and address the caller just confirmed, instead of the old row coming back unchanged", async () => {
+    const customerRepository = new FakeCustomerRepository();
+    const useCase = buildUseCase(customerRepository);
+    const base = { tenantId: "tenant-1", businessId: "business-1", phoneE164: "+18722784999" };
+    const earlier = await useCase.execute({ ...base, name: "unknown" });
+
+    const later = await useCase.execute({
+      ...base,
+      name: "Patrick Lee",
+      address: { street: "1912 9th Ave W", city: "Seattle", state: "WA", zip: "98119" },
+    });
+
+    expect(later.id).toBe(earlier.id);
+    expect(later.name).toBe("Patrick Lee");
+    expect(later.address).toEqual({
+      street: "1912 9th Ave W",
+      city: "Seattle",
+      state: "WA",
+      zip: "98119",
+    });
+    const stored = await customerRepository.findById(undefined as never, "tenant-1", earlier.id);
+    expect(stored?.name).toBe("Patrick Lee");
+  });
+
+  it("keeps a stored address when a later save for the same number has none", async () => {
+    const customerRepository = new FakeCustomerRepository();
+    const useCase = buildUseCase(customerRepository);
+    const base = { tenantId: "tenant-1", businessId: "business-1", phoneE164: "+18722784999" };
+    await useCase.execute({ ...base, name: "Patrick Lee", address: { street: "1912 9th Ave W" } });
+
+    const later = await useCase.execute({ ...base, name: "Patrick Lee" });
+
+    expect(later.address).toEqual({ street: "1912 9th Ave W" });
+  });
 });
+

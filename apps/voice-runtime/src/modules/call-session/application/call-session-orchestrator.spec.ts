@@ -2121,6 +2121,36 @@ describe("CallSessionOrchestrator", () => {
       }
     });
 
+    it("CLIENT FEEDBACK (vendor call Oct 8): after 'hold on, let me check' the first check-in waits 45s, not the normal timeout", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+        orchestratorClient.turnResponses = [
+          {
+            conversationId: "conv-1",
+            responseText: "Sure.",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+        ];
+
+        await orchestrator.onCallStart(baseParams(), sink);
+        stt.sessions[0]!.emitFinalTranscript("hold on let me check the zip code", 0.9);
+        await jest.advanceTimersByTimeAsync(0);
+        expect(tts.synthesizeCalls).toEqual(["Thanks for calling, how can I help?", "Sure."]);
+
+        await jest.advanceTimersByTimeAsync(30_000);
+        expect(tts.synthesizeCalls).not.toContain("Take your time. I'm still here.");
+
+        await jest.advanceTimersByTimeAsync(16_000);
+        expect(tts.synthesizeCalls).toContain("Take your time. I'm still here.");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it("the FIRST check-in phrase specifically does NOT repeat verbatim — continued silence escalates to a different phrase instead (see the REPEATS test below for the full mechanism)", async () => {
       jest.useFakeTimers();
       try {

@@ -128,6 +128,49 @@ const TRAILING_WORDS = new Set([
   "we",
 ]);
 
+const SPOKEN_DIGITS: Record<string, string> = {
+  zero: "0",
+  oh: "0",
+  o: "0",
+  one: "1",
+  two: "2",
+  three: "3",
+  four: "4",
+  five: "5",
+  six: "6",
+  seven: "7",
+  eight: "8",
+  nine: "9",
+};
+
+/**
+ * Client feedback (previous vendor's calls, Oct 4 and Oct 7): the CSR cut in
+ * while a caller was still reading out a ZIP, then moved on without it. People
+ * say numbers in groups with pauses ("nine eight", "two oh six ... four oh
+ * nine"), and each pause reaches us as a finished utterance. An utterance made
+ * only of digits is held like any other strong fragment unless it is already a
+ * whole ZIP (5 digits) or a whole phone number (10 or 11). A single digit is
+ * left alone: "two" is far more often a complete answer ("how many
+ * bathrooms?") than the start of a number.
+ */
+function isPartialNumber(words: readonly string[]): boolean {
+  let digits = "";
+  for (const raw of words) {
+    const word = raw.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (word.length === 0) {
+      continue;
+    }
+    if (/^\d+$/.test(word)) {
+      digits += word;
+    } else if (SPOKEN_DIGITS[word]) {
+      digits += SPOKEN_DIGITS[word];
+    } else {
+      return false;
+    }
+  }
+  return digits.length >= 2 && ![5, 10, 11].includes(digits.length);
+}
+
 function normalizeWord(word: string): string {
   return word.toLowerCase().replace(/[^a-z']/g, "");
 }
@@ -159,6 +202,9 @@ export function fragmentStrength(transcript: string): FragmentStrength {
   }
   const last = normalizeWord(words[words.length - 1]!);
   if (TRAILING_WORDS.has(last)) {
+    return "strong";
+  }
+  if (isPartialNumber(words)) {
     return "strong";
   }
   if (words.length > OPENING_WORD_COUNT_MAX) {

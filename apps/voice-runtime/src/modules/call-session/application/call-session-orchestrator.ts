@@ -200,6 +200,21 @@ function bargeInConfirmationTimeoutMs(): number {
  * — found live running this file's own suite, not a hypothetical.
  */
 const DEFAULT_SILENCE_CHECK_IN_TIMEOUT_MS = 15_000;
+/**
+ * Client feedback (previous vendor's call, Oct 8): a caller said "hold on, let
+ * me check" to find his ZIP and the CSR gave up on him. Grace never hangs up on
+ * silence, but a 15-second "I'm still here" while someone is looking something
+ * up is still a nudge they did not ask for. After an explicit hold request the
+ * first check-in waits this long instead.
+ */
+const HOLD_REQUEST_SILENCE_TIMEOUT_MS = 45_000;
+const HOLD_REQUEST_PATTERN =
+  /\b(hold on|hang on|one (sec|second|moment|minute)|just a (sec|second|moment|minute)|give me a (sec|second|moment|minute)|let me (check|find|look|get|grab)|wait a (sec|second|moment|minute))\b/i;
+
+export function isHoldRequest(transcript: string): boolean {
+  return HOLD_REQUEST_PATTERN.test(transcript);
+}
+
 function silenceCheckInTimeoutMs(): number {
   const raw = process.env["SILENCE_CHECK_IN_TIMEOUT_MS"];
   const parsed = raw ? Number(raw) : NaN;
@@ -378,6 +393,8 @@ export class CallSessionOrchestrator {
   private silenceCheckInTimer: ReturnType<typeof setTimeout> | null = null;
   /** How many check-ins this silence episode has already produced — reset by `armSilenceCheckIn`, which only runs when Grace speaks for a REAL reason (i.e. a new episode). See `MAX_SILENCE_CHECK_INS`. */
   private silenceCheckInCount = 0;
+  /** True when the caller's last finished utterance asked Grace to wait ("hold on, let me check"). Lengthens the next silence episode's first check-in; see HOLD_REQUEST_SILENCE_TIMEOUT_MS. */
+  private callerAskedToHold = false;
   /** Last time the caller made any sound (raw VAD onset or recognized interim text). Used only to defer a silence check-in, never to cancel it. */
   private lastCallerActivityAt = 0;
   /** How many times the current check-in has been deferred because the caller was audibly active. */
@@ -720,6 +737,7 @@ export class CallSessionOrchestrator {
     // caller silence — it re-arms again, correctly, once Grace's
     // response has actually been spoken (below).
     this.disarmSilenceCheckIn();
+    this.callerAskedToHold = isHoldRequest(result.transcript);
     // Defense-in-depth — the absolute, unconditional guarantee behind
     // this class's own required invariant ("when the caller starts
     // speaking, the caller takes the floor"): whatever the interim-based
@@ -1205,7 +1223,15 @@ export class CallSessionOrchestrator {
       // audio finished sending. With fast TTS those differ by seconds, and
       // counting from send-end cut the caller's time to answer by exactly
       // that much before "are you still there?" spoke over them.
-    }, silenceCheckInTimeoutMs() + this.millisUntilPlaybackEnds());
+    }, this.currentSilenceTimeoutMs() + this.millisUntilPlaybackEnds());
+  }
+
+  /** The wait before the next check-in: longer for the first one after the caller asked Grace to hold. */
+  private currentSilenceTimeoutMs(): number {
+    const base = silenceCheckInTimeoutMs();
+    return this.callerAskedToHold && this.silenceCheckInCount === 0
+      ? Math.max(base, HOLD_REQUEST_SILENCE_TIMEOUT_MS)
+      : base;
   }
 
   /** Cancels any pending silence check-in without speaking one — real caller activity, a new turn starting, or the call ending all mean there's nothing to check in about. */
