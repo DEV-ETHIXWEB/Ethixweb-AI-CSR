@@ -1,0 +1,94 @@
+# Single-server test deployment (AWS EC2, Sydney, Free-plan credits).
+# Everything runs on one machine; only Caddy is reachable from the internet.
+# core-api, voice-orchestrator, Postgres and Redis stay on the private Docker
+# network. See README.md in this folder.
+#
+# Secrets live in ./env/*.env on the server only (chmod 600), never in git.
+
+name: ethixweb
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    env_file: ./env/postgres.env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ethixweb"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    # Live call state, idempotency keys and capacity slots only, all with TTLs
+    # of a few hours. Nothing here needs to survive a restart.
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "192mb", "--maxmemory-policy", "volatile-lru"]
+
+  core-api:
+    image: ethixweb/core-api:current
+    build:
+      context: ../..
+      dockerfile: apps/core-api/Dockerfile
+    restart: unless-stopped
+    env_file: ./env/core-api.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  voice-orchestrator:
+    image: ethixweb/voice-orchestrator:current
+    build:
+      context: ../..
+      dockerfile: apps/voice-orchestrator/Dockerfile
+    restart: unless-stopped
+    env_file: ./env/voice-orchestrator.env
+    depends_on:
+      - core-api
+      - redis
+
+  voice-runtime:
+    image: ethixweb/voice-runtime:current
+    build:
+      context: ../..
+      dockerfile: apps/voice-runtime/Dockerfile
+    restart: unless-stopped
+    env_file: ./env/voice-runtime.env
+    # Lets live calls drain on restart (SHUTDOWN_DRAIN_TIMEOUT_MS is 30s).
+    stop_grace_period: 35s
+    depends_on:
+      - voice-orchestrator
+
+  dashboard:
+    image: ethixweb/dashboard:current
+    build:
+      context: ../..
+      dockerfile: apps/dashboard/Dockerfile
+    restart: unless-stopped
+    env_file: ./env/dashboard.env
+    depends_on:
+      - core-api
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    env_file: ./env/caddy.env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - voice-runtime
+      - dashboard
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,12 @@
+# Automatic HTTPS (Let's Encrypt) for the two public hostnames.
+# VOICE_HOST and APP_HOST come from env/caddy.env, e.g.
+#   voice.15-134-237-50.sslip.io   (Twilio webhooks + media WebSocket)
+#   app.15-134-237-50.sslip.io     (operations dashboard)
+
+{$VOICE_HOST} {
+	reverse_proxy voice-runtime:3200
+}
+
+{$APP_HOST} {
+	reverse_proxy dashboard:3001
+}
