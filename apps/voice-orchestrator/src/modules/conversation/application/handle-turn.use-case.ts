@@ -6,7 +6,9 @@ import {
 } from "../domain/address-check";
 import { OutputGuard } from "../domain/output-guard";
 import {
-  CALLBACK_NUMBER_NOTE,
+  callbackNumberNote,
+  isHardEmergency,
+  LEAD_NEEDS_CUSTOMER_DETAILS_ERROR,
   saveBlockedReason,
   shouldNudgeForCallbackNumber,
 } from "../domain/save-readiness";
@@ -33,8 +35,15 @@ import { ProviderCompletionError } from "../../ai-provider/domain/errors";
 import { EVENT_BUS, type EventBusPort } from "../../events/domain/orchestrator-event";
 import { ExecuteToolUseCase } from "../../tool-broker/application/execute-tool.use-case";
 import { ToolRegistry } from "../../tool-broker/application/tool-registry";
+import { addressReadbackNote, buildCallNotes, formatCallNotes } from "../domain/call-notes";
 import { compressMessages } from "../domain/context-window";
-import { isStalledReply, KEEP_CALL_MOVING_NOTE } from "../domain/stalled-reply";
+import {
+  isHoldRequest,
+  isStalledReply,
+  KEEP_CALL_MOVING_NOTE,
+  TRAILING_FRAGMENT_NOTE,
+  trailsOff,
+} from "../domain/stalled-reply";
 import type { Conversation, TranscriptTurn } from "../domain/conversation.entity";
 import {
   ConversationAlreadyEndedError,
@@ -120,6 +129,8 @@ interface CompletionResult {
   interrupted: boolean;
   /** The provider reported an error, though some text or a tool call may still have come out. */
   providerFailed: boolean;
+  /** Everything the model said was a repeat of a recent statement, so the output guard dropped it all and nothing was spoken. */
+  onlyRepeated: boolean;
 }
 
 /**
@@ -395,7 +406,7 @@ export class HandleTurnUseCase {
       // does.
       annotatedTranscript = annotateMissingLead(
         annotatedTranscript,
-        Boolean(conversation.customerId),
+        hasUsableCustomer(conversation),
       );
     }
     if (conversation.crmIntegrationUnavailable) {
@@ -485,18 +496,35 @@ export class HandleTurnUseCase {
       shouldNudgeForCallbackNumber({
         callerTexts: callerTextsSoFar,
         agentTexts: agentTextsSoFar,
-        customerId: conversation.customerId,
+        customerId: hasUsableCustomer(conversation) ? conversation.customerId : null,
         leadEverAttempted: conversation.leadEverAttempted,
       })
     ) {
-      annotatedTranscript = `${CALLBACK_NUMBER_NOTE} ${annotatedTranscript}`;
+      annotatedTranscript = `${callbackNumberNote(conversation.callerAni)} ${annotatedTranscript}`;
     }
-    if (shouldNudgeForName(conversation)) {
+    // A pending address read-back comes first; the name is asked next turn.
+    if (
+      shouldNudgeForName(conversation) &&
+      !addressReadbackNote(callerTextsSoFar, agentTextsSoFar)
+    ) {
       // Client feedback: a call could run several turns of triage without
       // ever asking for the caller's name, and prompt wording alone did not
       // hold (a real-model QA scenario failed 4/4 on it). Same "reliability
       // ceiling" reasoning as the reminders above: a deterministic note.
       annotatedTranscript = annotateNameMissing(annotatedTranscript);
+    }
+    // See call-notes.ts: what the caller already said, restated every turn so
+    // nothing they gave is asked for again or said back under a new name.
+    const callNotes = formatCallNotes(buildCallNotes(callerTextsSoFar, conversation.transcript));
+    if (callNotes) {
+      annotatedTranscript = `${callNotes} ${annotatedTranscript}`;
+    }
+    if (trailsOff(command.transcript)) {
+      annotatedTranscript = `${TRAILING_FRAGMENT_NOTE} ${annotatedTranscript}`;
+    }
+    const readback = addressReadbackNote(callerTextsSoFar, agentTextsSoFar);
+    if (readback) {
+      annotatedTranscript = `${readback} ${annotatedTranscript}`;
     }
     pushMessage({
       role: "user",
@@ -551,6 +579,7 @@ export class HandleTurnUseCase {
           command.signal,
           iteration,
           onChunk,
+          responseText,
         );
       } catch (error) {
         // The caller already heard this turn's first reply. A failed
@@ -719,7 +748,9 @@ export class HandleTurnUseCase {
           !escalation &&
           !humanTransfer &&
           !looksLikeSignOff(command.transcript) &&
-          isStalledReply(responseText)
+          !isHoldRequest(command.transcript) &&
+          !trailsOff(command.transcript) &&
+          (isStalledReply(responseText) || (!responseText.trim() && turn.onlyRepeated))
         ) {
           keptCallMoving = true;
           continuingStalledReply = true;
@@ -880,7 +911,9 @@ export class HandleTurnUseCase {
       // stalled into silence. In that case the second pass is what keeps
       // the conversation moving, and it cannot double-ask because the first
       // pass asked nothing.
-      const firstPassAskedSomething = /\?/.test(turn.text);
+      // "Tell me what's going on" asks as much as a question mark does (QA
+      // 2026-10-13: a second pass stacked another question on top of it).
+      const firstPassAskedSomething = turn.text.trim().length > 0 && !isStalledReply(turn.text);
       //
       // EXTENDED after the v40 regression sweep: the same double reply happens
       // when the MODEL calls a lookup itself right after asking its question
@@ -889,8 +922,19 @@ export class HandleTurnUseCase {
       // behind most replies running past 40 words. A lookup that finds no
       // emergency gives the caller nothing new to hear right now; its result
       // is in history for the model's very next turn.
+      // QA 2026-10-13: when the model already gave its answer ("Miami is
+      // outside our area... good luck") and called getServiceAreas in the same
+      // breath, the pass after the result said it all again in other words.
+      // A coverage or hours lookup only needs its own spoken pass when nothing
+      // substantial was said before it.
+      const answeredBeforeLookup = turn.text.trim().split(/\s+/).length >= 8;
       const ranOnlySilentLookups =
-        ranOnlyBackstops || toolCalls.every((call) => SILENT_LOOKUP_TOOLS.has(call.name));
+        ranOnlyBackstops ||
+        toolCalls.every(
+          (call) =>
+            SILENT_LOOKUP_TOOLS.has(call.name) ||
+            (answeredBeforeLookup && ANSWER_FIRST_LOOKUP_TOOLS.has(call.name)),
+        );
       if (ranOnlySilentLookups && firstPassAskedSomething && !escalatedThisIteration) {
         break;
       }
@@ -1115,12 +1159,25 @@ export class HandleTurnUseCase {
     signal: AbortSignal | undefined,
     iteration: number,
     onChunk?: (text: string) => void,
+    /** What earlier passes of this same turn already said, so a later pass cannot say it again. */
+    alreadySaidThisTurn = "",
   ): Promise<CompletionResult> {
     let text = "";
     // What is actually spoken and saved: `text` with the output guard applied
     // to every segment (see output-guard.ts).
     let spokenText = "";
-    const guard = new OutputGuard();
+    const guard = new OutputGuard(
+      [
+        ...conversation.transcript
+          .filter((entry) => entry.speaker === "agent")
+          .slice(-3)
+          .map((entry) => entry.text),
+        // QA 2026-10-13: a pass before a tool call and the pass after it both
+        // said the out-of-area line, glued into one 45-word reply.
+        ...(alreadySaidThisTurn.trim() ? [alreadySaidThisTurn] : []),
+      ],
+      alreadySaidThisTurn.trim().length > 0,
+    );
     const emit = (segment: string): void => {
       const guarded = guard.apply(segment);
       if (guarded.trim()) {
@@ -1280,7 +1337,13 @@ export class HandleTurnUseCase {
       interrupted,
     });
 
-    return { text: spokenText, toolCalls, interrupted, providerFailed: providerErrorMessage !== null };
+    return {
+      text: spokenText,
+      toolCalls,
+      interrupted,
+      providerFailed: providerErrorMessage !== null,
+      onlyRepeated: !spokenText.trim() && guard.actions.includes("repeated_statement"),
+    };
   }
 
   private applyChunk(
@@ -1405,6 +1468,18 @@ export class HandleTurnUseCase {
         return { output: blocked };
       }
     }
+    if (toolCall.name === "createLead" && conversation.customerDetailsOnFile === false) {
+      const callerTexts = conversation.transcript
+        .filter((entry) => entry.speaker === "caller")
+        .map((entry) => entry.text);
+      if (!isHardEmergency(callerTexts)) {
+        this.logger.warn("createLead blocked: the matched record has no name or address yet", {
+          tenantId: conversation.tenantId,
+          conversationId: conversation.id,
+        });
+        return { output: LEAD_NEEDS_CUSTOMER_DETAILS_ERROR };
+      }
+    }
     if (toolCall.name === "createCustomer" && !this.nameIsGrounded(conversation, toolCall)) {
       this.logger.warn("createCustomer blocked: name was never said by the caller", {
         tenantId: conversation.tenantId,
@@ -1501,6 +1576,7 @@ export class HandleTurnUseCase {
       typeof output["customer_id"] === "string"
     ) {
       conversation.customerId = output["customer_id"];
+      conversation.customerDetailsOnFile = true;
       return undefined;
     }
 
@@ -1713,6 +1789,12 @@ function looksLikeAbbreviation(buffer: string, periodEndIndex: number): boolean 
  * everything that commits data (createCustomer, createLead, updateLead),
  * where the model genuinely must react to the outcome.
  */
+/** Lookups whose answer the model often speaks in the same breath as calling them; see `answeredBeforeLookup`. */
+const ANSWER_FIRST_LOOKUP_TOOLS: ReadonlySet<string> = new Set([
+  "getServiceAreas",
+  "getBusinessHours",
+]);
+
 const SILENT_LOOKUP_TOOLS: ReadonlySet<string> = new Set([
   "searchCustomer",
   "lookupPreviousCalls",
@@ -1884,14 +1966,15 @@ function buildTransferPromiseBackstopCall(transcript: string): AiToolCallRequest
  * of nagging the model toward a call it's already made.
  */
 function annotateMissingLead(transcript: string, customerCreated: boolean): string {
+  // v53: this used to say "don't wait for an address or zip code first", the
+  // old rule behind saves with no address (the save gate then refused them
+  // anyway). It now points at whatever is actually missing.
   const instruction = customerCreated
-    ? "[a customer record already exists for this caller but no lead has " +
-      "been created yet this call — call createLead now using that " +
-      "customer's id; don't wait for an address or zip code first]"
-    : "[no customer/lead record has been created yet this call — if you " +
-      "have the caller's name, call createCustomer now with that name and " +
-      "the caller's own phone number already known from this call; don't " +
-      "wait for an address or zip code first]";
+    ? "[the caller's details are saved but no lead has been created yet this call; " +
+      "call createLead now with a complete problem_summary.]"
+    : "[nothing is saved yet this call. Once you have the caller's name, street address " +
+      "and confirmed callback number, call createCustomer and then createLead. If one of " +
+      "those is still missing, your next question asks for it.]";
   return `${instruction} ${transcript}`;
 }
 
@@ -1955,8 +2038,17 @@ const NAME_MISSING_NOTE =
   "Do not ask anything else this turn.]";
 
 /** True when the call is several caller turns in, nobody has asked for or given a name, and nothing is saved yet. */
+/**
+ * A customer id that really holds this caller's details. A record matched at
+ * call start with no real name or address does not count until createCustomer
+ * fills it in; see Conversation.customerDetailsOnFile.
+ */
+function hasUsableCustomer(conversation: Conversation): boolean {
+  return Boolean(conversation.customerId) && conversation.customerDetailsOnFile !== false;
+}
+
 export function shouldNudgeForName(conversation: Conversation): boolean {
-  if (conversation.customerId || conversation.leadEverAttempted) {
+  if (hasUsableCustomer(conversation) || conversation.leadEverAttempted) {
     return false;
   }
   const callerTurns = conversation.transcript.filter((entry) => entry.speaker === "caller");

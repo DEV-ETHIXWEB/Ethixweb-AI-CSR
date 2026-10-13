@@ -143,8 +143,30 @@ describe("saveBlockedReason (client feedback: no submitting before name and addr
 describe("shouldNudgeForCallbackNumber (client feedback: ask the callback number, alone, once)", () => {
   const base2 = {
     callerTexts: ["my toilet runs", "it's 1200 Pine Street, Seattle"],
-    agentTexts: ["What's your address?"],
+    agentTexts: [
+      "Can I get your name?",
+      "What's your address?",
+      "So that's 1200 Pine Street, Seattle?",
+    ],
   };
+
+  it("QA 2026-10-13: waits until the address has been read back", () => {
+    expect(
+      shouldNudgeForCallbackNumber({
+        ...base2,
+        agentTexts: ["Can I get your name?", "What's your address?"],
+      }),
+    ).toBe(false);
+  });
+
+  it("QA 2026-10-13: waits until the caller's name is known, so it never fires on a caller's opening line", () => {
+    expect(
+      shouldNudgeForCallbackNumber({
+        callerTexts: ["my kitchen sink is leaking, I'm at 1201 South 56th Place, Seattle"],
+        agentTexts: [],
+      }),
+    ).toBe(false);
+  });
 
   it("nudges once the address is in and the number was never asked about", () => {
     expect(shouldNudgeForCallbackNumber(base2)).toBe(true);
@@ -189,7 +211,10 @@ describe("client feedback (Prateek, 2026-10-09): an address given early in a lon
 
   it("does not nag for the callback number as if no address existed", () => {
     expect(
-      shouldNudgeForCallbackNumber({ callerTexts: [...early, ...later], agentTexts: [] }),
+      shouldNudgeForCallbackNumber({
+        callerTexts: [...early, ...later],
+        agentTexts: ["So that's 42 Maple Street, Atlanta?"],
+      }),
     ).toBe(true);
   });
 
@@ -198,4 +223,3 @@ describe("client feedback (Prateek, 2026-10-09): an address given early in a lon
     expect(result?.detail).toContain("do not ask for it again");
   });
 });
-

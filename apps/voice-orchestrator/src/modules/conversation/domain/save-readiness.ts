@@ -1,4 +1,5 @@
 import { extractStreet } from "./address-check";
+import { buildCallNotes } from "./call-notes";
 import { collapseSpokenDigits } from "./service-area";
 
 /**
@@ -18,6 +19,17 @@ const DECLINED_ADDRESS =
   /\b(don'?t|do not|won'?t|rather not|prefer not|not comfortable|no need|skip)\b.{0,40}\b(address|give|say|share|location)\b|\bno address\b/i;
 const ASKED_FOR_ADDRESS =
   /\baddress\b[^?]*\?|what street|house number|where (are you|is it) located/i;
+
+/** True when the caller described a clear emergency, where speed beats a complete record. */
+export function isHardEmergency(callerTexts: readonly string[]): boolean {
+  return callerTexts.some((text) => HARD_EMERGENCY.test(text));
+}
+
+export const LEAD_NEEDS_CUSTOMER_DETAILS_ERROR = {
+  error: "customer_details_not_saved",
+  detail:
+    "Not saved yet. The record on file for this number has no real name or service address. First get the caller's name, the street address and the callback number, then call createCustomer (it updates the existing record), then createLead. Everything the caller already told you is still valid: do not ask for it again.",
+} as const;
 
 export const ADDRESS_NEEDED_ERROR = {
   error: "address_needed",
@@ -118,10 +130,28 @@ function addressBlockedReason({ callerTexts, agentTexts, address }: Args) {
   return ADDRESS_NEEDED_ERROR;
 }
 
-export const CALLBACK_NUMBER_NOTE =
-  "[System note: you have their address but have not yet confirmed the callback number. " +
-  "In THIS reply the ONLY question you ask is whether the number they are calling from " +
-  "(read it back slowly, digit by digit) is the best one to reach them. Ask nothing else this turn.]";
+const NAME_ASKED =
+  /\b(your name|who am i speaking|what'?s your name|can i (get|have|grab) your name|and your name)\b/i;
+
+/**
+ * The callback question, with the caller-ID number already in spoken form.
+ * QA 2026-10-13: given only the raw +1 number, the model read it as "plus
+ * 2-0-6..." and corrected itself mid-sentence; and the old wording ("ask
+ * nothing else this turn") was echoed aloud as "you asked me only one thing
+ * this turn".
+ */
+export function callbackNumberNote(callerAni: string | null | undefined): string {
+  const digits = (callerAni ?? "").replace(/\D/g, "").slice(-10);
+  const spoken =
+    digits.length === 10
+      ? `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`
+      : "the number they are calling from";
+  return (
+    "[System note: you have their address but have not confirmed a callback number. " +
+    `Your reply asks only one question: whether ${spoken} is the best number to reach them, ` +
+    "reading it digit by digit, without the +1.]"
+  );
+}
 
 /**
  * True when the address is in, nobody has asked about or been given a callback
@@ -144,6 +174,27 @@ export function shouldNudgeForCallbackNumber(args: {
     return false;
   }
   if (spokenPhoneDigits(args.callerTexts) !== null) {
+    return false;
+  }
+  // QA 2026-10-13: a caller who opened with their address got this note on
+  // their very first turn, before Grace even knew the problem or the name, and
+  // she spoke the note's own logic aloud. The order is problem, name, address,
+  // callback, so the callback question waits until a name has been given.
+  const notes = buildCallNotes(args.callerTexts);
+  const nameAsked = args.agentTexts.some((text) => NAME_ASKED.test(text));
+  if (!notes.statedName && !notes.spelledName && !nameAsked) {
+    return false;
+  }
+  // QA 2026-10-13: the note pushed Grace straight to the callback question
+  // and the address was never read back. It waits until she has said the
+  // house number back to the caller.
+  const houseNumber = notes.street?.split(" ")[0];
+  if (
+    houseNumber &&
+    !args.agentTexts.some((text) =>
+      collapseSpokenDigits(text).replace(/[\s-]/g, "").includes(houseNumber),
+    )
+  ) {
     return false;
   }
   return !args.agentTexts.some((text) => NUMBER_ASKED.test(text));

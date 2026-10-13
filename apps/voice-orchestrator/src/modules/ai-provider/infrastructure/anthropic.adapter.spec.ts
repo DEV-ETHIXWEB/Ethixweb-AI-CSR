@@ -148,7 +148,55 @@ describe("AnthropicAdapter", () => {
       const sentBody = JSON.parse(init.body as string) as {
         system: Array<{ cache_control?: { type: string } }>;
       };
-      expect(sentBody.system[0]?.cache_control).toEqual({ type: "ephemeral" });
+      expect(sentBody.system[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    });
+
+    it("splits the per-call runtime context into its own UNCACHED block, so the stable part is shared across calls", async () => {
+      fetchMock.mockResolvedValueOnce(sseResponse(200, ""));
+      const adapter = new AnthropicAdapter("test-key");
+      const systemPrompt =
+        "[PLATFORM BASE — shared, versioned]\nBe helpful.\n\n" +
+        "[RUNTIME CONTEXT]\nCurrent time: 2026-09-14T13:30:21.005Z. Caller ANI: +15551234567.";
+
+      await collect(adapter.streamCompletion({ ...baseRequest(), systemPrompt }));
+
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const sentBody = JSON.parse(init.body as string) as {
+        system: Array<{ text: string; cache_control?: { type: string; ttl?: string } }>;
+      };
+      expect(sentBody.system).toHaveLength(2);
+      expect(sentBody.system[0]?.text).toBe("[PLATFORM BASE — shared, versioned]\nBe helpful.");
+      expect(sentBody.system[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+      expect(sentBody.system[1]?.text).toContain("Caller ANI: +15551234567");
+      expect(sentBody.system[1]?.cache_control).toBeUndefined();
+      // The model still receives the exact same text, just in two blocks.
+      expect(sentBody.system.map((b) => b.text).join("")).toBe(systemPrompt);
+    });
+
+    it("two calls with different times and callers send an IDENTICAL cached block", async () => {
+      fetchMock.mockResolvedValue(sseResponse(200, ""));
+      const adapter = new AnthropicAdapter("test-key");
+      const base = "[PLATFORM BASE — shared, versioned]\nBe helpful.\n\n[RUNTIME CONTEXT]\n";
+
+      await collect(
+        adapter.streamCompletion({
+          ...baseRequest(),
+          systemPrompt: `${base}Current time: 09:00. Caller ANI: +1111.`,
+        }),
+      );
+      await collect(
+        adapter.streamCompletion({
+          ...baseRequest(),
+          systemPrompt: `${base}Current time: 17:45. Caller ANI: +2222.`,
+        }),
+      );
+
+      const cached = fetchMock.mock.calls.map(
+        ([, init]) =>
+          (JSON.parse((init as RequestInit).body as string) as { system: Array<{ text: string }> })
+            .system[0]?.text,
+      );
+      expect(cached[0]).toBe(cached[1]);
     });
 
     it("marks only the LAST message's LAST content block with a cache breakpoint, not every message", async () => {
@@ -205,5 +253,63 @@ describe("AnthropicAdapter", () => {
       };
       expect(sentBody.messages[1]?.content[0]?.cache_control).toEqual({ type: "ephemeral" });
     });
+  });
+});
+
+describe("AnthropicAdapter on Claude Haiku 5.5", () => {
+  let fetchMock: jest.Mock;
+  const sentBody = () =>
+    JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string) as Record<
+      string,
+      unknown
+    >;
+
+  beforeEach(() => {
+    fetchMock = jest.fn().mockResolvedValue(sseResponse(200, ""));
+    global.fetch = fetchMock;
+    delete process.env["ANTHROPIC_EFFORT"];
+    delete process.env["ANTHROPIC_THINKING"];
+  });
+
+  it("turns thinking off and uses low effort by default, the fastest setting for a phone turn", async () => {
+    await collect(
+      new AnthropicAdapter("k").streamCompletion({ ...baseRequest(), model: "claude-haiku-5-5" }),
+    );
+    const body = sentBody();
+    expect(body["thinking"]).toEqual({ type: "disabled" });
+    expect(body["output_config"]).toEqual({ effort: "low" });
+    expect(body).not.toHaveProperty("temperature");
+  });
+
+  it("lets the environment raise effort or turn adaptive thinking on", async () => {
+    process.env["ANTHROPIC_EFFORT"] = "medium";
+    process.env["ANTHROPIC_THINKING"] = "adaptive";
+    await collect(
+      new AnthropicAdapter("k").streamCompletion({ ...baseRequest(), model: "claude-haiku-5-5" }),
+    );
+    expect(sentBody()["thinking"]).toEqual({ type: "adaptive" });
+    expect(sentBody()["output_config"]).toEqual({ effort: "medium" });
+    delete process.env["ANTHROPIC_EFFORT"];
+    delete process.env["ANTHROPIC_THINKING"];
+  });
+
+  it("sends neither field to Claude Haiku 4.5, which rejects effort", async () => {
+    await collect(
+      new AnthropicAdapter("k").streamCompletion({ ...baseRequest(), model: "claude-haiku-4-5" }),
+    );
+    expect(sentBody()).not.toHaveProperty("thinking");
+    expect(sentBody()).not.toHaveProperty("output_config");
+  });
+
+  it("reports a refusal as a failed completion, never as an empty reply", async () => {
+    fetchMock.mockResolvedValueOnce(
+      sseResponse(200, 'data: {"type":"message_delta","delta":{"stop_reason":"refusal"}}\n\n'),
+    );
+    const chunks = await collect(
+      new AnthropicAdapter("k").streamCompletion({ ...baseRequest(), model: "claude-haiku-5-5" }),
+    );
+    expect(chunks).toEqual([
+      { type: "error", message: "anthropic: model declined (refusal)", retryable: false },
+    ]);
   });
 });

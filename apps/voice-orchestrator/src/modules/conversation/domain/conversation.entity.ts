@@ -142,6 +142,19 @@ export interface Conversation {
    */
   customerCaptureAttempted?: boolean;
   /**
+   * Whether `customerId` points at a record that really holds this caller's
+   * details: true when a lookup at call start matched a record with a real
+   * name AND a service address, or once createCustomer succeeded this call;
+   * false when the matched record is missing either. Undefined on older
+   * conversations, which keeps their previous behaviour.
+   *
+   * Client feedback (2026-10-13 test calls): a matched record saved earlier
+   * as "unknown" with no address counted as a known customer, so the lead
+   * was created 33 seconds in, the name and callback nudges switched off,
+   * and the address the caller then gave was never saved.
+   */
+  customerDetailsOnFile?: boolean;
+  /**
    * True once a `createCustomer` OR `createLead` attempt has failed for
    * a PERMANENT, infrastructure-level reason this call cannot talk its
    * way around — currently, specifically, core-api reporting

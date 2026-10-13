@@ -178,7 +178,8 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
     name: "createCustomer",
     version: "v1",
     description:
-      "Create a new CRM customer record — only called after searchCustomer returns found: false. " +
+      "Save the caller's customer record. If a record already exists for this phone number, " +
+      "this updates its name and address with what the caller just confirmed. " +
       "Get the caller's street address BEFORE calling this and pass it in the address field: it " +
       "cannot be added afterwards. The call is refused until the caller has given a street address, " +
       "except in a real emergency, or when they have declined to give one or were already asked " +

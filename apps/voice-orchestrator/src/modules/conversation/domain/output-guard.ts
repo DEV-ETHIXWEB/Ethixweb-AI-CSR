@@ -28,7 +28,23 @@ export const SAFE_CHANGE_LINE =
   "I can't change appointments from here, but I'll pass this to the team and they'll confirm it with you.";
 
 const META_LEAK =
-  /\b(per (the|my) (instructions?|prompt|rules?|guidelines?)|according to (the|my) (instructions?|prompt|guidelines?)|the (caller|customer) (has|had|already|just|is|said|wants|signed)|already said goodbye|ended the call|the call is over|system note|as an ai\b|my (system )?prompt|no further (response|action) (is )?(needed|required|necessary))/i;
+  /\b(per (the|my) (instructions?|prompt|rules?|guidelines?)|according to (the|my) (instructions?|prompt|guidelines?)|the (caller|customer) (has|had|already|just|is|said|wants|signed)|already said goodbye|ended the call|the call is over|system note|as an ai\b|my (system )?prompt|no further (response|action) (is )?(needed|required|necessary)|\b(this|that|my|the next|in this) turn\b|(i'?m |i am |i'?ve |i have )(flagg|mark)(ed|ing) (this|it|that)( as| now|\b)|\bretrying\b|(i'?m|i am) (checking|looking into|looking up|pulling up) (that|this|it|your)\b|\blet me (check|look up|pull up|look into|see) (that|this|it|your|on that|how)\b|\b(saving|submitting|sending) (your|the|this) (request|info|information|details|lead)( now)?\b)/i;
+
+/**
+ * QA 2026-10-13, on Claude Haiku 5.5 with thinking off: the model wrote its
+ * reasoning as the reply ("Caller is speaking Spanish. Need to call
+ * escalateEmergency since they describe a problem..."). Nothing Grace says to
+ * a caller ever names a tool, talks about "the caller" in the third person, or
+ * starts with "Need to", so such sentences are dropped.
+ */
+const REASONING_LEAK =
+  /\b(escalateEmergency|createCustomer|createLead|updateLead|searchCustomer|transferToHuman|getServiceAreas|getBusinessHours|lookupPreviousCalls)\b|\bcaller\b|^\s*(i )?need to (call|ask|check|use|run|respond|reply|confirm|get)\b|^\s*(speak|respond|reply) (in|with)\b/i;
+
+/** A sentence that is only an acknowledgment, with no information in it. */
+const PURE_ACK =
+  /^(got it|okay|ok|alright|all right|right|sure|perfect|great|gotcha|thanks|thank you|no problem|mm-?hm|understood|thanks for (telling|letting) me( know)?)[.!]?$/i;
+/** "today"/"tonight" in Grace's own statements; the client asked that she never say them (v49). */
+const OWN_TODAY = /\b(today|tonight)\b/gi;
 
 const TIME_WORD =
   /\b(today|tonight|this (morning|afternoon|evening)|same[- ]day|tomorrow|next (day|morning)|within (the )?(next )?(\d+|an?|one|two|three|few) ?(hours?|minutes?|mins?)|in (about |around )?(an|\d+) (hour|hours|minutes)|by (tonight|tomorrow|end of (the )?day))\b/i;
@@ -57,7 +73,44 @@ const STREET_READBACK =
 const DIGIT_READBACK = /\b(?:\d[\s-]){4,}\d\b|\b\d{5}\b|\b\d{3}[-. ]\d{3}[-. ]\d{4}\b/;
 
 export type GuardAction =
-  "meta_leak" | "timing_promise" | "change_claim" | "cause_claim" | "slow_readback";
+  | "meta_leak"
+  | "timing_promise"
+  | "change_claim"
+  | "cause_claim"
+  | "slow_readback"
+  | "repeated_statement";
+
+/**
+ * Client feedback (previous vendor's call, Oct 7): the CSR answered three
+ * price questions with the same sentence, "Pricing depends on the job and
+ * will be discussed before any work begins", word for word, and the caller
+ * heard a recording. A statement Grace already made in one of her last few
+ * replies is dropped instead of said again. Questions are never dropped
+ * (re-asking an unanswered ZIP once is legitimate), and nor are short
+ * sentences, where repeats are natural ("Okay.", "Is that right?").
+ */
+const REPEAT_MIN_WORDS = 5;
+const REPEAT_SIMILARITY = 0.8;
+
+function normalizedWords(sentence: string): string[] {
+  return words(sentence)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s']/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function similarity(a: readonly string[], b: readonly string[]): number {
+  const setA = new Set(a);
+  const setB = new Set(b);
+  let shared = 0;
+  for (const word of setA) {
+    if (setB.has(word)) {
+      shared += 1;
+    }
+  }
+  return shared / Math.max(setA.size, setB.size, 1);
+}
 
 function splitSentences(segment: string): string[] {
   return segment.match(/[^.!?]+(?:[.!?]+|$)\s*/g) ?? [segment];
@@ -72,9 +125,56 @@ function isQuestion(sentence: string): boolean {
   return /\?\s*$/.test(words(sentence));
 }
 
+/**
+ * Call-centre phrasing the previous vendor's CSR used on every call ("May I
+ * have your full name?"), which the prompt bans and the model still produces
+ * now and then at low effort. Rewritten in place rather than dropped, since
+ * the question itself is needed.
+ */
+const STIFF_PHRASES: ReadonlyArray<[RegExp, string]> = [
+  [/\bMay I have\b/g, "Can I get"],
+  [/\bmay I have\b/g, "can I get"],
+  [/\bMay I get\b/g, "Can I get"],
+  [/\bmay I get\b/g, "can I get"],
+];
+
+function plainSpoken(sentence: string): string {
+  return STIFF_PHRASES.reduce(
+    (text, [pattern, replacement]) => text.replace(pattern, replacement),
+    sentence,
+  );
+}
+
 export class OutputGuard {
   private readonly used = new Set<string>();
+  private readonly recentStatements: string[][];
+  private lastSentenceKey = "";
+  private spokeAlready: boolean;
   readonly actions: GuardAction[] = [];
+
+  /** `recentAgentReplies`: Grace's last few replies this call, oldest first. */
+  /** `alreadySpokeThisTurn`: an earlier pass of this same turn already said something. */
+  constructor(recentAgentReplies: readonly string[] = [], alreadySpokeThisTurn = false) {
+    this.spokeAlready = alreadySpokeThisTurn;
+    this.recentStatements = recentAgentReplies
+      .flatMap((reply) => splitSentences(reply))
+      .filter((sentence) => !isQuestion(sentence))
+      .map(normalizedWords)
+      .filter((sentenceWords) => sentenceWords.length >= REPEAT_MIN_WORDS);
+  }
+
+  private repeatsRecentStatement(sentence: string): boolean {
+    if (isQuestion(sentence)) {
+      return false;
+    }
+    const current = normalizedWords(sentence);
+    if (current.length < REPEAT_MIN_WORDS) {
+      return false;
+    }
+    return this.recentStatements.some(
+      (earlier) => similarity(current, earlier) >= REPEAT_SIMILARITY,
+    );
+  }
 
   /** Returns the text to speak for this segment; an empty string means say nothing. */
   apply(segment: string): string {
@@ -86,8 +186,29 @@ export class OutputGuard {
         out.push(sentence);
         continue;
       }
-      if (META_LEAK.test(plain)) {
+      if (META_LEAK.test(plain) || REASONING_LEAK.test(plain)) {
         this.actions.push("meta_leak");
+        continue;
+      }
+      // Back-to-back identical sentences, however short ("Good luck with it.
+      // Good luck with it."), QA 2026-10-13.
+      const key = normalizedWords(sentence).join(" ");
+      if (key && key === this.lastSentenceKey) {
+        this.actions.push("repeated_statement");
+        continue;
+      }
+      this.lastSentenceKey = key;
+      // QA 2026-10-13: a pass before a tool call and the pass after it were
+      // glued with a bare "Got it." in the middle, pushing replies past 35
+      // words. An acknowledgment adds nothing once something was already said.
+      if (
+        PURE_ACK.test(plain) &&
+        (this.spokeAlready || out.some((part) => words(part).length > 0))
+      ) {
+        continue;
+      }
+      if (this.repeatsRecentStatement(sentence)) {
+        this.actions.push("repeated_statement");
         continue;
       }
       if (!isQuestion(sentence) && TIME_WORD.test(plain)) {
@@ -124,7 +245,11 @@ export class OutputGuard {
       if (STREET_READBACK.test(plain) || DIGIT_READBACK.test(plain)) {
         slow = true;
       }
-      out.push(sentence);
+      out.push(
+        isQuestion(sentence)
+          ? plainSpoken(sentence)
+          : plainSpoken(sentence).replace(OWN_TODAY, "right away"),
+      );
     }
     // Keep the segment's own edge whitespace: segments are streamed one after
     // another, and a lost leading space would glue two spoken words together.
@@ -134,6 +259,7 @@ export class OutputGuard {
     if (!body) {
       return "";
     }
+    this.spokeAlready = true;
     if (slow && !/^\[slowly\]/i.test(body)) {
       this.actions.push("slow_readback");
       body = `[slowly] ${body}`;

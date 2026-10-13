@@ -254,7 +254,7 @@ describe("HandleTurnUseCase", () => {
     const aiProvider = new FakeAiProvider();
     aiProvider.responses = [
       [
-        { type: "text_delta", text: "Let me pull up your account." },
+        { type: "text_delta", text: "Okay, got it." },
         {
           type: "tool_call",
           toolCall: { id: "call-1", name: "searchCustomer", arguments: { phone: "+15551234567" } },
@@ -277,7 +277,7 @@ describe("HandleTurnUseCase", () => {
       baseCommand({ transcript: "I need a plumber", allowedTools: ["searchCustomer"] }),
     );
 
-    expect(result.responseText).toBe("Let me pull up your account. What's your name?");
+    expect(result.responseText).toBe("Okay, got it. What's your name?");
   });
 
   /**
@@ -298,7 +298,7 @@ describe("HandleTurnUseCase", () => {
       const aiProvider = new FakeAiProvider();
       aiProvider.responses = [
         [
-          { type: "text_delta", text: "Let me pull up your account." },
+          { type: "text_delta", text: "Okay, got it." },
           {
             type: "tool_call",
             toolCall: {
@@ -327,10 +327,10 @@ describe("HandleTurnUseCase", () => {
         (text) => chunks.push(text),
       );
 
-      expect(chunks).toEqual(["Let me pull up your account.", "What's your name?"]);
+      expect(chunks).toEqual(["Okay, got it.", "What's your name?"]);
       // The final return value is unaffected by streaming — still the
       // full joined result, exactly as every non-streaming caller gets.
-      expect(result.responseText).toBe("Let me pull up your account. What's your name?");
+      expect(result.responseText).toBe("Okay, got it. What's your name?");
     });
 
     it("never fires with an empty string (an iteration whose only output was a tool call, no text)", async () => {
@@ -506,7 +506,7 @@ describe("HandleTurnUseCase", () => {
       await useCase.execute(baseCommand({ transcript: "no problem, call me back" }));
 
       const sentMessage = aiProvider.requests[0]?.messages[0];
-      expect(sentMessage?.content).toContain("no customer/lead record has been created yet");
+      expect(sentMessage?.content).toContain("nothing is saved yet this call");
       expect(sentMessage?.content).toContain("no problem, call me back");
     });
 
@@ -786,7 +786,7 @@ describe("HandleTurnUseCase", () => {
       const { useCase: useCase2 } = buildUseCase({ aiProvider: aiProvider2, repository });
       await useCase2.execute(baseCommand({ transcript: "it's akash kumar" }));
       const sentMessage = aiProvider2.requests[0]?.messages.filter((m) => m.role === "user").pop();
-      expect(sentMessage?.content).toContain("call createCustomer now");
+      expect(sentMessage?.content).toContain("call createCustomer and then createLead");
     });
 
     it("createCustomer PERMANENTLY unavailable (no CRM configured) — reminder stops entirely instead of looping forever", async () => {
@@ -849,7 +849,7 @@ describe("HandleTurnUseCase", () => {
 
       // A LATER turn must NOT re-inject the missing-lead reminder at
       // all — this is the exact confirmed real-call bug: 12+ repeated
-      // "call createCustomer now" injections despite it being permanently
+      // "call createCustomer and then createLead" injections despite it being permanently
       // blocked. Also proves the CRM-unavailable honesty annotation IS
       // injected instead (C3).
       const aiProvider2 = new FakeAiProvider();
@@ -862,7 +862,7 @@ describe("HandleTurnUseCase", () => {
       const { useCase: useCase2 } = buildUseCase({ aiProvider: aiProvider2, repository });
       await useCase2.execute(baseCommand({ transcript: "can you help me" }));
       const sentMessage = aiProvider2.requests[0]?.messages.filter((m) => m.role === "user").pop();
-      expect(sentMessage?.content).not.toContain("call createCustomer now");
+      expect(sentMessage?.content).not.toContain("call createCustomer and then createLead");
       expect(sentMessage?.content).toContain("CRM/lead system is not available");
     });
 
@@ -1049,7 +1049,7 @@ describe("HandleTurnUseCase", () => {
       await useCase2.execute(baseCommand({ transcript: "yes please submit it" }));
       const sentMessage = aiProvider2.requests[0]?.messages.filter((m) => m.role === "user").pop();
       expect(sentMessage?.content).toContain("call createLead now");
-      expect(sentMessage?.content).not.toContain("call createCustomer now");
+      expect(sentMessage?.content).not.toContain("call createCustomer and then createLead");
     });
 
     it("createLead SUCCEEDS after createCustomer — leadId set, no reminder of either kind", async () => {
@@ -1240,7 +1240,7 @@ describe("HandleTurnUseCase", () => {
       const { useCase: useCase2 } = buildUseCase({ aiProvider: aiProvider2, repository: repo });
       await useCase2.execute(baseCommand({ transcript: "still there?" }));
       const sentMessage = aiProvider2.requests[0]?.messages.filter((m) => m.role === "user").pop();
-      expect(sentMessage?.content).toContain("call createCustomer now");
+      expect(sentMessage?.content).toContain("call createCustomer and then createLead");
       expect(sentMessage?.content).not.toContain("CRM/lead system is not available");
     });
 
@@ -1284,7 +1284,7 @@ describe("HandleTurnUseCase", () => {
       expect(saved?.customerCaptureAttempted).toBe(true);
       const sentMessage = aiProvider.requests[0]?.messages.filter((m) => m.role === "user").pop();
       expect(sentMessage?.content).toContain("CRM/lead system is not available");
-      expect(sentMessage?.content).not.toContain("call createCustomer now");
+      expect(sentMessage?.content).not.toContain("call createCustomer and then createLead");
     });
   });
 
@@ -2746,7 +2746,7 @@ describe("HandleTurnUseCase", () => {
     const aiProvider = new FakeAiProvider();
     aiProvider.responses = [
       [
-        { type: "text_delta", text: "Let me check that for" },
+        { type: "text_delta", text: "Thanks, I can help with" },
         { type: "error", message: "connection reset mid-stream", retryable: false },
       ],
     ];
@@ -2754,7 +2754,7 @@ describe("HandleTurnUseCase", () => {
 
     const result = await useCase.execute(baseCommand());
 
-    expect(result.responseText).toBe("Let me check that for");
+    expect(result.responseText).toBe("Thanks, I can help with");
     expect(result.interrupted).toBe(false);
   });
 
@@ -3075,7 +3075,7 @@ describe("HandleTurnUseCase", () => {
       const controller = new AbortController();
       const aiProvider = new FakeAiProvider();
       aiProvider.streamCompletion = async function* (): AsyncIterable<AiCompletionChunk> {
-        yield { type: "text_delta", text: "Sorry, let me check on that wa" };
+        yield { type: "text_delta", text: "Sorry to hear about that wa" };
         controller.abort();
         throw new DOMException("aborted", "AbortError");
       };
@@ -3086,16 +3086,16 @@ describe("HandleTurnUseCase", () => {
       );
 
       expect(result.interrupted).toBe(true);
-      expect(result.responseText).toBe("Sorry, let me check on that wa");
+      expect(result.responseText).toBe("Sorry to hear about that wa");
 
       const saved = await repository.findById("tenant-1", "conv-1");
       const agentTexts = saved?.transcript.filter((t) => t.speaker === "agent").map((t) => t.text);
       const assistantMessages = saved?.messages.filter((m) => m.role === "assistant");
       // Exactly the partial text — never the full sentence it never
       // finished, and never silently dropped/empty either.
-      expect(agentTexts).toEqual(["Sorry, let me check on that wa"]);
+      expect(agentTexts).toEqual(["Sorry to hear about that wa"]);
       expect(assistantMessages).toHaveLength(1);
-      expect(assistantMessages?.[0]?.content).toBe("Sorry, let me check on that wa");
+      expect(assistantMessages?.[0]?.content).toBe("Sorry to hear about that wa");
       // The durable transcript and the model's own memory agree exactly —
       // neither has MORE than the other (a phantom finished sentence in
       // one but not the other) nor LESS (silently dropped in one but not
@@ -3118,7 +3118,7 @@ describe("HandleTurnUseCase", () => {
       const historySentToModel = aiProvider2.requests[0]?.messages.find(
         (m) => m.role === "assistant",
       );
-      expect(historySentToModel?.content).toBe("Sorry, let me check on that wa");
+      expect(historySentToModel?.content).toBe("Sorry to hear about that wa");
     });
   });
 
@@ -3464,7 +3464,9 @@ describe("HandleTurnUseCase keeps the call moving after an acknowledgment-only r
     aiProvider.responses = responses.map(text);
     const { useCase } = buildUseCase({ aiProvider, repository });
     const chunks: string[] = [];
-    const result = await useCase.execute(baseCommand({ transcript }), (chunk) => chunks.push(chunk));
+    const result = await useCase.execute(baseCommand({ transcript }), (chunk) =>
+      chunks.push(chunk),
+    );
     return { result, aiProvider, chunks };
   }
 
@@ -3508,6 +3510,11 @@ describe("HandleTurnUseCase keeps the call moving after an acknowledgment-only r
     expect(result.responseText).toBe("");
   });
 
+  it("QA 2026-10-13: never adds a question after the caller asked Grace to hold", async () => {
+    const { aiProvider } = await run(["Sure, no rush."], "hold on, let me find the zip code");
+    expect(aiProvider.requests).toHaveLength(1);
+  });
+
   it("adds at most one extra pass per turn", async () => {
     const { aiProvider } = await run(["Okay.", "Alright."]);
     expect(aiProvider.requests).toHaveLength(2);
@@ -3525,5 +3532,241 @@ describe("HandleTurnUseCase keeps the call moving after an acknowledgment-only r
 
     expect(result.responseText).toContain("Perfect, I have 42 Maple Street.");
     expect(aiProvider.requests).toHaveLength(2);
+  });
+});
+
+/**
+ * Client feedback (2026-10-13 test calls): every tester called from one number
+ * whose record was saved earlier as "unknown" with no address. That counted as
+ * a known customer, so the lead was created 33 seconds in, the name nudge was
+ * off, and the address the caller then gave was never saved.
+ */
+describe("HandleTurnUseCase with a matched record that has no name or address", () => {
+  const leadCall = (id: string) => [
+    {
+      type: "tool_call" as const,
+      toolCall: {
+        id,
+        name: "createLead",
+        arguments: {
+          customer_id: "cust-7",
+          problem_summary: "under the sink",
+          priority: "routine",
+        },
+      },
+    },
+    { type: "done" as const, stopReason: "tool_use" as const },
+  ];
+  const text = (value: string) => [
+    { type: "text_delta" as const, text: value },
+    { type: "done" as const, stopReason: "end_turn" as const },
+  ];
+
+  it("refuses createLead until the caller's details are saved, and says why without restarting", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation({ customerId: "cust-7", customerDetailsOnFile: false }));
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [leadCall("t1"), text("Can I get your name?")];
+    const createLead = { execute: jest.fn().mockResolvedValue({ lead_id: "lead-1" }) };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "createLead", handler: createLead }],
+    });
+
+    await useCase.execute(
+      baseCommand({ transcript: "my sink is leaking underneath", allowedTools: ["createLead"] }),
+    );
+
+    expect(createLead.execute).not.toHaveBeenCalled();
+    const toolResult = aiProvider.requests[1]!.messages.find((message) => message.role === "tool");
+    expect(toolResult?.content).toContain("customer_details_not_saved");
+    expect(toolResult?.content).toContain("do not ask for it again");
+  });
+
+  it("allows createLead in a clear emergency even before the details are saved", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation({ customerId: "cust-7", customerDetailsOnFile: false }));
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [leadCall("t1"), text("What's the address?")];
+    const createLead = { execute: jest.fn().mockResolvedValue({ lead_id: "lead-1" }) };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "createLead", handler: createLead }],
+    });
+
+    await useCase.execute(
+      baseCommand({
+        transcript: "a pipe burst and water is everywhere",
+        allowedTools: ["createLead"],
+      }),
+    );
+
+    expect(createLead.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows createLead once createCustomer has saved the details this call", async () => {
+    const repository = new FakeConversationRepository();
+    const at = new Date().toISOString();
+    repository.seed(
+      baseConversation({
+        customerId: "cust-7",
+        customerDetailsOnFile: false,
+        transcript: [
+          {
+            turnIndex: 0,
+            speaker: "caller",
+            text: "my name is patrick",
+            confidence: null,
+            offsetMs: 0,
+            at,
+          },
+          {
+            turnIndex: 1,
+            speaker: "agent",
+            text: "Is the number you're calling from the best number to reach you?",
+            confidence: null,
+            offsetMs: 0,
+            at,
+          },
+          {
+            turnIndex: 2,
+            speaker: "caller",
+            text: "it's 1912 9th avenue west seattle 98119",
+            confidence: null,
+            offsetMs: 0,
+            at,
+          },
+        ],
+      }),
+    );
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        {
+          type: "tool_call",
+          toolCall: {
+            id: "c1",
+            name: "createCustomer",
+            arguments: {
+              name: { first: "Patrick" },
+              phone: "+18722784999",
+              address: { street: "1912 9th Ave W", city: "Seattle", state: "WA", zip: "98119" },
+            },
+          },
+        },
+        { type: "done", stopReason: "tool_use" },
+      ],
+      leadCall("t2"),
+      text("You're all set. Anything else I can help with?"),
+    ];
+    const createCustomer = {
+      execute: jest.fn().mockResolvedValue({ customer_id: "cust-7" }),
+    };
+    const createLead = { execute: jest.fn().mockResolvedValue({ lead_id: "lead-1" }) };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [
+        { name: "createCustomer", handler: createCustomer },
+        { name: "createLead", handler: createLead },
+      ],
+    });
+
+    await useCase.execute(
+      baseCommand({
+        transcript: "yes that's right",
+        allowedTools: ["createCustomer", "createLead"],
+      }),
+    );
+
+    expect(createCustomer.execute).toHaveBeenCalledTimes(1);
+    expect(createLead.execute).toHaveBeenCalledTimes(1);
+    const saved = await repository.findById("tenant-1", "conv-1");
+    expect(saved?.customerDetailsOnFile).toBe(true);
+  });
+
+  it("the missing-lead reminder asks for the customer details first, not for an early createLead", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(
+      baseConversation({
+        customerId: "cust-7",
+        customerDetailsOnFile: false,
+        transcript: fillerTranscript(8),
+      }),
+    );
+    const aiProvider = new FakeAiProvider();
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    await useCase.execute(baseCommand({ transcript: "it's under the kitchen sink" }));
+
+    const lastUser = aiProvider.requests[0]!.messages.filter((m) => m.role === "user").at(-1);
+    expect(lastUser?.content).toContain("call createCustomer and then createLead");
+    expect(lastUser?.content).not.toContain("call createLead now");
+  });
+
+  it("still nudges for the caller's name, which an empty record does not supply", async () => {
+    const { shouldNudgeForName } = await import("./handle-turn.use-case");
+    const conversation = baseConversation({
+      customerId: "cust-7",
+      customerDetailsOnFile: false,
+      transcript: fillerTranscript(6).map((turn) => ({ ...turn, text: "it is leaking" })),
+    });
+    expect(shouldNudgeForName(conversation)).toBe(true);
+    expect(shouldNudgeForName({ ...conversation, customerDetailsOnFile: true })).toBe(false);
+  });
+});
+
+describe("HandleTurnUseCase when the whole reply repeats an earlier statement", () => {
+  it("does not go silent: the dropped repeat is followed by a fresh question", async () => {
+    const repository = new FakeConversationRepository();
+    const at = new Date().toISOString();
+    repository.seed(
+      baseConversation({
+        transcript: [
+          {
+            turnIndex: 0,
+            speaker: "caller",
+            text: "how much will it cost",
+            confidence: null,
+            offsetMs: 0,
+            at,
+          },
+          {
+            turnIndex: 1,
+            speaker: "agent",
+            text: "Pricing depends on the job and will be discussed before any work begins. What's the address?",
+            confidence: null,
+            offsetMs: 0,
+            at,
+          },
+        ],
+      }),
+    );
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        {
+          type: "text_delta",
+          text: "Pricing depends on the job and will be discussed before any work begins.",
+        },
+        { type: "done", stopReason: "end_turn" },
+      ],
+      [
+        {
+          type: "text_delta",
+          text: "The technician confirms the exact price on site. What's the street address?",
+        },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    const result = await useCase.execute(baseCommand({ transcript: "but roughly how much" }));
+
+    expect(aiProvider.requests).toHaveLength(2);
+    expect(result.responseText).not.toContain("Pricing depends on the job");
+    expect(result.responseText).toContain("What's the street address?");
   });
 });

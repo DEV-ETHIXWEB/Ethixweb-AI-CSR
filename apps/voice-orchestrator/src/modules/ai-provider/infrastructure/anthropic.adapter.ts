@@ -75,9 +75,8 @@ export class AnthropicAdapter implements AiProviderPort {
         stream: true,
         max_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
         temperature: request.temperature,
-        system: [
-          { type: "text", text: request.systemPrompt, cache_control: { type: "ephemeral" } },
-        ],
+        ...reasoningConfig(request.model),
+        system: buildSystemBlocks(request.systemPrompt),
         messages,
         ...(request.tools && request.tools.length > 0
           ? { tools: request.tools.map(toAnthropicTool) }
@@ -138,6 +137,13 @@ export class AnthropicAdapter implements AiProviderPort {
       }
 
       if (event.type === "message_delta") {
+        if (event.delta.stop_reason === "refusal") {
+          // A safety decline (newer models only). Surfaced as a failure so the
+          // turn is handled like any other failed completion, never as an
+          // empty "nothing to say" that leaves the caller in silence.
+          yield { type: "error", message: "anthropic: model declined (refusal)", retryable: false };
+          continue;
+        }
         const stopReason = mapStopReason(event.delta.stop_reason);
         if (stopReason) {
           yield { type: "done", stopReason };
@@ -163,6 +169,29 @@ type AnthropicStreamEvent =
   | { type: "content_block_stop"; index: number }
   | { type: "message_delta"; delta: { stop_reason: string | null } }
   | { type: "message_start" | "message_stop" | "ping" };
+
+/**
+ * Claude Haiku 5.5 (and the rest of the 5.x line) runs adaptive thinking
+ * unless told otherwise, and every thinking token is time a caller spends in
+ * silence. A phone turn is short and the prompt already spells out what to do,
+ * so thinking is off and effort low by default, the fastest setting the model
+ * offers. Both can be raised from the environment without a code change.
+ * Claude Haiku 4.5 rejects `effort`, so it gets neither field.
+ * Haiku 5.5 accepts thinking "disabled" only at effort low, medium or high.
+ */
+const MODELS_WITH_EFFORT = /^claude-haiku-5/;
+
+function reasoningConfig(model: string): Record<string, unknown> {
+  if (!MODELS_WITH_EFFORT.test(model)) {
+    return {};
+  }
+  const effort = process.env["ANTHROPIC_EFFORT"] ?? "low";
+  const thinking = process.env["ANTHROPIC_THINKING"] ?? "disabled";
+  return {
+    thinking: { type: thinking === "adaptive" ? "adaptive" : "disabled" },
+    output_config: { effort },
+  };
+}
 
 function mapStopReason(reason: string | null): "end_turn" | "tool_use" | "max_tokens" | undefined {
   if (reason === "tool_use") {
@@ -226,6 +255,52 @@ function toAnthropicMessage(message: AiMessage): Record<string, unknown> {
  * already-mapped messages array in place; safe because `toAnthropicMessage`
  * just built it fresh for this one request.
  */
+/**
+ * Marker assembleLayeredPrompt puts in front of the per-call layer. Everything
+ * before it is identical for every call to the same business; everything
+ * after it (current time, caller ANI, customer match, hours) is not.
+ */
+const RUNTIME_CONTEXT_MARKER = "\n\n[RUNTIME CONTEXT]\n";
+
+/**
+ * Two system blocks instead of one, so the prompt cache can actually work
+ * ACROSS calls.
+ *
+ * FOUND measuring the owner's complaint that a new caller waits far too long
+ * at pickup. The whole ~10k-token prompt used to be a single cached block
+ * whose LAST section was the runtime context, which carries the current time
+ * to the millisecond and the caller's number. Anthropic caches by exact
+ * prefix, so no two calls ever shared a cache entry: every call's first
+ * completion re-read the entire prompt at full price and full latency, then
+ * paid a cache WRITE on top for an entry no other call could use. Warm
+ * behaviour only ever appeared on later turns of the same call.
+ *
+ * Splitting at the runtime-context boundary makes the large stable part
+ * (platform base, persona, business knowledge) one shared cache entry reused
+ * by every call to that business, with the small per-call part read fresh.
+ * The one-hour TTL is chosen for this business's call pattern: a plumbing
+ * line gets calls minutes-to-hours apart, so the default five-minute entry
+ * would usually have expired before the next caller rang, and a cache read
+ * costs a tenth of an uncached read.
+ *
+ * The text the model receives is byte-for-byte the same as before, only
+ * divided into two blocks.
+ */
+function buildSystemBlocks(systemPrompt: string): Record<string, unknown>[] {
+  const boundary = systemPrompt.indexOf(RUNTIME_CONTEXT_MARKER);
+  if (boundary === -1) {
+    return [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral", ttl: "1h" } }];
+  }
+  return [
+    {
+      type: "text",
+      text: systemPrompt.slice(0, boundary),
+      cache_control: { type: "ephemeral", ttl: "1h" },
+    },
+    { type: "text", text: systemPrompt.slice(boundary) },
+  ];
+}
+
 function markLastMessageCacheable(messages: Record<string, unknown>[]): void {
   const lastMessage = messages.at(-1);
   if (!lastMessage) {

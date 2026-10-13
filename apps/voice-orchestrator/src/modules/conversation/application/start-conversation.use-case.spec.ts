@@ -9,7 +9,7 @@ import { FakeConversationRepository } from "./__fakes__/fake-conversation-reposi
 import { FakeEventBus } from "./__fakes__/fake-event-bus";
 import { createNoopLogger } from "./__fakes__/fake-logger";
 import { FakeTenantStatusProvider } from "./__fakes__/fake-tenant-status";
-import { StartConversationUseCase } from "./start-conversation.use-case";
+import { buildOpeningGreeting, StartConversationUseCase } from "./start-conversation.use-case";
 
 function fakeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
   return {
@@ -36,7 +36,6 @@ function buildUseCase(profile: AgentProfile = fakeProfile()) {
   const provider: AgentProfileProvider = { getActiveProfile: async () => profile };
   const useCase = new StartConversationUseCase(
     repository,
-    aiProvider,
     new AssembleSystemPromptUseCase(provider),
     eventBus,
     coreApiClient,
@@ -86,14 +85,8 @@ describe("StartConversationUseCase", () => {
    * is durably saved into the conversation's own message history so the
    * caller's first real reply has continuity with what the AI already said.
    */
-  it("generates an opening greeting at call start and saves it into the conversation's message history", async () => {
+  it("opens with an instant scripted greeting naming Grace and the business, saved into history, with NO model call", async () => {
     const { useCase, aiProvider } = buildUseCase();
-    aiProvider.responses = [
-      [
-        { type: "text_delta", text: "Thanks for calling All Phase Plumbing, how can I help?" },
-        { type: "done", stopReason: "end_turn" },
-      ],
-    ];
 
     const { conversation, greeting } = await useCase.execute({
       tenantId: "tenant-1",
@@ -102,28 +95,33 @@ describe("StartConversationUseCase", () => {
       callerAni: "+15551234567",
     });
 
-    expect(greeting).toBe("Thanks for calling All Phase Plumbing, how can I help?");
+    expect(greeting).toBe("Hi, this is Grace at All Phase Plumbing. What can I help you with?");
     expect(conversation.messages).toEqual([
-      { role: "user", content: expect.stringContaining("just connected") },
+      { role: "user", content: expect.stringContaining("The call has just connected") },
       { role: "assistant", content: greeting },
     ]);
-    // No tools reachable for the opening greeting — nothing has been
-    // qualified yet, so there's nothing legitimate to call.
-    expect(aiProvider.requests[0]?.tools).toBeUndefined();
+    // The point of the change: pickup no longer waits on, or pays for, a
+    // full completion of the ~10k-token prompt.
+    expect(aiProvider.requests).toHaveLength(0);
   });
 
-  it("throws (rather than silently succeeding with an empty greeting) when the AI provider produces no usable opening line", async () => {
-    const { useCase, aiProvider } = buildUseCase();
-    aiProvider.responses = [[{ type: "error", message: "provider unavailable", retryable: false }]];
+  it("still greets properly when the business name is unavailable, and never speaks a placeholder", () => {
+    expect(buildOpeningGreeting(null)).toBe("Hi, this is Grace. What can I help you with?");
+    expect(buildOpeningGreeting("   ")).toBe("Hi, this is Grace. What can I help you with?");
+    expect(buildOpeningGreeting("All Phase Plumbing")).not.toMatch(/\[|\]/);
+  });
 
-    await expect(
-      useCase.execute({
-        tenantId: "tenant-1",
-        businessId: "business-1",
-        callId: "call-1",
-        callerAni: "+15551234567",
-      }),
-    ).rejects.toThrow(/no opening greeting/);
+  it("speaks the company name without the branch label the business record carries", () => {
+    expect(buildOpeningGreeting("All Phase Plumbing — Main Office")).toBe(
+      "Hi, this is Grace at All Phase Plumbing. What can I help you with?",
+    );
+    expect(buildOpeningGreeting("Acme Drains - Tacoma")).toBe(
+      "Hi, this is Grace at Acme Drains. What can I help you with?",
+    );
+    // A hyphen INSIDE a name is not a branch separator.
+    expect(buildOpeningGreeting("Rock-Solid Plumbing")).toBe(
+      "Hi, this is Grace at Rock-Solid Plumbing. What can I help you with?",
+    );
   });
 
   it("throws ConversationAlreadyExistsError for a second conversation on the same call_id", async () => {
@@ -150,7 +148,8 @@ describe("StartConversationUseCase", () => {
         callerAni: "+15551234567",
       });
 
-      expect(coreApiClient.postCalls).toHaveLength(1);
+      // Exactly one call record, now alongside the pre-greeting customer lookup.
+      expect(coreApiClient.postCalls.filter((c) => c.path === "/internal/calls")).toHaveLength(1);
       expect(coreApiClient.postCalls[0]?.path).toBe("/internal/calls");
       expect(coreApiClient.postCalls[0]?.body).toMatchObject({
         businessId: "business-1",
@@ -204,7 +203,8 @@ describe("StartConversationUseCase", () => {
         callerAni: "+15551234567",
       });
 
-      expect(coreApiClient.postCalls).toHaveLength(1);
+      // Exactly one call record, now alongside the pre-greeting customer lookup.
+      expect(coreApiClient.postCalls.filter((c) => c.path === "/internal/calls")).toHaveLength(1);
     });
 
     it("throws TenantNotServiceableError and never reserves capacity or calls POST /internal/calls when the tenant is suspended", async () => {
@@ -250,7 +250,8 @@ describe("StartConversationUseCase", () => {
         callerAni: "+15551234567",
       });
 
-      expect(coreApiClient.postCalls).toHaveLength(1);
+      // Exactly one call record, now alongside the pre-greeting customer lookup.
+      expect(coreApiClient.postCalls.filter((c) => c.path === "/internal/calls")).toHaveLength(1);
     });
   });
 
@@ -266,7 +267,8 @@ describe("StartConversationUseCase", () => {
       });
 
       expect(conversation.capacityReservationId).toBeTruthy();
-      expect(coreApiClient.postCalls).toHaveLength(1);
+      // Exactly one call record, now alongside the pre-greeting customer lookup.
+      expect(coreApiClient.postCalls.filter((c) => c.path === "/internal/calls")).toHaveLength(1);
     });
 
     it("throws CapacityExceededError and never calls POST /internal/calls when the tenant is at its concurrency ceiling", async () => {
@@ -338,6 +340,110 @@ describe("StartConversationUseCase", () => {
         "business-1",
         expect.objectContaining({ isEmergencyPriority: false }),
       );
+    });
+  });
+
+  describe("caller lookup before the greeting (removes a model round trip from turn one)", () => {
+    const command = {
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      callId: "call-1",
+      callerAni: "+15551234567",
+    };
+
+    it("resolves a returning caller once, marks the lookup done, and carries the customer id", async () => {
+      const { useCase, coreApiClient } = buildUseCase();
+      coreApiClient.postResponses.set("/internal/customers/resolve", {
+        id: "cust-9",
+        name: "Larry",
+      });
+
+      const { conversation } = await useCase.execute(command);
+
+      const lookups = coreApiClient.postCalls.filter(
+        (c) => c.path === "/internal/customers/resolve",
+      );
+      expect(lookups).toHaveLength(1);
+      expect(lookups[0]?.body).toEqual({ businessId: "business-1", phoneE164: "+15551234567" });
+      expect(conversation.searchCustomerEverChecked).toBe(true);
+      expect(conversation.customerId).toBe("cust-9");
+      expect(conversation.systemPrompt).toContain("name on file: Larry");
+      expect(conversation.systemPrompt).toContain("no service address on file");
+      expect(conversation.systemPrompt).toContain("cust-9");
+    });
+
+    it("CLIENT FEEDBACK (2026-10-13): an 'unknown' record with no address makes Grace run the full intake and save, never skip it", async () => {
+      const { useCase, coreApiClient } = buildUseCase();
+      coreApiClient.postResponses.set("/internal/customers/resolve", {
+        id: "cust-7",
+        name: "unknown",
+        address: null,
+      });
+
+      const { conversation } = await useCase.execute(command);
+
+      expect(conversation.customerId).toBe("cust-7");
+      expect(conversation.systemPrompt).toContain("Treat this caller as new");
+      expect(conversation.systemPrompt).toContain("call createCustomer, which updates this record");
+      expect(conversation.systemPrompt).toContain("Never say you already have their information");
+      expect(conversation.systemPrompt).not.toContain("do not call createCustomer");
+    });
+
+    it("a complete record on file is confirmed with the caller, not assumed", async () => {
+      const { useCase, coreApiClient } = buildUseCase();
+      coreApiClient.postResponses.set("/internal/customers/resolve", {
+        id: "cust-8",
+        name: "Patrick Lee",
+        address: { street: "1912 9th Ave W", city: "Seattle", state: "WA", zip: "98119" },
+      });
+
+      const { conversation } = await useCase.execute(command);
+
+      expect(conversation.systemPrompt).toContain(
+        "a customer is on file for this number: Patrick Lee, 1912 9th Ave W, Seattle, WA 98119",
+      );
+      expect(conversation.systemPrompt).toContain("Am I speaking with Patrick Lee?");
+      expect(conversation.systemPrompt).toContain("it updates this record");
+    });
+
+    it("tells the model a new caller has no match, and still marks the lookup done", async () => {
+      const { useCase, coreApiClient } = buildUseCase();
+      coreApiClient.postResponses.set("/internal/customers/resolve", null);
+
+      const { conversation } = await useCase.execute(command);
+
+      expect(conversation.searchCustomerEverChecked).toBe(true);
+      expect(conversation.customerId ?? null).toBeNull();
+      expect(conversation.systemPrompt).toContain("no match found");
+    });
+
+    it("never greets a placeholder name like 'Caller' as if it were real", async () => {
+      const { useCase, coreApiClient } = buildUseCase();
+      coreApiClient.postResponses.set("/internal/customers/resolve", {
+        id: "cust-1",
+        name: "Caller",
+      });
+
+      const { conversation } = await useCase.execute(command);
+
+      expect(conversation.systemPrompt).not.toContain("name on file: Caller");
+      expect(conversation.systemPrompt).toContain("no name and service address on file");
+    });
+
+    it("degrades to the old behaviour when the lookup fails: nothing marked, model looks up itself", async () => {
+      const { useCase, coreApiClient } = buildUseCase();
+      const originalPost = coreApiClient.post.bind(coreApiClient);
+      coreApiClient.post = async (path: string, body: unknown) => {
+        if (path === "/internal/customers/resolve") {
+          throw new Error("core-api down");
+        }
+        return originalPost(path, body);
+      };
+
+      const { conversation } = await useCase.execute(command);
+
+      expect(conversation.searchCustomerEverChecked).toBeFalsy();
+      expect(conversation.systemPrompt).toContain("not yet run");
     });
   });
 });

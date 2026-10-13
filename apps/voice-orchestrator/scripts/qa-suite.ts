@@ -42,7 +42,11 @@ import {
   PLATFORM_BASE_PROMPT_V1,
   PLATFORM_BASE_PROMPT_VERSION,
 } from "../src/modules/prompt/domain/prompt-layers";
-import { formatRuntimeContext } from "../src/modules/prompt/domain/runtime-context";
+import {
+  customerMatchIsComplete,
+  formatRuntimeContext,
+  type RuntimeContext,
+} from "../src/modules/prompt/domain/runtime-context";
 import { DEFAULT_BRAND_VOICE_PROMPT } from "../src/modules/prompt/infrastructure/static-agent-profile.provider";
 import type { Conversation } from "../src/modules/conversation/domain/conversation.entity";
 // Deliberately reaching across into voice-runtime rather than
@@ -112,11 +116,26 @@ const SERVICE_AREA_KNOWLEDGE =
  * a "not yet run" context would measure a turn-one round trip that no longer
  * exists on real calls.
  */
-function buildSystemPrompt(match: { found: boolean; name?: string; customerId?: string }): string {
+/**
+ * The business's own approved knowledge (public website content, no customer
+ * data), so price, coupon and service questions are tested against what the
+ * live line actually knows.
+ */
+const BUSINESS_KNOWLEDGE =
+  "\n- [company] Pricing philosophy: Upfront, honest pricing: flat-rate quotes given before any work begins, no hidden fees once a quote is given. No specific dollar amounts are published for any service, and whether there is a charge just to diagnose/quote is not published either way; if asked, say that's confirmed when the visit is booked." +
+  "\n- [promotions] Current coupons (expire 10/31/2026): residential homeowners only, one per household, shown at time of service, not combinable: $100 off drain cleaning (includes a free mainline sewer camera inspection); 10% off the next residential plumbing service call (capped at $250); $250 off any residential water heater install/replacement." +
+  "\n- [services] Drain cleaning and hydro jetting: slow drains, gurgling, odors, recurring clogs; augers/snakes, hydro jetting up to 4,000 PSI, camera inspection to find cracks or roots without digging." +
+  "\n- [services] Gas line services: detection/repair, new lines for appliances, grills, generators, fire pits, shutoff valves, pressure testing, permits." +
+  "\n- [services] Commercial: offices, retail, restaurants, apartments; leak detection, repiping, grease traps, hydro jetting." +
+  "\n- [company] Warranty: every repair and installation has a written guarantee; length not published.";
+
+type QaCustomerMatch = RuntimeContext["existingCustomerMatch"];
+
+function buildSystemPrompt(match: QaCustomerMatch): string {
   return assembleLayeredPrompt({
     platformBase: PLATFORM_BASE_PROMPT_V1,
     tenantDefault: DEFAULT_BRAND_VOICE_PROMPT,
-    businessOverride: SERVICE_AREA_KNOWLEDGE,
+    businessOverride: SERVICE_AREA_KNOWLEDGE + BUSINESS_KNOWLEDGE,
     runtimeContext: formatRuntimeContext({
       businessName: "All Phase Plumbing",
       currentTimeIso: new Date().toISOString(),
@@ -173,6 +192,8 @@ interface Scenario {
   tools?: boolean;
   /** searchCustomer returns an existing customer rather than found:false. */
   knownCustomer?: boolean;
+  /** A record exists for the caller's number but holds no real name and no address (2026-10-13 test calls). */
+  incompleteRecord?: boolean;
   /** Saying nothing is the correct reply, so the "never empty" invariant is skipped. */
   allowSilence?: boolean;
   checks: Check[];
@@ -546,9 +567,16 @@ async function runScenario(scenario: Scenario): Promise<RunContext> {
     createNoopLogger(),
   );
 
-  const knownMatch = scenario.knownCustomer
-    ? { found: true, name: "Akash Kumar", customerId: randomUUID() }
-    : { found: false };
+  const knownMatch: NonNullable<QaCustomerMatch> = scenario.incompleteRecord
+    ? { found: true, name: "unknown", customerId: randomUUID(), address: null }
+    : scenario.knownCustomer
+      ? {
+          found: true,
+          name: "Akash Kumar",
+          customerId: randomUUID(),
+          address: "412 Pine Street, Seattle, WA 98101",
+        }
+      : { found: false };
   const conversationId = randomUUID();
   const conversation: Conversation = {
     id: conversationId,
@@ -558,7 +586,9 @@ async function runScenario(scenario: Scenario): Promise<RunContext> {
     state: "qualifying",
     systemPrompt: buildSystemPrompt(knownMatch),
     searchCustomerEverChecked: true,
-    ...(knownMatch.customerId ? { customerId: knownMatch.customerId } : {}),
+    ...(knownMatch.customerId
+      ? { customerId: knownMatch.customerId, customerDetailsOnFile: customerMatchIsComplete(knownMatch) }
+      : {}),
     llmModel: model,
     // Seeded exactly the way StartConversationUseCase leaves a live
     // conversation: the greeting kickoff plus the greeting Grace already
@@ -769,10 +799,221 @@ const ASKS_PHONE = /\b(your (phone|number)|best number|number to reach)\b/;
 // Pine Street?" is the readback the prompt explicitly requires after a
 // caller gives an address, so matching it as a re-ask would test against
 // the prompt's own instruction.
-const ASKS_ADDRESS = /\b(what'?s (the|your) address|can i (get|have) (the|your) address|what street|where are you located)\b/;
+const ASKS_ADDRESS = /\b(what'?s (the|your|the service) address|can i (get|have) (the|your) address|(give|tell) me (the|your) address|(repeat|say) (the|your) address|what street|where are you located)\b/;
 const ASKS_LOCATION = /\b(which (room|fixture|part)|where (in the house|is it|exactly)|what part of)\b/;
 const ASKS_TIMING = /\b(how soon|when (would|are you|works)|right away|get you on the schedule|today or)\b/;
 const ASKS_ACTIVE = /\b(actively|still (going|running|leaking)|right now\?|dripping or)\b/;
+
+// ---------------------------------------------------------------------
+// v53: scenarios from the previous vendor's October calls for this business
+// and our own 2026-10-13 test calls. Caller names and addresses are invented
+// or changed; the shapes are real.
+// ---------------------------------------------------------------------
+
+/** Never asks a question matching `pattern` from agent turn `fromTurn` on (after the caller gave the answer). */
+function neverAsksAfter(label: string, pattern: RegExp, fromTurn: number): Check {
+  return {
+    label,
+    run: (ctx) => {
+      for (const turn of ctx.agentTurns.slice(fromTurn)) {
+        for (const sentence of turn.split(/(?<=[?.!])\s+/)) {
+          if (sentence.includes("?") && pattern.test(norm(sentence))) {
+            return `asked: "${sentence.trim()}"`;
+          }
+        }
+      }
+      return null;
+    },
+  };
+}
+
+function neverSaysAfter(label: string, pattern: RegExp, fromTurn: number): Check {
+  return {
+    label,
+    run: (ctx) => {
+      const hit = ctx.agentTurns.slice(fromTurn).find((turn) => pattern.test(norm(turn)));
+      return hit === undefined ? null : `said: "${hit.trim()}"`;
+    },
+  };
+}
+
+/** No statement of five or more words is said twice in the call (vendor call Oct 7). */
+const NO_REPEATED_SENTENCE: Check = {
+  label: "never says the same sentence twice",
+  run: (ctx) => {
+    const seen = new Set<string>();
+    for (const turn of ctx.agentTurns) {
+      for (const sentence of turn.split(/(?<=[.!?])\s+/)) {
+        const key = norm(sentence).replace(/[^a-z0-9 ]/g, "").trim();
+        if (key.split(/\s+/).length < 5) continue;
+        if (seen.has(key)) return `repeated: "${sentence.trim()}"`;
+        seen.add(key);
+      }
+    }
+    return null;
+  },
+};
+
+function saysNameAtMost(name: RegExp, max: number): Check {
+  return {
+    label: `says the caller's name at most ${max} times`,
+    run: (ctx) => {
+      const count = ctx.agentTurns.reduce((n, turn) => n + (norm(turn).match(name)?.length ?? 0), 0);
+      return count <= max ? null : `said it ${count} times`;
+    },
+  };
+}
+
+const ASKS_HOME_OR_BUSINESS =
+  /\b(home or (a )?business|residential or commercial|is (this|it) (for )?(a |your )?(home|house|business))\b/;
+const CLAIMS_INFO_ON_FILE = /\b(i'?ve got your (info|information|details)|i have your (info|information|details)|you'?re (already )?in (our|the) system)\b/;
+
+const VENDOR_SCENARIOS: Scenario[] = [
+  {
+    id: "vendor-01-spelled-name-kept",
+    category: "vendor",
+    turns: [
+      "Hi, I want a new water filtration system put in under my kitchen sink.",
+      "Sure, it's Renata, r e n a t a, last name Kowal, k o w a l.",
+      "It's 14210 196th Avenue East, Bonney Lake, 98391.",
+      "Yes, that's right.",
+      "Do you provide a brand, or do I buy it?",
+    ],
+    checks: [
+      neverSays("never says a wrong variant of a spelled name", /\b(rena|renee|rina|ronata|renada|renatta|milo|myla)\b/),
+      saysNameAtMost(/\brenata\b/g, 2),
+      neverAsksAfter("never asks for the address once given", ASKS_ADDRESS, 3),
+      neverAsksAfter("never asks the name once given", ASKS_NAME, 2),
+      saysSomewhere("passes the unanswered brand question to the team", /\b(team|technician|tech|note|pass)\b/),
+    ],
+  },
+  {
+    id: "vendor-02-home-not-reasked",
+    category: "vendor",
+    turns: [
+      "My kitchen drain is completely clogged. It's my home, in Redmond.",
+      "Maria Lopez.",
+      "6120 148th Drive Northeast, Redmond, 98052.",
+      "Yes.",
+      "As soon as possible.",
+    ],
+    checks: [
+      neverAsksAbout("never asks home or business after 'my home'", ASKS_HOME_OR_BUSINESS),
+      neverAsksAfter("never asks for the address once given", ASKS_ADDRESS, 3),
+      NO_REPEATED_SENTENCE,
+    ],
+  },
+  {
+    id: "vendor-03-zip-asked-when-missing",
+    category: "vendor",
+    turns: ["The water line outside my house is leaking.", "Ravi Mehta.", "3810 248th Place South, Kent."],
+    checks: [asksAbout("asks for the ZIP it does not have", /\bzip\b/)],
+  },
+  {
+    id: "vendor-04-price-and-coupon-no-loop",
+    category: "vendor",
+    turns: [
+      "My kitchen drain is clogged, we already snaked it a few times. How much will it cost? I saw a hundred dollar discount.",
+      "But can you give me a rough estimate?",
+      "Okay, but how much roughly?",
+    ],
+    checks: [
+      saysSomewhere("answers the coupon question", /(\$100|100 dollars|hundred)/),
+      NO_REPEATED_SENTENCE,
+    ],
+  },
+  {
+    id: "vendor-05-human-first-request",
+    category: "vendor",
+    turns: ["Can I talk to a real person please?"],
+    checks: [callsTool("transferToHuman"), neverAsksAbout("does not gatekeep the transfer", ASKS_PROBLEM)],
+  },
+  {
+    id: "vendor-06-human-after-details",
+    category: "vendor",
+    turns: [
+      "Water was coming into my house from a leak in my main. I shut it off at the street.",
+      "Dana Ortiz.",
+      "Are you a human or an AI?",
+      "Can you transfer me to a human?",
+    ],
+    checks: [
+      saysSomewhere("answers the AI question honestly", /\b(ai|automated|virtual)\b/),
+      callsTool("transferToHuman"),
+    ],
+  },
+  {
+    id: "vendor-07-hold-on",
+    category: "vendor",
+    turns: [
+      "My kitchen sink is leaking, I'm at 1201 South 56th Place, Seattle.",
+      "Hold on, let me check the zip code.",
+    ],
+    checks: [
+      {
+        label: "after 'hold on' just agrees to wait, no new question",
+        run: (ctx) => {
+          const last = ctx.agentTurns.at(-1) ?? "";
+          return last.includes("?") || last.split(/\s+/).length > 12 ? `said: "${last.trim()}"` : null;
+        },
+      },
+    ],
+  },
+  {
+    id: "vendor-08-sales-call",
+    category: "vendor",
+    turns: [
+      "Hi, it's Mapcard Business. We help local plumbing shops get more calls. What's slowing the business down right now?",
+      "We do Google visibility and AI phone agents for shops like yours.",
+    ],
+    checks: [
+      neverCallsTool("createCustomer"),
+      neverCallsTool("createLead"),
+      neverAsksAbout("never runs an intake on a sales call", ASKS_NAME),
+    ],
+  },
+  {
+    id: "vendor-09-no-show-complaint",
+    category: "vendor",
+    turns: ["I called yesterday and booked, I gave you my name and my address, and nobody showed up. This is ridiculous."],
+    checks: [
+      saysSomewhere("apologizes", /\b(sorry|apologi)/),
+      neverSays("never claims it has their information", CLAIMS_INFO_ON_FILE),
+    ],
+  },
+  {
+    id: "vendor-10-incomplete-record-full-intake",
+    category: "vendor",
+    incompleteRecord: true,
+    turns: ["Hi, my kitchen sink is leaking underneath.", "My name is Patrick Lee.", "It's 1912 9th Avenue West, Seattle, 98119."],
+    checks: [
+      neverSays("never claims it has their information", CLAIMS_INFO_ON_FILE),
+      saysSomewhere("captures the address the caller volunteered", /1912/),
+      neverCallsTool("createLead"),
+    ],
+  },
+  {
+    id: "vendor-11-ai-question",
+    category: "vendor",
+    turns: ["Is this an AI or a human being?"],
+    checks: [saysSomewhere("answers honestly", /\b(ai|automated|virtual)\b/)],
+  },
+  {
+    id: "vendor-12-unknown-service",
+    category: "vendor",
+    turns: ["Do you guys do thermal imaging to find a leak in my ceiling?"],
+    checks: [
+      neverSays("never claims a service it does not know about", /\byes,? we (do|offer|have) (thermal|infrared)/),
+      saysSomewhere("passes the question to the team or technician", /\b(team|technician|tech|confirm|check)\b/),
+    ],
+  },
+  {
+    id: "vendor-13-name-correction-wins",
+    category: "vendor",
+    turns: ["i have steve", "no sorry, my name is judith", "it's a leak in my water line outside"],
+    checks: [neverSaysAfter("never uses the corrected-away name", /\bsteve\b/, 1)],
+  },
+];
 
 const SCENARIOS: Scenario[] = [
   // -------------------------------------------------------------------
@@ -952,7 +1193,7 @@ const SCENARIOS: Scenario[] = [
   { id: "incr-05-yes-no", category: "incremental", turns: ["My pipe is leaking.", "Yes.", "No."], checks: [atMostQuestions(1)] },
   { id: "incr-06-pauses", category: "incremental", turns: ["Um.", "So my shower.", "It won't drain."], checks: [atMostQuestions(1)] },
   { id: "incr-07-answers-only-what-asked", category: "incremental", turns: ["Drain is clogged.", "Kitchen."], checks: [atMostQuestions(1), neverAsksAbout("does not re-ask which room", ASKS_LOCATION)] },
-  { id: "incr-08-late-name", category: "incremental", turns: ["Faucet is dripping.", "Bathroom.", "Oh, I'm Dana."], checks: [neverAsksAbout("does not re-ask the name after it is offered", ASKS_NAME)] },
+  { id: "incr-08-late-name", category: "incremental", turns: ["Faucet is dripping.", "Bathroom.", "Oh, I'm Dana."], checks: [neverAsksAfter("does not re-ask the name after it is offered", ASKS_NAME, 2)] },
 
   // -------------------------------------------------------------------
   // 3. NO RE-ASKING — the defect the product owner hit twice.
@@ -1267,7 +1508,7 @@ const SCENARIOS: Scenario[] = [
   { id: "feedback-08-fake-street-not-verified", category: "feedback", turns: ["I need a plumber for a clogged sink, my name is Tom Baker", "it's 4471 Zorblax Boulevard, Seattle, 98101"], checks: [neverSays("never claims the address is verified or valid", /(verified|valid address|confirmed that address|checked that address)/)] },
   { id: "feedback-09-second-problem-no-cause", category: "feedback", turns: ["my kitchen sink is clogged, my name is Rohan Mehta", "oh and the dishwasher makes a gurgling noise"], checks: [neverSays("no cause or link claimed between problems", /(same|connected|related|tied|linked|caused|because|due to|clog in|drain line)/)] },
   { id: "feedback-10-no-timing-choice", category: "feedback", turns: ["my toilet keeps running, my name is Ana Ruiz", "yes it never stops"], checks: [neverSays("no day or time named or promised", /(today|later today|this afternoon|tonight|tomorrow)/)] },
-  { id: "feedback-11-address-before-save", category: "feedback", turns: ["my name is Tom Baker and my sink is clogged", "it drains very slowly", "my address is 1200 Pine Street Seattle 98101", "yes that's right"], checks: [callsTool("createCustomer")] },
+  { id: "feedback-11-address-before-save", category: "feedback", turns: ["my name is Tom Baker and my sink is clogged", "it drains very slowly", "my address is 1200 Pine Street Seattle 98101", "yes that's right", "yes, that number is fine"], checks: [callsTool("createCustomer")] },
   { id: "feedback-12-reschedule-not-booked", category: "feedback", turns: ["hi I need to reschedule my appointment for tomorrow to Friday", "my name is Tom Baker", "it's at 1200 Pine Street"], checks: [neverSays("never says it was rescheduled, booked or that Friday works", /(rescheduled|moved it|it's booked|all set|friday works|works for us|got you down)/), neverSays("never claims to look up the appointment", /(pull(ing)? up|look(ing)? up|check(ing)? (the )?(schedule|calendar))/)] },
   { id: "feedback-13-cancel-not-done", category: "feedback", turns: ["hi this is George, cancel my appointment", "it's the kitchen sink leak for this afternoon"], checks: [neverSays("never says it was cancelled", /(cancell?ed|i'?ll get that cancel|let me get that cancel|that's cancel)/)] },
   { id: "feedback-14-confirms-callback-number", category: "feedback", turns: ["my name is Sam Lee and my toilet keeps running", "it's 1200 Pine Street, Seattle 98101", "yes that's right", "yes"], checks: [asksAbout("asks to confirm the callback number", /(best number|number (to|we can|i can) (reach|call)|calling from|reach you (at|on)|this number|call ?back number|phone number)/)] },
@@ -1288,6 +1529,7 @@ const SCENARIOS: Scenario[] = [
   // room: a brief, patient acknowledgment, no new question piled on.
   { id: "edge-09-caller-says-wait", category: "edge", turns: ["My kitchen sink is leaking pretty bad.", "Wait, hold on a second."], checks: [atMostQuestions(0)] },
 
+  ...VENDOR_SCENARIOS,
 ];
 
 // ---------------------------------------------------------------------

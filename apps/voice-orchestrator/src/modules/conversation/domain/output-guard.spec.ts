@@ -106,3 +106,128 @@ describe("OutputGuard, on the exact lines from the clients' real test calls", ()
     }
   });
 });
+
+describe("OutputGuard repeated statements (vendor call Oct 7: 'Pricing depends on the job' three times)", () => {
+  const earlier = [
+    "Pricing depends on the job and will be discussed before any work begins. What's the address?",
+  ];
+
+  it("drops a statement already made in a recent reply", () => {
+    const guard = new OutputGuard(earlier);
+    const out = guard.apply(
+      "Pricing depends on the job and will be discussed before any work begins. ",
+    );
+    expect(out).toBe("");
+    expect(guard.actions).toContain("repeated_statement");
+  });
+
+  it("keeps the new part of a reply that also repeats an old statement", () => {
+    const guard = new OutputGuard(earlier);
+    const out = guard.apply(
+      "Pricing depends on the job and will be discussed before any work begins. The technician gives you the exact price on site before starting.",
+    );
+    expect(out).toContain("technician gives you the exact price");
+    expect(out).not.toContain("Pricing depends");
+  });
+
+  it("never drops a question, even a repeated one", () => {
+    const guard = new OutputGuard(["What's the zip code for that address?"]);
+    expect(guard.apply("What's the zip code for that address?")).toContain("zip code");
+  });
+
+  it("never drops short sentences", () => {
+    const guard = new OutputGuard(["Okay, got it."]);
+    expect(guard.apply("Okay, got it.")).toBe("Okay, got it.");
+  });
+
+  it("does nothing without earlier replies", () => {
+    const guard = new OutputGuard();
+    expect(
+      guard.apply("Pricing depends on the job and will be discussed before any work begins."),
+    ).toContain("Pricing depends");
+  });
+});
+
+describe("OutputGuard v53 meta phrases (QA 2026-10-13)", () => {
+  it("drops talk about turns, which only makes sense to the model", () => {
+    const guard = new OutputGuard();
+    const out = guard.apply(
+      "Actually, you asked me only one thing this turn, so let me stick to it. What's the best number to reach you?",
+    );
+    expect(out).not.toContain("this turn");
+    expect(out).toContain("best number");
+  });
+
+  it("drops narration of how the call was classified", () => {
+    const guard = new OutputGuard();
+    expect(guard.apply("I'm flagging this as an emergency right now. ")).toBe("");
+  });
+});
+
+describe("OutputGuard call-centre phrasing (vendor CSR style, QA 2026-10-13)", () => {
+  it("rewrites 'May I have your name?' into plain speech", () => {
+    expect(new OutputGuard().apply("May I have your name?")).toBe("Can I get your name?");
+    expect(new OutputGuard().apply("Thanks. And may I have the ZIP?")).toBe(
+      "Thanks. And can I get the ZIP?",
+    );
+  });
+});
+
+describe("OutputGuard tool narration (QA 2026-10-13)", () => {
+  it.each([
+    "Water under the cabinet is an urgent one, so I'm checking that now.",
+    "Retrying the lead with the saved customer record.",
+    "Let me check that for you.",
+    "Sewage coming up in the shower is serious, so I'm flagging this now.",
+    "Saving your request now.",
+    "Let me check how urgent this is.",
+  ])("drops %p", (sentence) => {
+    expect(new OutputGuard().apply(sentence)).toBe("");
+  });
+
+  it("keeps an ordinary question that happens to use 'check'", () => {
+    expect(new OutputGuard().apply("Can you check whether the valve is off?")).toContain("valve");
+  });
+});
+
+describe("OutputGuard reasoning leaks with thinking off (QA 2026-10-13, Haiku 5.5)", () => {
+  it("drops reasoning written as the reply and keeps the real reply", () => {
+    const out = new OutputGuard().apply(
+      "Speak whatever language the caller speaks. Caller is speaking Spanish. Need to call escalateEmergency since they describe a problem, and ask whether it's active. Ay, qué mal. ¿La fuga está pasando ahorita?",
+    );
+    expect(out).not.toMatch(/caller|escalateEmergency|Need to/i);
+    expect(out).toContain("¿La fuga está pasando ahorita?");
+  });
+
+  it("drops a sentence said twice in a row, however short", () => {
+    expect(new OutputGuard().apply("Good luck with it. Good luck with it.")).toBe(
+      "Good luck with it.",
+    );
+  });
+});
+
+describe("OutputGuard length and wording tidy-ups (QA 2026-10-13)", () => {
+  it("drops a bare acknowledgment in the middle of a reply", () => {
+    expect(
+      new OutputGuard().apply("Sewage coming up is serious. Got it. Can I get your name?"),
+    ).toBe("Sewage coming up is serious. Can I get your name?");
+  });
+
+  it("keeps an acknowledgment that opens the turn", () => {
+    expect(new OutputGuard().apply("Got it. What's the address?")).toBe(
+      "Got it. What's the address?",
+    );
+  });
+
+  it("drops an opening acknowledgment when an earlier pass of the same turn already spoke", () => {
+    expect(new OutputGuard([], true).apply("Got it. What's the address?")).toBe(
+      "What's the address?",
+    );
+  });
+
+  it("never says 'today' in its own statements", () => {
+    expect(new OutputGuard().apply("I can't promise a call today, but I'll note it.")).not.toMatch(
+      /today/i,
+    );
+  });
+});
