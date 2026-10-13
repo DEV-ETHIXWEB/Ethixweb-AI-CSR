@@ -1,6 +1,13 @@
 node_modules
 **/node_modules
 **/dist
+# TypeScript incremental build state. It lives OUTSIDE dist, so ignoring dist
+# alone copied it in: with `incremental: true` in tsconfig.base.json, tsc read a
+# local buildinfo claiming everything was already emitted, skipped emitting into
+# the dist that .dockerignore had stripped, and the next package's build failed
+# with "has no exported member". Found 2026-09-14 on the first uncached
+# voice-runtime build; every earlier deploy had only passed on a cached layer.
+**/*.tsbuildinfo
 **/.next
 **/coverage
 .git

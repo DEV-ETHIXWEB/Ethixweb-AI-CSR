@@ -22,6 +22,7 @@ function fakeProvider(profile: AgentProfile): AgentProfileProvider {
 
 function baseRuntimeContext(): RuntimeContext {
   return {
+    businessName: "All Phase Plumbing",
     currentTimeIso: "2026-08-01T14:00:00-05:00",
     timezone: "America/Chicago",
     businessHours: { isOpen: true, isHoliday: false },

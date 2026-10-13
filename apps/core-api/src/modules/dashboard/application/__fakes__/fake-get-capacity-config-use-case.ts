@@ -6,6 +6,7 @@ export class FakeGetCapacityConfigUseCase {
     id: null,
     tenantId: "tenant-1",
     businessId: "business-1",
+    businessName: "All Phase Plumbing",
     maxTenantConcurrentCalls: 10,
     maxWaitingCallers: 5,
     waitingTimeoutMs: 30000,

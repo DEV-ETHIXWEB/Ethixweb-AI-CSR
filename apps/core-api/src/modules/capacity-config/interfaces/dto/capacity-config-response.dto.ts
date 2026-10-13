@@ -7,6 +7,7 @@ function toResult(source: CapacityConfigResult | TenantCapacityConfig): Capacity
     id: source.id,
     tenantId: source.tenantId,
     businessId: source.businessId,
+    businessName: "businessName" in source ? source.businessName : null,
     maxTenantConcurrentCalls: source.maxTenantConcurrentCalls,
     maxWaitingCallers: source.maxWaitingCallers,
     waitingTimeoutMs: source.waitingTimeoutMs,
@@ -24,6 +25,7 @@ export class CapacityConfigResponseDto {
   @ApiProperty({ nullable: true }) id: string | null;
   @ApiProperty() tenantId: string;
   @ApiProperty() businessId: string;
+  @ApiProperty({ nullable: true }) businessName: string | null;
   @ApiProperty() maxTenantConcurrentCalls: number;
   @ApiProperty() maxWaitingCallers: number;
   @ApiProperty() waitingTimeoutMs: number;
@@ -39,6 +41,7 @@ export class CapacityConfigResponseDto {
     this.id = result.id;
     this.tenantId = result.tenantId;
     this.businessId = result.businessId;
+    this.businessName = result.businessName;
     this.maxTenantConcurrentCalls = result.maxTenantConcurrentCalls;
     this.maxWaitingCallers = result.maxWaitingCallers;
     this.waitingTimeoutMs = result.waitingTimeoutMs;

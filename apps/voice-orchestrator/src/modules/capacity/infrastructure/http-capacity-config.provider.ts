@@ -19,6 +19,8 @@ import {
 
 /** core-api's `GET /internal/capacity-config/:businessId` response shape (capacity-config module's CapacityConfigResponseDto, core-api repo). */
 interface CapacityConfigApiResponse {
+  /** Added core-api side so the AI can say which company it is answering for; null when the business row is missing. */
+  businessName?: string | null;
   maxTenantConcurrentCalls?: number;
   maxWaitingCallers?: number;
   waitingTimeoutMs?: number;
@@ -86,6 +88,7 @@ export class HttpCapacityConfigProvider implements CapacityConfigProvider {
     return {
       tenantId,
       businessId,
+      businessName: capacity.businessName,
       maxGlobalConcurrentCalls: envInt(
         "MAX_GLOBAL_CONCURRENT_CALLS",
         DEFAULT_MAX_GLOBAL_CONCURRENT_CALLS,
@@ -103,6 +106,7 @@ export class HttpCapacityConfigProvider implements CapacityConfigProvider {
     tenantId: string,
     businessId: string,
   ): Promise<{
+    businessName: string | null;
     maxTenantConcurrentCalls: number;
     maxWaitingCallers: number;
     waitingTimeoutMs: number;
@@ -115,6 +119,7 @@ export class HttpCapacityConfigProvider implements CapacityConfigProvider {
         `/internal/capacity-config/${businessId}`,
       );
       return {
+        businessName: response.businessName ?? null,
         maxTenantConcurrentCalls:
           response.maxTenantConcurrentCalls ??
           envInt("MAX_TENANT_CONCURRENT_CALLS", DEFAULT_MAX_TENANT_CONCURRENT_CALLS),
@@ -138,6 +143,10 @@ export class HttpCapacityConfigProvider implements CapacityConfigProvider {
         `core-api capacity-config fetch failed for tenant=${tenantId} business=${businessId}, falling back to platform defaults: ${String(error)}`,
       );
       return {
+        // core-api is the only source for the name, so a failed fetch means
+        // the AI falls back to speaking no company name at all rather than
+        // a stale or guessed one.
+        businessName: null,
         maxTenantConcurrentCalls: envInt(
           "MAX_TENANT_CONCURRENT_CALLS",
           DEFAULT_MAX_TENANT_CONCURRENT_CALLS,

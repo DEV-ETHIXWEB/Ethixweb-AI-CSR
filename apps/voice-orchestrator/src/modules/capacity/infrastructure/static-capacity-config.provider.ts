@@ -47,6 +47,8 @@ export class StaticCapacityConfigProvider implements CapacityConfigProvider {
     return {
       tenantId,
       businessId,
+      // No core-api in this fallback provider, so no real name to offer.
+      businessName: null,
       maxGlobalConcurrentCalls: envInt(
         "MAX_GLOBAL_CONCURRENT_CALLS",
         DEFAULT_MAX_GLOBAL_CONCURRENT_CALLS,

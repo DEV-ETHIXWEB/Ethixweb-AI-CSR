@@ -240,4 +240,103 @@ describe("ElevenLabsTtsProvider", () => {
 
     expect(lastSocket!.closeCallCount).toBe(1);
   });
+
+  describe("replay cache for recurring short utterances (pickup latency)", () => {
+    async function renderFully(provider: ElevenLabsTtsProvider, text: string): Promise<Buffer[]> {
+      const out: Buffer[] = [];
+      const iterator = provider.synthesize(text)[Symbol.asyncIterator]();
+      const first = iterator.next();
+      lastSocket!.simulateOpen();
+      lastSocket!.simulateAudioChunk(Buffer.from("aaa").toString("base64"));
+      lastSocket!.simulateAudioChunk(Buffer.from("bbb").toString("base64"));
+      lastSocket!.simulateFinal();
+      let step = await first;
+      while (!step.done) {
+        out.push(step.value);
+        step = await iterator.next();
+      }
+      return out;
+    }
+
+    it("replays a completed greeting on the next call without opening a new ElevenLabs socket", async () => {
+      const provider = new ElevenLabsTtsProvider();
+      const firstRender = await renderFully(
+        provider,
+        "Hi, this is Grace at All Phase Plumbing. What can I help you with?",
+      );
+      const socketAfterFirst = lastSocket;
+      lastSocket = undefined;
+
+      const replay: Buffer[] = [];
+      for await (const chunk of provider.synthesize(
+        "Hi, this is Grace at All Phase Plumbing. What can I help you with?",
+      )) {
+        replay.push(chunk);
+      }
+
+      expect(lastSocket).toBeUndefined();
+      expect(socketAfterFirst).toBeDefined();
+      expect(Buffer.concat(replay).toString()).toBe(Buffer.concat(firstRender).toString());
+    });
+
+    it("never caches a render that ElevenLabs did not finish, so a truncated clip can never be replayed", async () => {
+      const provider = new ElevenLabsTtsProvider();
+      const iterator = provider.synthesize("Sounds good, take care.")[Symbol.asyncIterator]();
+      const first = iterator.next();
+      lastSocket!.simulateOpen();
+      lastSocket!.simulateAudioChunk(Buffer.from("partial").toString("base64"));
+      lastSocket!.emit("close");
+      let step = await first;
+      while (!step.done) {
+        step = await iterator.next();
+      }
+      lastSocket = undefined;
+
+      const again = provider.synthesize("Sounds good, take care.")[Symbol.asyncIterator]();
+      void again.next();
+
+      expect(lastSocket).toBeDefined();
+    });
+
+    it("never caches a render cut short by barge-in", async () => {
+      const provider = new ElevenLabsTtsProvider();
+      const controller = new AbortController();
+      const iterator = provider
+        .synthesize("Let me know if anything changes.", controller.signal)
+        [Symbol.asyncIterator]();
+      const first = iterator.next();
+      lastSocket!.simulateOpen();
+      lastSocket!.simulateAudioChunk(Buffer.from("half").toString("base64"));
+      controller.abort();
+      lastSocket!.simulateFinal();
+      let step = await first;
+      while (!step.done) {
+        step = await iterator.next();
+      }
+      lastSocket = undefined;
+
+      const again = provider.synthesize("Let me know if anything changes.")[Symbol.asyncIterator]();
+      void again.next();
+
+      expect(lastSocket).toBeDefined();
+    });
+
+    it("treats a different emotional delivery of the same words as a different clip", async () => {
+      const provider = new ElevenLabsTtsProvider();
+      await renderFully(provider, "I'm sorry to hear that.");
+      lastSocket = undefined;
+
+      const iterator = provider
+        .synthesize("I'm sorry to hear that.", undefined, {
+          stability: 0.3,
+          similarityBoost: 0.75,
+          style: 0.5,
+          speed: 0.9,
+        })
+        [Symbol.asyncIterator]();
+      void iterator.next();
+
+      expect(lastSocket).toBeDefined();
+    });
+  });
 });

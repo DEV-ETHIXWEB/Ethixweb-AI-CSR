@@ -4,6 +4,7 @@ import type {
 } from "../../../capacity/domain/capacity-config";
 
 const DEFAULT_CONFIG: Omit<CapacityConfig, "tenantId" | "businessId"> = {
+  businessName: "All Phase Plumbing",
   maxGlobalConcurrentCalls: 100,
   maxTenantConcurrentCalls: 10,
   maxWaitingCallers: 5,

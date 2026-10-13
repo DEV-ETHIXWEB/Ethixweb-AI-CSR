@@ -15,7 +15,12 @@ RUN corepack enable
 FROM base AS pruner
 WORKDIR /repo
 COPY . .
-RUN npx turbo prune @ethixweb/voice-orchestrator --docker
+# Pinned to the repo's own turbo version. `npx turbo` with no version installs
+# whatever npm has as latest at build time, and on 2026-09-14 that release
+# (2.10.13) shipped without a working linux-64 binary, which failed every
+# uncached build at this step. The lockfile's turbo is used for `turbo run build`
+# below, after pnpm install; this prune step runs before install and had no pin.
+RUN npx turbo@2.10.7 prune @ethixweb/voice-orchestrator --docker
 
 FROM base AS installer
 WORKDIR /repo

@@ -37,8 +37,37 @@ import {
  * guards against lives entirely in emotional-delivery.ts's own
  * sanitization, which runs before this method is ever called).
  */
+/**
+ * Replayable audio for short utterances that recur across calls.
+ *
+ * FOUND measuring pickup latency for a brand-new caller. The opening line is
+ * now a fixed per-business template (see buildOpeningGreeting in
+ * voice-orchestrator), yet every call still paid a fresh ElevenLabs round
+ * trip, roughly 400ms and occasionally 2s cold, to render audio byte-for-byte
+ * identical to the previous call's. The same holds for the stock sign-offs
+ * and apology lines. After the first render, those now start playing
+ * immediately.
+ *
+ * Deliberately narrow so it can never serve wrong audio:
+ *  - keyed on EVERYTHING that shapes the sound (model, voice, every delivery
+ *    setting, exact text), so a different emotional delivery is a miss;
+ *  - only short utterances, which are the ones that genuinely repeat;
+ *  - only stored after ElevenLabs signalled the render complete (isFinal),
+ *    never from a stream that was aborted by barge-in, errored, or closed
+ *    early, so a truncated clip can never be cached and replayed;
+ *  - bounded, least-recently-used eviction.
+ *
+ * Replay is safe for barge-in: the sink's Twilio `clear` event flushes
+ * buffered audio whether it arrived from the network or from here, and the
+ * abort signal is still honoured between chunks.
+ */
+const MAX_CACHEABLE_TEXT_CHARS = 240;
+const MAX_CACHED_UTTERANCES = 64;
+
 @Injectable()
 export class ElevenLabsTtsProvider implements TextToSpeechProvider {
+  private readonly audioCache = new Map<string, Buffer[]>();
+
   async *synthesize(
     text: string,
     signal?: AbortSignal,
@@ -54,8 +83,36 @@ export class ElevenLabsTtsProvider implements TextToSpeechProvider {
     }
     const modelId = process.env["ELEVENLABS_MODEL_ID"] ?? "eleven_turbo_v2_5";
 
+    const cacheKey =
+      text.length <= MAX_CACHEABLE_TEXT_CHARS
+        ? [
+            modelId,
+            voiceId,
+            voiceSettings.stability,
+            voiceSettings.similarityBoost,
+            voiceSettings.style,
+            voiceSettings.speed,
+            text,
+          ].join("|")
+        : null;
+    const cached = cacheKey ? this.audioCache.get(cacheKey) : undefined;
+    if (cacheKey && cached) {
+      // Refresh recency for LRU eviction.
+      this.audioCache.delete(cacheKey);
+      this.audioCache.set(cacheKey, cached);
+      for (const chunk of cached) {
+        if (signal?.aborted) {
+          return;
+        }
+        yield chunk;
+      }
+      return;
+    }
+
     const url = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?output_format=ulaw_8000&model_id=${modelId}`;
     const socket = new WebSocket(url);
+    const recorded: Buffer[] = [];
+    let renderCompleted = false;
 
     const queue = new AudioChunkQueue();
     let opened = false;
@@ -105,6 +162,7 @@ export class ElevenLabsTtsProvider implements TextToSpeechProvider {
         queue.push(Buffer.from(message["audio"], "base64"));
       }
       if (message["isFinal"] === true) {
+        renderCompleted = true;
         queue.end();
       }
     });
@@ -123,7 +181,19 @@ export class ElevenLabsTtsProvider implements TextToSpeechProvider {
         if (signal?.aborted) {
           break;
         }
+        if (cacheKey) {
+          recorded.push(chunk);
+        }
         yield chunk;
+      }
+      if (cacheKey && renderCompleted && !signal?.aborted && recorded.length > 0) {
+        this.audioCache.set(cacheKey, recorded);
+        if (this.audioCache.size > MAX_CACHED_UTTERANCES) {
+          const oldest = this.audioCache.keys().next().value;
+          if (oldest !== undefined) {
+            this.audioCache.delete(oldest);
+          }
+        }
       }
     } finally {
       signal?.removeEventListener("abort", onAbort);

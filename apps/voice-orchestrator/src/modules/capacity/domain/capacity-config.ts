@@ -18,6 +18,15 @@
 export interface CapacityConfig {
   tenantId: string;
   businessId: string;
+  /**
+   * The business's real display name, from core-api. Carried on this
+   * config because it is already fetched once per call start and the
+   * prompt layer had no other source: until this existed the AI was never
+   * told which company it was answering for. Null when core-api is
+   * degraded or the business row is missing, which prompt assembly
+   * renders as a neutral fallback rather than a spoken placeholder.
+   */
+  businessName: string | null;
   /** Hard ceiling across ALL tenants sharing this deployment. */
   maxGlobalConcurrentCalls: number;
   /** Hard ceiling for this tenant alone — never allows one tenant to starve another. */
