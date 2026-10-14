@@ -176,5 +176,10 @@ describe("fragmentStrength (client feedback: silent hold for a caller who is sti
       expect(fragmentStrength(utterance)).toBe("none");
     });
   });
+
+  it("2026-10-14: a spelled name ending in the letter 'a' is complete, not a trailing article", () => {
+    expect(fragmentStrength("marisa m a r i s a")).toBe("none");
+    expect(fragmentStrength("it's a")).toBe("strong");
+  });
 });
 

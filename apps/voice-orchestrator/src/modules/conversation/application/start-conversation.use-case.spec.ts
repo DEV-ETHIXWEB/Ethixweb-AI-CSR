@@ -367,8 +367,9 @@ describe("StartConversationUseCase", () => {
       expect(lookups[0]?.body).toEqual({ businessId: "business-1", phoneE164: "+15551234567" });
       expect(conversation.searchCustomerEverChecked).toBe(true);
       expect(conversation.customerId).toBe("cust-9");
-      expect(conversation.systemPrompt).toContain("name on file: Larry");
-      expect(conversation.systemPrompt).toContain("no service address on file");
+      expect(conversation.systemPrompt).toContain("a previous customer record exists for this phone number");
+      expect(conversation.systemPrompt).not.toContain("Larry");
+      expect(conversation.customerDetailsOnFile).toBe(false);
       expect(conversation.systemPrompt).toContain("cust-9");
     });
 
@@ -383,13 +384,13 @@ describe("StartConversationUseCase", () => {
       const { conversation } = await useCase.execute(command);
 
       expect(conversation.customerId).toBe("cust-7");
-      expect(conversation.systemPrompt).toContain("Treat this caller as new");
+      expect(conversation.systemPrompt).toContain("exactly as for a new caller");
       expect(conversation.systemPrompt).toContain("call createCustomer, which updates this record");
-      expect(conversation.systemPrompt).toContain("Never say you already have their information");
+      expect(conversation.systemPrompt).toContain("never say you already have their information");
       expect(conversation.systemPrompt).not.toContain("do not call createCustomer");
     });
 
-    it("a complete record on file is confirmed with the caller, not assumed", async () => {
+    it("2026-10-14: a complete record is never read out; another person may share the phone", async () => {
       const { useCase, coreApiClient } = buildUseCase();
       coreApiClient.postResponses.set("/internal/customers/resolve", {
         id: "cust-8",
@@ -399,11 +400,10 @@ describe("StartConversationUseCase", () => {
 
       const { conversation } = await useCase.execute(command);
 
-      expect(conversation.systemPrompt).toContain(
-        "a customer is on file for this number: Patrick Lee, 1912 9th Ave W, Seattle, WA 98119",
-      );
-      expect(conversation.systemPrompt).toContain("Am I speaking with Patrick Lee?");
-      expect(conversation.systemPrompt).toContain("it updates this record");
+      expect(conversation.systemPrompt).not.toContain("Patrick Lee");
+      expect(conversation.systemPrompt).not.toContain("1912");
+      expect(conversation.systemPrompt).toContain('never ask "Am I speaking with..."');
+      expect(conversation.customerDetailsOnFile).toBe(false);
     });
 
     it("tells the model a new caller has no match, and still marks the lookup done", async () => {
@@ -426,8 +426,9 @@ describe("StartConversationUseCase", () => {
 
       const { conversation } = await useCase.execute(command);
 
-      expect(conversation.systemPrompt).not.toContain("name on file: Caller");
-      expect(conversation.systemPrompt).toContain("no name and service address on file");
+      const runtimeSection = conversation.systemPrompt.split("[RUNTIME CONTEXT]")[1] ?? "";
+      expect(runtimeSection).not.toMatch(/\bCaller\b(?! ANI)/);
+      expect(conversation.systemPrompt).toContain("Collect the caller's name and service address");
     });
 
     it("degrades to the old behaviour when the lookup fails: nothing marked, model looks up itself", async () => {

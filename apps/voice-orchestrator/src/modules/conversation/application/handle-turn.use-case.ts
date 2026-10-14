@@ -793,6 +793,17 @@ export class HandleTurnUseCase {
         let output = ran.output;
         const toolEscalation = ran.escalation;
         const toolHumanTransfer = ran.humanTransfer;
+        // 2026-10-14: the raw result is {transferDestination: null} whenever
+        // the business has no on-call rotation, which means "use the default
+        // transfer number", not "failed". The model read the null as failure
+        // and told callers "I couldn't reach the team live" while the call was
+        // being transferred. It is told plainly that the transfer has started.
+        if (toolCall.name === "transferToHuman" && toolHumanTransfer) {
+          output = {
+            status: "transfer_started",
+            note: "The call is being connected to a person now. Say nothing more.",
+          };
+        }
         // getServiceAreas has no real backing implementation and always
         // answers true. When this business has an approved ZIP list, its
         // answer comes from that list instead, matching the spoken-ZIP check.
@@ -1177,6 +1188,7 @@ export class HandleTurnUseCase {
         ...(alreadySaidThisTurn.trim() ? [alreadySaidThisTurn] : []),
       ],
       alreadySaidThisTurn.trim().length > 0,
+      alreadySaidThisTurn,
     );
     const emit = (segment: string): void => {
       const guarded = guard.apply(segment);
@@ -1439,6 +1451,12 @@ export class HandleTurnUseCase {
     escalation?: { severity: string; action: string; transferDestination: string | null };
     humanTransfer?: { reason: string; transferDestination: string | null };
   }> {
+    if (toolCall.name === "transferToHuman") {
+      toolCall = {
+        ...toolCall,
+        arguments: normalizeTransferArguments(toolCall.arguments, conversation),
+      };
+    }
     const at = new Date().toISOString();
     await this.eventBus.publish({
       type: "tool.called",
@@ -1810,6 +1828,44 @@ function looksLikeSignOff(transcript: string): boolean {
   return /\b(bye|goodbye|good bye|take care|talk (to you )?(soon|later)|call (you )?back|never ?mind|that'?s all|i'?m (all )?set|have a (good|great|nice) (day|one|night)|see (you|ya))\b/i.test(
     transcript,
   );
+}
+
+const TRANSFER_REASONS = [
+  "caller_requested",
+  "cannot_help",
+  "caller_frustrated",
+  "business_workflow",
+];
+
+/**
+ * 2026-10-14 tester calls: the model called transferToHuman with no arguments,
+ * or with a sentence where the reason enum belongs ("Caller asked
+ * for a manager..."), and the strict schema rejected every attempt, so a
+ * caller asking for a person was never connected. A transfer must never fail
+ * on wording: a bad or missing reason becomes "caller_requested" (or
+ * "caller_frustrated" when the words say so), and a missing summary is built
+ * from what the caller said.
+ */
+export function normalizeTransferArguments(
+  args: Record<string, unknown>,
+  conversation: Pick<Conversation, "transcript">,
+): Record<string, unknown> {
+  const rawReason = typeof args["reason"] === "string" ? args["reason"] : "";
+  const reason = TRANSFER_REASONS.includes(rawReason)
+    ? rawReason
+    : /frustrat|angry|upset|manager|complain/i.test(rawReason)
+      ? "caller_frustrated"
+      : "caller_requested";
+  const lastCaller = [...conversation.transcript]
+    .reverse()
+    .find((entry) => entry.speaker === "caller");
+  const summaryText =
+    typeof args["summary"] === "string" && args["summary"].trim()
+      ? args["summary"]
+      : rawReason && !TRANSFER_REASONS.includes(rawReason)
+        ? rawReason
+        : `Caller asked for a person. Last words: "${lastCaller?.text ?? ""}"`;
+  return { ...args, reason, summary: summaryText.slice(0, 1000) };
 }
 
 function hasCalledEscalateEmergency(conversation: Conversation): boolean {

@@ -57,6 +57,7 @@ import type { Conversation } from "../src/modules/conversation/domain/conversati
 // let a regression in the sanitizer itself pass unnoticed. This is a dev
 // script run with `ts-node -T`, never compiled into either service.
 import { parseDelivery } from "../../voice-runtime/src/modules/call-session/application/emotional-delivery";
+import { ALLOWED_TOOLS as RUNTIME_ALLOWED_TOOLS } from "../../voice-runtime/src/modules/call-session/domain/call-session";
 
 loadDotEnvIfPresent(join(__dirname, "..", ".env"));
 
@@ -532,7 +533,13 @@ async function runScenario(scenario: Scenario): Promise<RunContext> {
   // production always offers the full catalog. Testing against the
   // toolless shape would manufacture failures and hide real ones.
   if (scenario.tools !== false) {
-    for (const definition of TOOL_CATALOG) {
+    // Exactly the tools the live line allows (voice-runtime's ALLOWED_TOOLS),
+    // not the whole catalog: transferToHuman was missing from that list on
+    // the live line and this suite, offering every tool, never noticed
+    // (2026-10-14).
+    for (const definition of TOOL_CATALOG.filter((tool) =>
+      (RUNTIME_ALLOWED_TOOLS as readonly string[]).includes(tool.name),
+    )) {
       const handler = new FakeToolHandler();
       if (definition.name === "searchCustomer") {
         handler.output = scenario.knownCustomer
@@ -867,6 +874,85 @@ function saysNameAtMost(name: RegExp, max: number): Check {
 const ASKS_HOME_OR_BUSINESS =
   /\b(home or (a )?business|residential or commercial|is (this|it) (for )?(a |your )?(home|house|business))\b/;
 const CLAIMS_INFO_ON_FILE = /\b(i'?ve got your (info|information|details)|i have your (info|information|details)|you'?re (already )?in (our|the) system)\b/;
+
+const CLAIMS_TRANSFER_FAILED = /\b(couldn'?t|could not|can'?t|cannot|unable to|wasn'?t able to) (reach|connect|transfer|get (you|anyone|someone))\b/;
+const READS_STORED_DETAILS = /\b(412 pine|akash kumar|am i speaking with)\b/;
+
+const TESTER_SCENARIOS: Scenario[] = [
+  {
+    id: "tester-01-spelled-name-ending-in-a",
+    category: "tester",
+    turns: ["My kitchen sink is leaking.", "My name is Marisa, m a r i s a"],
+    checks: [
+      {
+        label: "moves on after a spelled name instead of only 'Mm-hm'",
+        run: (ctx) => {
+          const last = (ctx.agentTurns.at(-1) ?? "").trim();
+          return /^mm-?hm\.?$/i.test(last) || last.length === 0 ? `said: "${last}"` : null;
+        },
+      },
+      neverSays("never says take your time or I'm still here", /(take your time|i'?m (still )?here)/),
+    ],
+  },
+  {
+    id: "tester-02-shared-phone-never-reads-record",
+    category: "tester",
+    knownCustomer: true,
+    turns: ["Hi, my water heater is leaking.", "My name is Lena Ruiz.", "7714 Northeast 131st Street, Kirkland, 98034."],
+    checks: [
+      neverSays("never reads out a stored name or address", READS_STORED_DETAILS),
+      saysSomewhere("takes this caller's own address", /7714/),
+    ],
+  },
+  {
+    id: "tester-03-human-request-transfers",
+    category: "tester",
+    knownCustomer: true,
+    turns: ["Can I speak to someone else? I need to talk to a person right now."],
+    checks: [callsTool("transferToHuman"), neverSays("never claims the transfer failed", CLAIMS_TRANSFER_FAILED)],
+  },
+  {
+    id: "tester-04-complaint-manager-transfers",
+    category: "tester",
+    turns: [
+      "I called two days ago about a clogged drain, gave my name and address, and nobody showed up.",
+      "Can I speak to your manager about this? I took time off work for this.",
+    ],
+    checks: [
+      saysSomewhere("apologizes", /\b(sorry|apologi)/),
+      callsTool("transferToHuman"),
+      neverSays("never claims the transfer failed", CLAIMS_TRANSFER_FAILED),
+    ],
+  },
+  {
+    id: "tester-05-address-confirmed-once",
+    category: "tester",
+    turns: [
+      "My name is Ollie Pope and my kitchen ceiling is wet near a light.",
+      "sixty one twenty, one forty eighth drive northeast, redmond, nine eight zero five two",
+      "yes",
+      "yes, this number is fine",
+    ],
+    checks: [
+      {
+        label: "reads the address back at most once",
+        run: (ctx) => {
+          const readBacks = ctx.agentTurns.filter((turn) => /\b(6120|61 ?20|sixty[- ]one)\b/i.test(turn)).length;
+          return readBacks <= 1 ? null : `read it back ${readBacks} times`;
+        },
+      },
+    ],
+  },
+  {
+    id: "tester-06-brand-question-noted",
+    category: "tester",
+    turns: ["My gas water heater is old and I want to replace it. Do you carry Bradford White or another specific brand?"],
+    checks: [
+      saysSomewhere("acknowledges the brand question", /\b(brand|team|technician|tech|note|pass)\b/),
+      neverSays("never invents a brand answer", /\b(we (carry|install|use|stock) (bradford|rheem|a\.? ?o\.? smith))/),
+    ],
+  },
+];
 
 const VENDOR_SCENARIOS: Scenario[] = [
   {
@@ -1530,6 +1616,7 @@ const SCENARIOS: Scenario[] = [
   { id: "edge-09-caller-says-wait", category: "edge", turns: ["My kitchen sink is leaking pretty bad.", "Wait, hold on a second."], checks: [atMostQuestions(0)] },
 
   ...VENDOR_SCENARIOS,
+  ...TESTER_SCENARIOS,
 ];
 
 // ---------------------------------------------------------------------

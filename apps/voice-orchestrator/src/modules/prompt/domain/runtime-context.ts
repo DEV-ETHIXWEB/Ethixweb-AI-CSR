@@ -89,32 +89,16 @@ function formatCustomerMatch(match: RuntimeContext["existingCustomerMatch"]): st
   if (!match.found) {
     return "no match found";
   }
-  // Client feedback (2026-10-13 test calls): this used to say "do not call
-  // createCustomer" for every match. A record saved earlier with no name and
-  // no address then made Grace skip the intake, never save the address the
-  // caller gave, and tell him "I've got your information". What is on file
-  // is now spelled out, and createCustomer updates the existing record.
-  const id = match.customerId
-    ? ` (customer_id ${match.customerId}; use it for createLead; do not call searchCustomer again)`
-    : "";
-  const realName =
-    match.name && !PLACEHOLDER_NAMES.has(match.name.trim().toLowerCase()) ? match.name : null;
-  const address = match.address ?? null;
-  if (realName && address) {
-    return (
-      `a customer is on file for this number: ${realName}, ${address}${id}. ` +
-      "The caller may be someone else in the household, or the job may be at a different address. " +
-      `Before using it, confirm once in one short question ("Am I speaking with ${realName}?" then "Is this for ${address}?"). ` +
-      "If either is different, collect the new details as for a new caller and call createCustomer with them: it updates this record"
-    );
-  }
-  const missing = [realName ? null : "name", address ? null : "service address"]
-    .filter(Boolean)
-    .join(" and ");
+  // 2026-10-14 tester calls: confirming what was on file ("Is the address
+  // still 12340 48th Place South?", "Am I speaking with Frank?") confused
+  // callers sharing a phone, read one person's name and address to another,
+  // and once let Grace skip asking for the address at all. The record is now
+  // used only behind the scenes; every caller gives their own details.
+  const id = match.customerId ? ` (customer_id ${match.customerId})` : "";
   return (
-    `a record exists for this number but it has no ${missing} on file${realName ? ` (name on file: ${realName})` : ""}${id}. ` +
-    `Treat this caller as new: collect the ${missing} exactly as for a new caller, then call createCustomer, which updates this record. ` +
-    "Never say you already have their information"
+    `a previous customer record exists for this phone number${id}. Several people can share a phone, ` +
+    "so never say a stored name or address, never ask \"Am I speaking with...\" and never say you already have their information. " +
+    "Collect the caller's name and service address exactly as for a new caller, then call createCustomer, which updates this record, then createLead"
   );
 }
 

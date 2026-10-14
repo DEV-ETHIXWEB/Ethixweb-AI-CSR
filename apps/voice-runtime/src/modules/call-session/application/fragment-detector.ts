@@ -201,7 +201,10 @@ export function fragmentStrength(transcript: string): FragmentStrength {
     return "strong";
   }
   const last = normalizeWord(words[words.length - 1]!);
-  if (TRAILING_WORDS.has(last)) {
+  // A spelled-out name ending in "a" ("s u m a l i a"): that "a" is a letter,
+  // not the article (2026-10-14 tester call).
+  const spelling = words.length >= 2 && normalizeWord(words[words.length - 2]!).length === 1;
+  if (TRAILING_WORDS.has(last) && !spelling) {
     return "strong";
   }
   if (isPartialNumber(words)) {

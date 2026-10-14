@@ -109,7 +109,31 @@ export function saveBlockedReason(args: Args) {
   return null;
 }
 
+/**
+ * 2026-10-14 tester call: "fifty three one two, one hundred fifty six drive
+ * northeast" is not parsed as a street (only single spoken digits are
+ * collapsed), so a confirmed address was refused as "address_needed" and
+ * Grace asked the caller to confirm it a second time. An address Grace has
+ * already read back to the caller, passed in the save, is accepted.
+ */
+function readBackByAgent(address: unknown, agentTexts: readonly string[]): boolean {
+  if (!hasStreetArg(address)) {
+    return false;
+  }
+  const street = (address as Record<string, string>)["street"] ?? "";
+  const houseNumber = street.match(/\d{1,6}/)?.[0];
+  if (!houseNumber) {
+    return false;
+  }
+  return agentTexts.some((text) =>
+    collapseSpokenDigits(text).replace(/[\s-]/g, "").includes(houseNumber),
+  );
+}
+
 function addressBlockedReason({ callerTexts, agentTexts, address }: Args) {
+  if (readBackByAgent(address, agentTexts)) {
+    return null;
+  }
   // The whole call, not a recent window: on a long call an address given
   // early read as "never given", and the refusal sent Grace back to re-ask it.
   const callerText = callerTexts.join(" . ");

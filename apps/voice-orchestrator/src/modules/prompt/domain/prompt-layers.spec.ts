@@ -147,8 +147,11 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
     });
 
     it("reads the address back once, digits one by one, and only the corrected part after a correction", () => {
-      expect(lower).toContain("read it back once when they are done");
-      expect(lower).toContain("read back only the corrected part");
+      expect(lower).toContain("read the whole address back once");
+      expect(lower).toContain("say back only that part");
+      expect(lower).toContain("never read the whole address again");
+      expect(lower).toContain("a yes or \"that's right\" is final");
+      expect(lower).toContain("the house number and a numbered street ran together");
     });
 
     it("confirms the callback number in its own reply (vendor call Oct 8 never asked for one)", () => {
@@ -170,15 +173,16 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
 
   describe("returning callers (our test calls 2026-10-13)", () => {
     it("confirms a complete record instead of assuming it", () => {
-      expect(prompt).toContain('"Am I speaking with Dana?"');
+      expect(prompt).toContain('never ask "Am I speaking with..."');
+      expect(lower).toContain("never say a stored name or address");
     });
 
     it("treats a record missing a name or address like a new caller", () => {
-      expect(lower).toContain("treat the caller exactly like a new caller");
+      expect(lower).toContain("treat every caller as new");
     });
 
     it("knows createCustomer updates an existing record", () => {
-      expect(lower).toContain("createcustomer updates an existing record");
+      expect(lower).toContain("createcustomer updates the existing record");
     });
   });
 

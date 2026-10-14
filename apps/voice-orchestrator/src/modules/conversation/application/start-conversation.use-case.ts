@@ -6,7 +6,6 @@ import { setSpanAttributes } from "../../../shared/observability/tracing";
 import { AssembleSystemPromptUseCase } from "../../prompt/application/assemble-system-prompt.use-case";
 import { DEFAULT_GRACE_PERSONA } from "../../prompt/domain/grace-persona";
 import {
-  customerMatchIsComplete,
   formatStoredAddress,
   type RuntimeContext,
 } from "../../prompt/domain/runtime-context";
@@ -330,7 +329,8 @@ export class StartConversationUseCase {
         ...(existingCustomerMatch?.customerId
           ? {
               customerId: existingCustomerMatch.customerId,
-              customerDetailsOnFile: customerMatchIsComplete(existingCustomerMatch),
+              // Details are always collected again this call (runtime-context.ts).
+              customerDetailsOnFile: false,
             }
           : {}),
         version: 1,

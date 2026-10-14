@@ -38,7 +38,7 @@ const META_LEAK =
  * starts with "Need to", so such sentences are dropped.
  */
 const REASONING_LEAK =
-  /\b(escalateEmergency|createCustomer|createLead|updateLead|searchCustomer|transferToHuman|getServiceAreas|getBusinessHours|lookupPreviousCalls)\b|\bcaller\b|^\s*(i )?need to (call|ask|check|use|run|respond|reply|confirm|get)\b|^\s*(speak|respond|reply) (in|with)\b/i;
+  /\b(the|in the|request|call|my) notes\b|\b(refused|rejected)\b|\b(complaint|new|the|a|this) lead\b|\bcreate (the|a) (lead|record|request)\b|\b(i'?ll|i will|let me|i need to) save\b|\b(couldn'?t|could not|can'?t|cannot) (update|save|add|submit|create)\b|\b(on file|in (the|our) system|the record)\b|\b(escalateEmergency|createCustomer|createLead|updateLead|searchCustomer|transferToHuman|getServiceAreas|getBusinessHours|lookupPreviousCalls)\b|\bcaller\b|^\s*(i )?need to (call|ask|check|use|run|respond|reply|confirm|get)\b|^\s*(speak|respond|reply) (in|with)\b/i;
 
 /** A sentence that is only an acknowledgment, with no information in it. */
 const PURE_ACK =
@@ -150,12 +150,20 @@ export class OutputGuard {
   private readonly recentStatements: string[][];
   private lastSentenceKey = "";
   private spokeAlready: boolean;
+  private readonly questionsThisTurn: string[][];
   readonly actions: GuardAction[] = [];
 
   /** `recentAgentReplies`: Grace's last few replies this call, oldest first. */
   /** `alreadySpokeThisTurn`: an earlier pass of this same turn already said something. */
-  constructor(recentAgentReplies: readonly string[] = [], alreadySpokeThisTurn = false) {
+  constructor(
+    recentAgentReplies: readonly string[] = [],
+    alreadySpokeThisTurn = false,
+    alreadySaidThisTurn = "",
+  ) {
     this.spokeAlready = alreadySpokeThisTurn;
+    this.questionsThisTurn = splitSentences(alreadySaidThisTurn)
+      .filter((sentence) => isQuestion(sentence))
+      .map(normalizedWords);
     this.recentStatements = recentAgentReplies
       .flatMap((reply) => splitSentences(reply))
       .filter((sentence) => !isQuestion(sentence))
@@ -165,7 +173,14 @@ export class OutputGuard {
 
   private repeatsRecentStatement(sentence: string): boolean {
     if (isQuestion(sentence)) {
-      return false;
+      // 2026-10-14: "Is the water running right now...? Got it... Is the
+      // water running right now...?" in one reply. A question already asked
+      // earlier in this same turn is not asked again.
+      const asked = normalizedWords(sentence);
+      return (
+        asked.length >= 4 &&
+        this.questionsThisTurn.some((earlier) => similarity(asked, earlier) >= REPEAT_SIMILARITY)
+      );
     }
     const current = normalizedWords(sentence);
     if (current.length < REPEAT_MIN_WORDS) {
@@ -244,6 +259,9 @@ export class OutputGuard {
       }
       if (STREET_READBACK.test(plain) || DIGIT_READBACK.test(plain)) {
         slow = true;
+      }
+      if (isQuestion(sentence)) {
+        this.questionsThisTurn.push(normalizedWords(sentence));
       }
       out.push(
         isQuestion(sentence)

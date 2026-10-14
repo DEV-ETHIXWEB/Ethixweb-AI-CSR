@@ -231,3 +231,30 @@ describe("OutputGuard length and wording tidy-ups (QA 2026-10-13)", () => {
     );
   });
 });
+
+describe("OutputGuard 2026-10-14 tester-call leaks", () => {
+  it.each([
+    "There's a mix-up in the notes: the first name was Romalia.",
+    "I'll save the new name and the callback number, then create the complaint lead.",
+    "The save was refused, but the address you confirmed is 7714 Northeast 131st Street.",
+    "I couldn't update the request notes from here.",
+    "The address on file is Kirkland.",
+  ])("drops %p", (sentence) => {
+    expect(new OutputGuard().apply(sentence)).toBe("");
+  });
+
+  it("keeps ordinary plumbing talk that shares a word", () => {
+    expect(new OutputGuard().apply("Is the old pipe made of lead?")).toContain("lead");
+  });
+
+  it("never asks the same question twice in one turn", () => {
+    const guard = new OutputGuard(
+      [],
+      true,
+      "Is the water running right now, or is it a suspected leak?",
+    );
+    expect(guard.apply("Got it. Is the water running right now, or is it a suspected leak?")).toBe(
+      "",
+    );
+  });
+});

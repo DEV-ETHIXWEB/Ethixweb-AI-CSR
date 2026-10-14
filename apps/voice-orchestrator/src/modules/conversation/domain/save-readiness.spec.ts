@@ -223,3 +223,39 @@ describe("client feedback (Prateek, 2026-10-09): an address given early in a lon
     expect(result?.detail).toContain("do not ask for it again");
   });
 });
+
+describe("2026-10-14: an address Grace read back is accepted even when spoken in words", () => {
+  it("does not refuse a confirmed address the parser could not read", () => {
+    expect(
+      saveBlockedReason({
+        callerTexts: [
+          "sixty one two zero one hundred forty eight drive northeast",
+          "redmond 98052",
+          "yes",
+        ],
+        agentTexts: [
+          "Is the number you're calling from the best?",
+          "So that's 6120 148th Drive Northeast, Redmond?",
+        ],
+        address: {
+          street: "6120 148th Drive Northeast",
+          city: "Redmond",
+          state: "WA",
+          zip: "98052",
+        },
+        phone: "+18722784999",
+      }),
+    ).toBeNull();
+  });
+
+  it("still refuses an address that was never read back or given", () => {
+    expect(
+      saveBlockedReason({
+        callerTexts: ["my sink is clogged"],
+        agentTexts: ["Is the number you're calling from the best?"],
+        address: { street: "6120 148th Drive Northeast" },
+        phone: "+18722784999",
+      })?.error,
+    ).toBe("address_needed");
+  });
+});

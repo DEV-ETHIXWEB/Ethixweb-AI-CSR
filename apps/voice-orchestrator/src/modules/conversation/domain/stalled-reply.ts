@@ -62,7 +62,14 @@ const TRAILING_WORD =
   /(\b(my|the|a|an|and|but|to|from|um|uh|your|our)|\b(check|look|work) on|\b(address|name|number|zip|zip code|street) is)[.,]?\s*$/i;
 
 export function trailsOff(callerTranscript: string): boolean {
-  return TRAILING_WORD.test(callerTranscript.trim());
+  const text = callerTranscript.trim();
+  // A spelled name ends in single letters ("s u m a l i a"); its last "a" is a
+  // letter, not the article. 2026-10-14: treating it as unfinished made Grace
+  // answer a spelled name with only "Mm-hm." and then "I'm still here".
+  if (/(\b[a-z]\b[\s,.-]*){2,}$/i.test(text)) {
+    return false;
+  }
+  return TRAILING_WORD.test(text);
 }
 
 export const TRAILING_FRAGMENT_NOTE =

@@ -3770,3 +3770,48 @@ describe("HandleTurnUseCase when the whole reply repeats an earlier statement", 
     expect(result.responseText).toContain("What's the street address?");
   });
 });
+
+describe("normalizeTransferArguments (2026-10-14: every transfer was rejected for wording)", () => {
+  const conversation = {
+    transcript: [
+      {
+        turnIndex: 0,
+        speaker: "caller" as const,
+        text: "can I talk to a manager",
+        confidence: null,
+        offsetMs: 0,
+        at: "",
+      },
+    ],
+  };
+
+  it("fills in a missing reason and summary", async () => {
+    const { normalizeTransferArguments } = await import("./handle-turn.use-case");
+    const args = normalizeTransferArguments({}, conversation);
+    expect(args["reason"]).toBe("caller_requested");
+    expect(String(args["summary"])).toContain("can I talk to a manager");
+  });
+
+  it("turns a sentence in the reason field into a valid reason and keeps it as the summary", async () => {
+    const { normalizeTransferArguments } = await import("./handle-turn.use-case");
+    const args = normalizeTransferArguments(
+      { reason: "Caller asked for a manager about a missed plumber visit." },
+      conversation,
+    );
+    expect(args["reason"]).toBe("caller_frustrated");
+    expect(args["summary"]).toBe("Caller asked for a manager about a missed plumber visit.");
+  });
+
+  it("keeps valid arguments as they are", async () => {
+    const { normalizeTransferArguments } = await import("./handle-turn.use-case");
+    expect(
+      normalizeTransferArguments(
+        { reason: "cannot_help", summary: "Needs billing." },
+        conversation,
+      ),
+    ).toEqual({
+      reason: "cannot_help",
+      summary: "Needs billing.",
+    });
+  });
+});
