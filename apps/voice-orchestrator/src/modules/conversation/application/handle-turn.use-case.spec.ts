@@ -3193,6 +3193,22 @@ describe("HandleTurnUseCase", () => {
       const repository = new FakeConversationRepository();
       repository.seed(baseConversation());
       const aiProvider = new FakeAiProvider();
+      // Two distinct replies — a real second turn never says the exact same
+      // sentence as the one right before it; reusing one canned reply for
+      // both calls is a test-fixture artifact, not a shape a real call
+      // takes, and output-guard.ts's 2026-10-14 cross-turn question-repeat
+      // guard (correctly) treats two literally-identical questions in a row
+      // as a repeat, which isn't what this test is actually exercising.
+      aiProvider.responses = [
+        [
+          { type: "text_delta", text: "hi, how can I help?" },
+          { type: "done", stopReason: "end_turn" },
+        ],
+        [
+          { type: "text_delta", text: "got it, what's the address?" },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
       const { useCase } = buildUseCase({ aiProvider, repository });
 
       await useCase.execute(baseCommand({ idempotencyKey: "key-a" }));
@@ -3813,5 +3829,91 @@ describe("normalizeTransferArguments (2026-10-14: every transfer was rejected fo
       reason: "cannot_help",
       summary: "Needs billing.",
     });
+  });
+});
+
+describe("HandleTurnUseCase: at most one directive note fires per turn (2026-10-14 tester feedback: 'address correction abruptly cancels the whole flow')", () => {
+  const at = new Date().toISOString();
+
+  function directiveNoteCount(content: string): number {
+    // Each deterministic note phrase is distinctive enough to count without
+    // false positives against the call-notes FYI block or the raw transcript.
+    const markers = [
+      "they are still talking",
+      "read it back once",
+      "ask for the ZIP",
+      "ONLY question you ask is for their name",
+      "Your reply asks only one question: whether",
+    ];
+    return markers.filter((marker) => content.includes(marker)).length;
+  }
+
+  it("a trailing fragment that also contains a parseable street only gets the trailing-fragment note, never both", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation({ transcript: [] }));
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "Mm-hm." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    // "...and" at the end is a trailing fragment (fragment-detector.ts /
+    // stalled-reply.ts's trailsOff), while "5312 156th Drive Northeast"
+    // inside the same sentence is a parseable street — exactly the
+    // simultaneous-trigger shape the tester calls hit.
+    await useCase.execute(
+      baseCommand({
+        transcript: "it's 5312 156th Drive Northeast, Redmond, and",
+      }),
+    );
+
+    const sentUser = aiProvider.requests[0]!.messages.find((m) => m.role === "user")!.content;
+    expect(directiveNoteCount(sentUser)).toBe(1);
+    expect(sentUser).toContain("they are still talking");
+    expect(sentUser).not.toContain("read it back once");
+  });
+
+  it("an address given with no pending fragment gets the read-back note alone, not stacked with the call-notes FYI contradicting it", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(
+      baseConversation({
+        transcript: [
+          {
+            turnIndex: 0,
+            speaker: "caller",
+            text: "my kitchen sink is leaking",
+            confidence: null,
+            offsetMs: 0,
+            at,
+          },
+          {
+            turnIndex: 1,
+            speaker: "agent",
+            text: "Sorry to hear that. Is it leaking right now?",
+            confidence: null,
+            offsetMs: 0,
+            at,
+          },
+        ],
+      }),
+    );
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "Got it, 5312 156th Drive Northeast, Redmond. Is that right?" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    await useCase.execute(
+      baseCommand({ transcript: "5312 156th Drive Northeast, Redmond, 98052" }),
+    );
+
+    const sentUser = aiProvider.requests[0]!.messages.find((m) => m.role === "user")!.content;
+    expect(directiveNoteCount(sentUser)).toBeLessThanOrEqual(1);
   });
 });

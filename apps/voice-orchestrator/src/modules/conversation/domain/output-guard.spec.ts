@@ -130,8 +130,40 @@ describe("OutputGuard repeated statements (vendor call Oct 7: 'Pricing depends o
     expect(out).not.toContain("Pricing depends");
   });
 
-  it("never drops a question, even a repeated one", () => {
-    const guard = new OutputGuard(["What's the zip code for that address?"]);
+  it("2026-10-14: drops a question repeated verbatim in the very next turn (vendor-02: 'as soon as possible' answered a different question, and the callback-number question got re-asked immediately)", () => {
+    // Enforces the existing prompt rule in code: "do not repeat the skipped
+    // question in your very next reply; come back to it later, once." This
+    // used to only apply to statements, never questions — a real QA run
+    // showed Grace ask the exact same callback-number question twice in a
+    // row across two turns.
+    const guard = new OutputGuard(["Is the number you're calling from the best one to reach you?"]);
+    expect(guard.apply("Is the number you're calling from the best one to reach you?")).toBe("");
+    expect(guard.actions).toContain("repeated_statement");
+  });
+
+  it("2026-10-14: catches the repeat even when this turn is itself a second ('keep call moving') pass, where the current turn's own pass-1 ack would otherwise shadow the true previous turn", () => {
+    // Live reproduction: turn N asked the callback-number question. Turn
+    // N+1's own pass 1 was "Got it, as soon as possible." (an
+    // acknowledgment, correctly triggering the keep-call-moving retry).
+    // Pass 2 then re-asked the EXACT turn-N question. Before the fix,
+    // `recentAgentReplies.at(-1)` picked up pass 1's own ack (which has no
+    // question in it) instead of turn N's actual question, and the repeat
+    // went uncaught.
+    const turnNQuestion = "Is the number you're calling from the best one to reach you?";
+    const pass1Ack = "Got it, as soon as possible.";
+    const guard = new OutputGuard([turnNQuestion, pass1Ack], true, pass1Ack);
+    expect(guard.apply(`Got it. ${turnNQuestion}`)).not.toContain("the best one to reach you");
+    expect(guard.actions).toContain("repeated_statement");
+  });
+
+  it("still allows re-asking a question after a longer gap, not just the immediately preceding turn — 'come back to it later' is legitimate", () => {
+    // Only the single most-recent agent turn is checked for a question
+    // repeat; a genuinely still-unanswered field several turns back must
+    // still be askable again.
+    const guard = new OutputGuard([
+      "What's the zip code for that address?",
+      "Got it, I've noted that.",
+    ]);
     expect(guard.apply("What's the zip code for that address?")).toContain("zip code");
   });
 

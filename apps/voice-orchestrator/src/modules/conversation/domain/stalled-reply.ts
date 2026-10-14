@@ -58,8 +58,12 @@ export const KEEP_CALL_MOVING_NOTE =
 // "about" are left out on purpose: "yes it is", "turn it on", "I think so",
 // "that's what I'm dealing with" are complete answers, and treating them as
 // unfinished would leave Grace saying only "Mm-hm." and stalling the call.
+// "from" is left out for the same reason, found 2026-10-14: "I don't know
+// where from." is a complete answer, and with the whole-reply priority this
+// note now has, a false positive here silences every other note on the
+// turn too (the name-ask, call-notes, everything) — not just itself.
 const TRAILING_WORD =
-  /(\b(my|the|a|an|and|but|to|from|um|uh|your|our)|\b(check|look|work) on|\b(address|name|number|zip|zip code|street) is)[.,]?\s*$/i;
+  /(\b(my|the|a|an|and|but|to|um|uh|your|our)|\b(check|look|work) on|\b(address|name|number|zip|zip code|street) is)[.,]?\s*$/i;
 
 export function trailsOff(callerTranscript: string): boolean {
   const text = callerTranscript.trim();

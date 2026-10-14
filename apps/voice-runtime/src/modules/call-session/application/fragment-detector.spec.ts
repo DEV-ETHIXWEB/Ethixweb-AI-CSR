@@ -181,5 +181,15 @@ describe("fragmentStrength (client feedback: silent hold for a caller who is sti
     expect(fragmentStrength("marisa m a r i s a")).toBe("none");
     expect(fragmentStrength("it's a")).toBe("strong");
   });
+
+  it("2026-10-14: a sentence ending in 'from' is a complete answer, not held as a fragment", () => {
+    // Real test call: "I don't know where from." got held the full
+    // STRONG_FRAGMENT_HOLD_MS (4s) as an unfinished sentence, reading to
+    // the caller as the CSR pausing and not responding right after they
+    // answered a question — "from" very commonly ends a complete spoken
+    // sentence in this domain, unlike the other trailing words here.
+    expect(fragmentStrength("I don't know where from.")).toBe("none");
+    expect(fragmentStrength("that's who it's from")).toBe("none");
+  });
 });
 

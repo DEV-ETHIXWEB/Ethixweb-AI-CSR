@@ -133,6 +133,27 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
       expect(lower).toContain("a wrong name is worse than no name");
     });
 
+    it("2026-10-14 tester feedback: spells every name back once on her own, without being asked", () => {
+      // v53's first draft dropped this rule entirely (kept only "ask to
+      // spell if unusual"), which is exactly what the testers hit: Grace
+      // never confirmed a name's spelling unless the caller demanded it.
+      expect(lower).toContain("say it back letter by letter, once");
+      expect(lower).toContain("do this for every name, common or not, without being asked");
+      expect(lower).toContain("never spell back, or ask them to spell, the same name twice");
+    });
+
+    it("2026-10-14 tester feedback: spelling takes priority even when the name arrives bundled with the problem — the real QA failure mode", () => {
+      // Confirmed live: "my name is Dana Whitfield and my disposal is jammed"
+      // in one breath made Grace skip the spell-back and go straight to a
+      // diagnostic question, 3/3 real-model attempts. The 25-word reply
+      // shape and "absorb everything in one pass" rule were winning out
+      // over the spelling rule with nothing telling the model which comes
+      // first when both compete for the same short reply.
+      expect(lower).toContain("when the name arrives bundled with other things in the same breath");
+      expect(lower).toContain("confirming the spelling still comes first, before any reaction to the problem");
+      expect(lower).toContain("save the sympathetic reaction and the diagnostic follow-up for your next reply");
+    });
+
     it("never takes a greeting name as the caller's, never invents one, never changes a confirmed one", () => {
       expect(prompt).toContain('A name in a greeting ("hi Grace"');
       expect(lower).toContain("never invent one");

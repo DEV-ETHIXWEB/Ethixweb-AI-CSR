@@ -467,12 +467,43 @@ const UNIVERSAL: Check[] = [
     // in one pass followed by the question in the next is the shape the
     // backstop refinement deliberately produces, and flagging it would
     // punish the fix for the "she stops the conversation" complaint.
+    //
+    // 2026-10-14: measured on raw `askingCompletions` (how many separate
+    // LLM completions individually contained a "?"), this started firing
+    // on exactly that accepted shape far more often once two real fixes
+    // landed: spelling a name back before the diagnostic follow-up (an
+    // ack-only pass 1 by design) and dropping a verbatim-repeated question
+    // from output-guard.ts (which can empty a pass, also triggering a
+    // keep-moving retry). Neither changes what the CALLER hears — `t.agent`
+    // is the final merged, guarded text — so this counts SUBSTANTIVE
+    // questions in that text: sentences ending in "?" with more than a
+    // handful of words. A short confirmation tag immediately after a
+    // spelled-out name or a read-back ("Dana — D-A-N-A, right?", "ZIP
+    // 98052, right?") is excluded — that's one coherent reply (spell-then-
+    // ask, exactly what the prompt's own NAMES section example shows,
+    // "Dana — D-A-N-A, right? What's the address?"), not two separate
+    // questions on two separate topics the way the original harm was.
     label: "never asks two separate questions about one caller utterance",
     run: (ctx) => {
-      const doubled = ctx.turns.find(
-        (t) => t.askingCompletions > 1 && !/connect|transfer|someone on the line/i.test(t.agent),
-      );
-      return doubled ? `asked in ${doubled.askingCompletions} separate passes about "${doubled.caller}": "${doubled.agent.trim()}"` : null;
+      const TAG_QUESTION = /(right|correct|okay|ok|that right|is that right)\??\s*$/i;
+      const doubled = ctx.turns.find((t) => {
+        if (/connect|transfer|someone on the line/i.test(t.agent)) {
+          return false;
+        }
+        const substantiveQuestions = t.agent
+          .split(/(?<=[.!?])\s+/)
+          .filter((sentence) => sentence.trim().endsWith("?"))
+          .filter((sentence) => !TAG_QUESTION.test(sentence.trim()))
+          // A minimum floor only, to skip a degenerate bare "?" — the
+          // TAG_QUESTION pattern above is what actually distinguishes a
+          // confirmation tag from a real question; a genuine short question
+          // like "What's going on?" (3 words) must still count.
+          .filter((sentence) => sentence.trim().split(/\s+/).length >= 2);
+        return substantiveQuestions.length > 1;
+      });
+      return doubled
+        ? `asked more than one substantive question in the final reply to "${doubled.caller}": "${doubled.agent.trim()}"`
+        : null;
     },
   },
   // v23: never state your own read on severity back to the caller.
@@ -950,6 +981,51 @@ const TESTER_SCENARIOS: Scenario[] = [
     checks: [
       saysSomewhere("acknowledges the brand question", /\b(brand|team|technician|tech|note|pass)\b/),
       neverSays("never invents a brand answer", /\b(we (carry|install|use|stock) (bradford|rheem|a\.? ?o\.? smith))/),
+    ],
+  },
+  {
+    id: "tester-07-spells-name-unprovoked",
+    category: "tester",
+    turns: ["Hi, my name is Dana Whitfield and my garbage disposal is jammed."],
+    checks: [
+      {
+        label: "spells the name back without being asked (2026-10-14 tester feedback)",
+        run: (ctx) =>
+          /\b[dD][-\s]?a[-\s]?n[-\s]?a\b.{0,40}\b[wW][-\s]?h[-\s]?i[-\s]?t/i.test(ctx.allAgentText) ||
+          /\bd[\s-]a[\s-]n[\s-]a\b/i.test(ctx.allAgentText.toLowerCase().replace(/[.,]/g, ""))
+            ? null
+            : `never spelled the name back; said: "${ctx.agentTurns.join(" | ")}"`,
+      },
+    ],
+  },
+  {
+    id: "tester-08-address-correction-does-not-derail",
+    category: "tester",
+    turns: [
+      "Hi, my name is Marco Reyes, my kitchen faucet is leaking.",
+      "it's 6120 148th drive northeast, redmond, nine eight zero five two",
+      "no wait, that's wrong, it's 1912 9th avenue west, seattle, nine eight one one nine",
+      "yes that's right",
+    ],
+    checks: [
+      saysSomewhere("reads back the corrected address, not the original", /1912/),
+      {
+        label:
+          "never repeats the stale original address in a reply AFTER the correction turn (turn 0 legitimately reads back the pre-correction address once)",
+        run: (ctx) => {
+          const afterCorrection = ctx.agentTurns.slice(2);
+          const stale = afterCorrection.find((turn) => /6120 148th/i.test(turn));
+          return stale === undefined ? null : `still said the old address after correction: "${stale}"`;
+        },
+      },
+      {
+        label: "never produces a nonsensical / empty / non-sequitur reply after the correction",
+        run: (ctx) => {
+          const afterCorrection = ctx.agentTurns.slice(2);
+          const broken = afterCorrection.find((turn) => turn.trim().length < 3);
+          return broken === undefined ? null : `suspiciously short reply after correction: "${broken}"`;
+        },
+      },
     ],
   },
 ];

@@ -491,40 +491,55 @@ export class HandleTurnUseCase {
     const agentTextsSoFar = conversation.transcript
       .filter((entry) => entry.speaker === "agent")
       .map((entry) => entry.text);
-    if (
-      !shouldNudgeForName(conversation) &&
+    // 2026-10-14 tester feedback ("address taken randomly, correction
+    // abruptly cancels the whole flow"): these five deterministic notes each
+    // used to say, independently, "your WHOLE reply is only X" — and nothing
+    // stopped more than one from firing on the same turn (a trailing
+    // fragment that also happened to contain a street, say). Two
+    // contradictory "this is your entire reply" instructions in one prompt
+    // is exactly the kind of thing that makes a small model produce a
+    // garbled or non-sequitur reply. Exactly one directive note now fires
+    // per turn, in this priority order: the caller hasn't finished talking
+    // (nothing else is relevant yet) > confirm what they just gave >
+    // get the name > confirm the callback number. The call-notes FYI
+    // (below) is suppressed too while trailing off, so "say only Mm-hm" is
+    // never diluted by a second instruction in the same message.
+    const isTrailingOff = trailsOff(command.transcript);
+    const pendingReadback = isTrailingOff
+      ? null
+      : addressReadbackNote(callerTextsSoFar, agentTextsSoFar);
+    const needsName = !isTrailingOff && !pendingReadback && shouldNudgeForName(conversation);
+    const needsCallbackNumber =
+      !isTrailingOff &&
+      !pendingReadback &&
+      !needsName &&
       shouldNudgeForCallbackNumber({
         callerTexts: callerTextsSoFar,
         agentTexts: agentTextsSoFar,
         customerId: hasUsableCustomer(conversation) ? conversation.customerId : null,
         leadEverAttempted: conversation.leadEverAttempted,
-      })
-    ) {
-      annotatedTranscript = `${callbackNumberNote(conversation.callerAni)} ${annotatedTranscript}`;
-    }
-    // A pending address read-back comes first; the name is asked next turn.
-    if (
-      shouldNudgeForName(conversation) &&
-      !addressReadbackNote(callerTextsSoFar, agentTextsSoFar)
-    ) {
+      });
+    if (isTrailingOff) {
+      annotatedTranscript = `${TRAILING_FRAGMENT_NOTE} ${annotatedTranscript}`;
+    } else if (pendingReadback) {
+      annotatedTranscript = `${pendingReadback} ${annotatedTranscript}`;
+    } else if (needsName) {
       // Client feedback: a call could run several turns of triage without
       // ever asking for the caller's name, and prompt wording alone did not
       // hold (a real-model QA scenario failed 4/4 on it). Same "reliability
       // ceiling" reasoning as the reminders above: a deterministic note.
       annotatedTranscript = annotateNameMissing(annotatedTranscript);
+    } else if (needsCallbackNumber) {
+      annotatedTranscript = `${callbackNumberNote(conversation.callerAni)} ${annotatedTranscript}`;
     }
     // See call-notes.ts: what the caller already said, restated every turn so
     // nothing they gave is asked for again or said back under a new name.
-    const callNotes = formatCallNotes(buildCallNotes(callerTextsSoFar, conversation.transcript));
-    if (callNotes) {
-      annotatedTranscript = `${callNotes} ${annotatedTranscript}`;
-    }
-    if (trailsOff(command.transcript)) {
-      annotatedTranscript = `${TRAILING_FRAGMENT_NOTE} ${annotatedTranscript}`;
-    }
-    const readback = addressReadbackNote(callerTextsSoFar, agentTextsSoFar);
-    if (readback) {
-      annotatedTranscript = `${readback} ${annotatedTranscript}`;
+    // Skipped while trailing off — see the priority comment above.
+    if (!isTrailingOff) {
+      const callNotes = formatCallNotes(buildCallNotes(callerTextsSoFar, conversation.transcript));
+      if (callNotes) {
+        annotatedTranscript = `${callNotes} ${annotatedTranscript}`;
+      }
     }
     pushMessage({
       role: "user",

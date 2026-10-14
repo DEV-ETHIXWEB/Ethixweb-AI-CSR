@@ -37,10 +37,18 @@ describe("trailsOff", () => {
   ])("flags %p", (text) => {
     expect(trailsOff(text)).toBe(true);
   });
-  it.each(["my sink is leaking", "hold on, let me find the zip code", "yes"])(
-    "does not flag %p",
-    (text) => {
-      expect(trailsOff(text)).toBe(false);
-    },
-  );
+  it.each([
+    "my sink is leaking",
+    "hold on, let me find the zip code",
+    "yes",
+    // 2026-10-14: "from" is a complete answer here ("where is it leaking
+    // from?" / "I don't know where from."), not an unfinished sentence.
+    // A real QA run showed the model silently stopped at "Mm-hm." for
+    // this exact text, 3/3 caller turns in without ever asking for a name,
+    // because a false trailsOff now suppresses every other note on the turn.
+    "I don't know where from.",
+    "that's who it's from",
+  ])("does not flag %p", (text) => {
+    expect(trailsOff(text)).toBe(false);
+  });
 });

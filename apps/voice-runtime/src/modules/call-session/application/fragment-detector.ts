@@ -118,7 +118,12 @@ const TRAILING_WORDS = new Set([
   "where",
   "which",
   "by",
-  "from",
+  // "from" removed 2026-10-14: a real test call showed "I don't know where
+  // from." held for the full STRONG_FRAGMENT_HOLD_MS as an "unfinished"
+  // sentence, when it's actually a complete answer — "from" very commonly
+  // ends a real spoken sentence in this domain ("where it's leaking from",
+  // "who the call is from"), unlike the other trailing words here, which
+  // this codebase has live evidence are reliably incomplete on their own.
   "into",
   "than",
   "also",

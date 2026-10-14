@@ -151,6 +151,7 @@ export class OutputGuard {
   private lastSentenceKey = "";
   private spokeAlready: boolean;
   private readonly questionsThisTurn: string[][];
+  private readonly questionsLastTurn: string[][];
   readonly actions: GuardAction[] = [];
 
   /** `recentAgentReplies`: Grace's last few replies this call, oldest first. */
@@ -169,17 +170,45 @@ export class OutputGuard {
       .filter((sentence) => !isQuestion(sentence))
       .map(normalizedWords)
       .filter((sentenceWords) => sentenceWords.length >= REPEAT_MIN_WORDS);
+    // 2026-10-14: a caller answered a DIFFERENT question than the one just
+    // asked ("as soon as possible" to "is this the best callback number?"),
+    // and Grace asked the SAME callback question again verbatim in her very
+    // next reply — exactly the "come back to it later, not immediately"
+    // prompt rule being missed. Only the immediately-preceding COMPLETED
+    // turn is checked (not the fuller recentAgentReplies window used for
+    // statements): re-asking something a few turns later, once the caller
+    // has genuinely moved on without answering it, is legitimate and this
+    // must not silence that.
+    //
+    // The caller (handle-turn.use-case.ts) appends `alreadySaidThisTurn`
+    // as the LAST entry of `recentAgentReplies` itself, so when this is a
+    // second pass of the SAME turn (alreadySpokeThisTurn), the genuinely
+    // previous COMPLETED turn's reply is one further back — found live:
+    // without this, the previous turn's question got shadowed by this
+    // turn's own pass-1 acknowledgment and the repeat went uncaught.
+    const previousReply = alreadySpokeThisTurn
+      ? recentAgentReplies.at(-2)
+      : recentAgentReplies.at(-1);
+    this.questionsLastTurn = previousReply
+      ? splitSentences(previousReply)
+          .filter((sentence) => isQuestion(sentence))
+          .map(normalizedWords)
+      : [];
   }
 
   private repeatsRecentStatement(sentence: string): boolean {
     if (isQuestion(sentence)) {
       // 2026-10-14: "Is the water running right now...? Got it... Is the
       // water running right now...?" in one reply. A question already asked
-      // earlier in this same turn is not asked again.
+      // earlier in this same turn, or verbatim in the turn right before this
+      // one, is not asked again immediately.
       const asked = normalizedWords(sentence);
+      if (asked.length < 4) {
+        return false;
+      }
       return (
-        asked.length >= 4 &&
-        this.questionsThisTurn.some((earlier) => similarity(asked, earlier) >= REPEAT_SIMILARITY)
+        this.questionsThisTurn.some((earlier) => similarity(asked, earlier) >= REPEAT_SIMILARITY) ||
+        this.questionsLastTurn.some((earlier) => similarity(asked, earlier) >= REPEAT_SIMILARITY)
       );
     }
     const current = normalizedWords(sentence);
