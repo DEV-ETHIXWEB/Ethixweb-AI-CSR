@@ -99,6 +99,15 @@ describe("detectServiceAreaFromTranscript", () => {
     expect(detectServiceAreaFromTranscript("account 97201 please", covered)).toBeNull();
   });
 
+  it("2026-10-15 tester call: out-of-area ZIP with a state name is caught without the word 'zip'", () => {
+    expect(
+      detectServiceAreaFromTranscript("eight three seven zero five idaho", covered),
+    ).toEqual({ zip: "83705", verdict: "outside" });
+    expect(
+      detectServiceAreaFromTranscript("I'm in Portland Oregon, 97201", covered),
+    ).toEqual({ zip: "97201", verdict: "outside" });
+  });
+
   it("still confirms an in-area ZIP even without the word 'zip', since confirming can't lose a customer", () => {
     expect(detectServiceAreaFromTranscript("Water heater's out. I'm at 98402.", covered)).toEqual({
       zip: "98402",

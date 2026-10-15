@@ -264,6 +264,36 @@ describe("OutputGuard length and wording tidy-ups (QA 2026-10-13)", () => {
   });
 });
 
+describe("OutputGuard 2026-10-15: [slowly] consolidation", () => {
+  it("strips model-added [slowly] on multiple sentences and applies one at the front", () => {
+    const out = new OutputGuard().apply(
+      "[slowly] Got it, ZIP 11018. [slowly] Which is it? [slowly] Let me check.",
+    );
+    const slowlyCount = (out.match(/\[slowly\]/gi) ?? []).length;
+    expect(slowlyCount).toBe(1);
+    expect(out).toMatch(/^\[slowly\]/);
+  });
+
+  it("does not add [slowly] when no readback is present", () => {
+    expect(new OutputGuard().apply("Got it, what else?")).not.toContain("[slowly]");
+  });
+});
+
+describe("OutputGuard 2026-10-15: word limit", () => {
+  it("drops sentences past the soft word limit", () => {
+    const long = "Got it, no hot water. Is there any water leaking or flooding anywhere right now? Thanks for telling me. Since you have no hot water, the team needs to see this. What is the service address?";
+    const out = new OutputGuard().apply(long);
+    const wordCount = out.split(/\s+/).filter(Boolean).length;
+    expect(wordCount).toBeLessThan(40);
+  });
+
+  it("always keeps the first sentence even if it is long", () => {
+    const single = "Got it, the team will look at your water heater issue and the technician will give you a flat rate quote before any work begins.";
+    const out = new OutputGuard().apply(single);
+    expect(out).toContain("flat rate quote");
+  });
+});
+
 describe("OutputGuard 2026-10-14 tester-call leaks", () => {
   it.each([
     "There's a mix-up in the notes: the first name was Romalia.",

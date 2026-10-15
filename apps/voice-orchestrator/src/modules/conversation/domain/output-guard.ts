@@ -78,7 +78,8 @@ export type GuardAction =
   | "change_claim"
   | "cause_claim"
   | "slow_readback"
-  | "repeated_statement";
+  | "repeated_statement"
+  | "word_limit";
 
 /**
  * Client feedback (previous vendor's call, Oct 7): the CSR answered three
@@ -145,6 +146,9 @@ function plainSpoken(sentence: string): string {
   );
 }
 
+/** Sentences past this word count are dropped (complete sentences only). */
+const SOFT_WORD_LIMIT = 35;
+
 export class OutputGuard {
   private readonly used = new Set<string>();
   private readonly recentStatements: string[][];
@@ -152,6 +156,7 @@ export class OutputGuard {
   private spokeAlready: boolean;
   private readonly questionsThisTurn: string[][];
   private readonly questionsLastTurn: string[][];
+  private wordsSoFar = 0;
   readonly actions: GuardAction[] = [];
 
   /** `recentAgentReplies`: Grace's last few replies this call, oldest first. */
@@ -255,6 +260,13 @@ export class OutputGuard {
         this.actions.push("repeated_statement");
         continue;
       }
+      // Drop complete sentences past the soft word limit. Never cuts mid-
+      // sentence, and the first sentence always gets through.
+      const sentenceWordCount = plain.split(/\s+/).filter(Boolean).length;
+      if (this.wordsSoFar > 0 && this.wordsSoFar + sentenceWordCount > SOFT_WORD_LIMIT) {
+        this.actions.push("word_limit");
+        continue;
+      }
       if (!isQuestion(sentence) && TIME_WORD.test(plain)) {
         const hard = HARD_PROMISE.test(plain);
         const soft = SOFT_PROMISE.test(plain) && !HEDGE.test(plain);
@@ -292,6 +304,7 @@ export class OutputGuard {
       if (isQuestion(sentence)) {
         this.questionsThisTurn.push(normalizedWords(sentence));
       }
+      this.wordsSoFar += sentenceWordCount;
       out.push(
         isQuestion(sentence)
           ? plainSpoken(sentence)
@@ -307,6 +320,13 @@ export class OutputGuard {
       return "";
     }
     this.spokeAlready = true;
+    // Consolidate delivery cues: the model sometimes puts [slowly] on every
+    // sentence, producing robotic stacking. Strip all internal cues and let
+    // the guard add one at the front when a readback is present.
+    body = body.replace(/\[slowly\]\s*/gi, "").trim();
+    if (!body) {
+      return "";
+    }
     if (slow && !/^\[slowly\]/i.test(body)) {
       this.actions.push("slow_readback");
       body = `[slowly] ${body}`;

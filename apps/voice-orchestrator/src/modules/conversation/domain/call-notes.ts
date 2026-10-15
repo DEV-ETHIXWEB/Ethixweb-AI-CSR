@@ -106,16 +106,50 @@ export function buildCallNotes(
   callerTexts: readonly string[],
   turns: ReadonlyArray<{ speaker: string; text: string }> = [],
 ): CallNotes {
+  const stated = statedName(callerTexts) ?? answeredName(turns);
+  let spelled = spelledName(callerTexts);
+  if (spelled && spelled.length === 1 && stated) {
+    spelled = splitSpelledByStated(spelled[0]!, stated);
+  }
   return {
     spellingAsked: turns.some((turn) => turn.speaker === "agent" && /\bspell\b/i.test(turn.text)),
-    spelledName: spelledName(callerTexts),
-    statedName: statedName(callerTexts) ?? answeredName(turns),
+    spelledName: spelled,
+    statedName: stated,
     street: lastStreet(callerTexts),
     zip: lastZip(callerTexts),
     phone: spokenPhoneDigits(callerTexts),
     property: propertyType(callerTexts),
     timing: lastMatch(callerTexts, TIMING),
   };
+}
+
+/**
+ * When the caller spelled "k e n t j o h n" as one continuous run but
+ * earlier stated "Kent John" (two words), try to split the single spelled
+ * word into two. The stated name gives the word count; the split position
+ * is found by trying every candidate and picking the one whose part
+ * lengths best match the stated word lengths (within tolerance, because
+ * STT can mishear "kent" as "kings").
+ */
+function splitSpelledByStated(singleSpelled: string, stated: string): string[] {
+  const statedWords = stated.split(/\s+/).filter(Boolean);
+  if (statedWords.length !== 2 || singleSpelled.length < 4) {
+    return [singleSpelled];
+  }
+  const [firstLen, secondLen] = [statedWords[0]!.length, statedWords[1]!.length];
+  let bestSplit = -1;
+  let bestScore = Infinity;
+  for (let i = 2; i <= singleSpelled.length - 2; i++) {
+    const score = Math.abs(i - firstLen) + Math.abs(singleSpelled.length - i - secondLen);
+    if (score < bestScore) {
+      bestScore = score;
+      bestSplit = i;
+    }
+  }
+  if (bestSplit > 0 && bestScore <= 1) {
+    return [singleSpelled.slice(0, bestSplit), singleSpelled.slice(bestSplit)];
+  }
+  return [singleSpelled];
 }
 
 /** The note text for the model, or null when the caller has not given anything yet. */

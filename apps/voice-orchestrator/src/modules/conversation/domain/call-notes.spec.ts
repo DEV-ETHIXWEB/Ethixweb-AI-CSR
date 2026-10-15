@@ -93,6 +93,32 @@ describe("buildCallNotes", () => {
   });
 });
 
+describe("2026-10-15: spelled name split when stated name has multiple words", () => {
+  it("splits 'kentjohn' into 'kent' and 'john' when stated name was 'Kings John'", () => {
+    const notes = buildCallNotes([
+      "yes my name is kings john",
+      "k e n t j o h n",
+    ]);
+    expect(notes.spelledName).toEqual(["kent", "john"]);
+  });
+
+  it("does not split when stated name has one word", () => {
+    const notes = buildCallNotes([
+      "my name is peterson",
+      "p e t e r s o n",
+    ]);
+    expect(notes.spelledName).toEqual(["peterson"]);
+  });
+
+  it("does not split when lengths diverge too much", () => {
+    const notes = buildCallNotes([
+      "my name is al jones",
+      "a l e x a n d e r",
+    ]);
+    expect(notes.spelledName).toEqual(["alexander"]);
+  });
+});
+
 describe("addressReadbackNote (QA 2026-10-13: a volunteered address was ignored)", () => {
   it("asks for a read-back when the caller just gave a full address", () => {
     const note = addressReadbackNote(

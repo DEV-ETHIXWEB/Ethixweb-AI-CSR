@@ -95,6 +95,9 @@ const STREET_CONTEXT =
  *    said "zip" or "postal". A bare number that merely looks like a ZIP can
  *    confirm coverage but can never refuse it.
  */
+const US_STATE_NAMES =
+  /\b(alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming)\b/i;
+
 export function detectServiceAreaFromTranscript(
   transcript: string,
   covered: ReadonlySet<string>,
@@ -104,6 +107,7 @@ export function detectServiceAreaFromTranscript(
   }
   const text = collapseSpokenDigits(transcript);
   const saidZip = /\b(zip|zipcode|postal)\b/.test(text);
+  const mentionsState = US_STATE_NAMES.test(text);
   for (const match of text.matchAll(/\b(\d{5})\b/g)) {
     const zip = match[1]!;
     const following = text.slice((match.index ?? 0) + zip.length);
@@ -114,7 +118,7 @@ export function detectServiceAreaFromTranscript(
     if (verdict === null) {
       continue;
     }
-    if (verdict === "outside" && !saidZip) {
+    if (verdict === "outside" && !saidZip && !mentionsState) {
       continue;
     }
     return { zip, verdict };
