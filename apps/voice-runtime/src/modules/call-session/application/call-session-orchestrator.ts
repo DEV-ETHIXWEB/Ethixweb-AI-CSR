@@ -410,6 +410,16 @@ export class CallSessionOrchestrator {
   /** Caller turns actually handled on this call. Only read by the farewell hang-up below, which refuses to fire on the very first thing a caller says — see that branch's own comment. */
   private callerTurnsHandled = 0;
   private fragmentCoalesceTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Pre-rendered filler audio ("Mm-hmm.") played instantly when a turn
+   * starts, filling the dead air while the LLM processes. Warmed during
+   * onCallStart in the background; null until ready, and the turn simply
+   * skips the filler if it hasn't rendered yet (no added latency ever).
+   * Short enough (~300ms of audio) that it never talks over the real
+   * response -- the first streamed chunk from the LLM arrives well after
+   * this finishes playing.
+   */
+  private fillerAudio: Buffer[] | null = null;
 
   constructor(
     @Inject(ORCHESTRATOR_CLIENT) private readonly orchestrator: OrchestratorClientPort,
@@ -587,6 +597,7 @@ export class CallSessionOrchestrator {
     if (greeting) {
       await this.speak(greeting, sink);
       this.armSilenceCheckIn(sink);
+      this.warmFillerAudio();
     } else {
       // Only reachable against an older voice-orchestrator deployment
       // that predates this fix (rolling deploy, or a stale build) — a
@@ -790,6 +801,10 @@ export class CallSessionOrchestrator {
     let speakQueue: Promise<void> = Promise.resolve();
     const quietOk =
       fragmentStrength(result.transcript) !== "none" || isPureBackchannel(result.transcript);
+
+    if (!quietOk && !isFarewell(result.transcript)) {
+      this.playFiller(sink);
+    }
 
     while (turnResult === null) {
       const abortController = new AbortController();
@@ -1697,6 +1712,45 @@ export class CallSessionOrchestrator {
     const text = fallbackPhrases[this.silentTurnFallbackIndex % fallbackPhrases.length]!;
     this.silentTurnFallbackIndex += 1;
     return { text, pauseBeforeMs: 0 };
+  }
+
+  /**
+   * Pre-renders a short filler phrase via TTS so it's ready to play
+   * instantly when the next turn starts. Runs in the background, never
+   * blocks the call. Uses the same TTS provider and cache mechanism as
+   * speak(), so after the first render this is a cache hit on every call
+   * to the same business (same voice, same settings, same text).
+   */
+  private warmFillerAudio(): void {
+    if (process.env["FILLER_AUDIO_DISABLED"] === "true") return;
+    const chunks: Buffer[] = [];
+    (async () => {
+      for await (const chunk of this.tts.synthesize("Mm-hmm.")) {
+        chunks.push(chunk);
+      }
+      if (chunks.length > 0) {
+        this.fillerAudio = chunks;
+      }
+    })().catch(() => {
+      // Best-effort: a filler that fails to render just means the turn
+      // starts without one, the same as every turn did before this existed.
+    });
+  }
+
+  /**
+   * Sends the pre-warmed filler audio directly to the Twilio sink,
+   * bypassing the full speak() pipeline (no WS handshake, no delivery
+   * parsing). The filler is short enough (~300ms) that it finishes
+   * well before the first real LLM chunk arrives. A no-op when the filler
+   * hasn't been warmed yet or when barge-in cancelled this turn.
+   */
+  private playFiller(sink: MediaStreamSink): void {
+    if (!this.fillerAudio || this.bargedInDuringCurrentTurn) {
+      return;
+    }
+    for (const chunk of this.fillerAudio) {
+      this.recordSentAudio(sink, chunk);
+    }
   }
 
   private async speakApologyAndClose(sink: MediaStreamSink): Promise<void> {

@@ -1217,6 +1217,7 @@ export class HandleTurnUseCase {
     // method returns): a natural speech boundary is found relative to
     // "what hasn't been sent yet," not the whole completion so far.
     let pendingSegment = "";
+    let emitCount = 0;
     const toolCalls: AiToolCallRequest[] = [];
     let interrupted = false;
     let providerErrorMessage: string | null = null;
@@ -1256,12 +1257,14 @@ export class HandleTurnUseCase {
         text += handled.text;
         pendingSegment += handled.text;
         if (handled.text) {
-          const boundary = findSpeechSegmentBoundary(pendingSegment);
+          const segMin = emitCount === 0 ? MIN_FIRST_SEGMENT_CHARS : undefined;
+          const boundary = findSpeechSegmentBoundary(pendingSegment, segMin);
           if (boundary !== null) {
             const segment = pendingSegment.slice(0, boundary);
             pendingSegment = pendingSegment.slice(boundary);
             if (segment.trim()) {
               emit(segment);
+              emitCount += 1;
             }
           }
         }
@@ -1720,6 +1723,13 @@ function appendResponseSegment(existing: string, next: string): string {
  * clause," not derived from a benchmark.
  */
 const MIN_SPEECH_SEGMENT_CHARS = 40;
+/**
+ * The very first chunk of a turn can flush sooner: the caller is in
+ * dead air (or hearing the filler "Mm-hmm"), and getting ANY real
+ * words to TTS 15-20 chars earlier shaves ~200ms off perceived latency.
+ * Subsequent chunks keep the normal minimum to avoid choppy delivery.
+ */
+const MIN_FIRST_SEGMENT_CHARS = 24;
 
 /**
  * Above this length with no sentence boundary at all (a long
@@ -1751,18 +1761,18 @@ const MAX_SPEECH_SEGMENT_CHARS = 220;
  * itself if there isn't even one of those — better to speak an
  * unpunctuated run than let latency grow unbounded.
  */
-function findSpeechSegmentBoundary(buffer: string): number | null {
+function findSpeechSegmentBoundary(buffer: string, minChars = MIN_SPEECH_SEGMENT_CHARS): number | null {
   if (buffer.length >= MAX_SPEECH_SEGMENT_CHARS) {
     const window = buffer.slice(0, MAX_SPEECH_SEGMENT_CHARS);
     const lastClause = Math.max(window.lastIndexOf(", "), window.lastIndexOf("; "));
-    return lastClause > MIN_SPEECH_SEGMENT_CHARS ? lastClause + 2 : MAX_SPEECH_SEGMENT_CHARS;
+    return lastClause > minChars ? lastClause + 2 : MAX_SPEECH_SEGMENT_CHARS;
   }
 
   const sentenceEnd = /[.!?]+(?=\s|$)/g;
   let match: RegExpExecArray | null;
   while ((match = sentenceEnd.exec(buffer)) !== null) {
     const endIndex = match.index + match[0].length;
-    if (endIndex < MIN_SPEECH_SEGMENT_CHARS) {
+    if (endIndex < minChars) {
       continue;
     }
     const precedingChar = buffer[match.index - 1];

@@ -68,6 +68,7 @@ describe("CallSessionOrchestrator", () => {
     // actually dropped (2s in production). The farewell describe block
     // below sets its own values where the timing is the point.
     process.env["FAREWELL_HANGUP_GRACE_MS"] = "5";
+    process.env["FILLER_AUDIO_DISABLED"] = "true";
   });
   afterEach(() => {
     process.env = { ...originalEnv };
