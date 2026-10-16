@@ -77,4 +77,4 @@ export function trailsOff(callerTranscript: string): boolean {
 }
 
 export const TRAILING_FRAGMENT_NOTE =
-  '[The caller\'s words trail off unfinished; they are still talking. Your whole reply is "Mm-hm." and nothing else.]';
+  "[The caller's words trail off unfinished; they are still talking. Say nothing and wait for them to continue.]";

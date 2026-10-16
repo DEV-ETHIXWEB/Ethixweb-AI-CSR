@@ -689,6 +689,9 @@ export class CallSessionOrchestrator {
       log.error("unhandled error processing finalized transcript", {
         reason: error instanceof Error ? error.message : String(error),
       });
+      if (!this.ended) {
+        this.armSilenceCheckIn(sink);
+      }
     });
   }
 
@@ -802,7 +805,8 @@ export class CallSessionOrchestrator {
     const quietOk =
       fragmentStrength(result.transcript) !== "none" || isPureBackchannel(result.transcript);
 
-    if (!quietOk && !isFarewell(result.transcript)) {
+    const wordCount = result.transcript.trim().split(/\s+/).length;
+    if (!quietOk && !isFarewell(result.transcript) && wordCount > 4) {
       this.playFiller(sink);
     }
 
@@ -853,6 +857,7 @@ export class CallSessionOrchestrator {
           );
           this.activeTurnAbort = null;
           await speakQueue;
+          this.armSilenceCheckIn(sink);
           return;
         }
 
@@ -889,6 +894,7 @@ export class CallSessionOrchestrator {
             sink,
           );
           this.activeTurnAbort = null;
+          this.armSilenceCheckIn(sink);
           return;
         }
         log.warn("turn failed, retrying with the SAME idempotencyKey (docs/28 §G)", {

@@ -205,6 +205,9 @@ export function fragmentStrength(transcript: string): FragmentStrength {
   if (PHONETIC_SPELLING_PATTERN.test(transcript.trim())) {
     return "strong";
   }
+  if (words.length === 1 && /^[a-z]$/i.test(normalizeWord(words[0]!))) {
+    return "strong";
+  }
   const last = normalizeWord(words[words.length - 1]!);
   // A spelled-out name ending in "a" ("s u m a l i a"): that "a" is a letter,
   // not the article (2026-10-14 tester call).
