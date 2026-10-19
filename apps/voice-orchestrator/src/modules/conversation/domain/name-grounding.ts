@@ -138,3 +138,9 @@ export const NAME_NOT_GIVEN_ERROR = {
   detail:
     "Not saved: the first name you passed is not one the caller said. If they did tell you their name, call this again using it exactly as they said it. If they never did, ask for their name in one short question. Everything else they already gave you (problem, address, phone) is still valid: do not ask for any of it again.",
 } as const;
+
+export const DUPLICATE_NAME_ERROR = {
+  error: "duplicate_name",
+  detail:
+    "Not saved: the first and last name are identical. If the caller only gave one name, pass it as the first name and leave the last name empty. If they gave two different names, use them exactly as said. Call this again with the corrected name.",
+} as const;

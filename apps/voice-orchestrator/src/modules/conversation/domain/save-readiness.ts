@@ -43,6 +43,12 @@ export const ADDRESS_NOT_PASSED_ERROR = {
     "The caller already gave a street address. Call this again and include it in the address field (street, city, state, zip). It cannot be added later. Do not ask the caller for it again.",
 } as const;
 
+export const ADDRESS_NOT_READ_BACK_ERROR = {
+  error: "address_not_confirmed",
+  detail:
+    "Do not save yet. You have the caller's address but have not read it back to them. Read the full address back once (house number, street, city, ZIP) and ask if it is right. Then call this again with the same address. Everything else the caller already gave you is still valid: do not ask for it again.",
+} as const;
+
 export const NUMBER_ASKED =
   /\b(best number|number (to|we can|i can) (reach|call)|reach you (at|on)|call you (at|on|back)|(right|correct|best|good|usable) number|call ?back number|contact number|phone number|number (you'?re|you are) calling from|number on (this|the) (call|line)|this number)\b/i;
 
@@ -139,7 +145,13 @@ function addressBlockedReason({ callerTexts, agentTexts, address }: Args) {
   const callerText = callerTexts.join(" . ");
   const streetGiven = extractStreet(callerText) !== null;
   if (streetGiven) {
-    return hasStreetArg(address) ? null : ADDRESS_NOT_PASSED_ERROR;
+    if (!hasStreetArg(address)) {
+      return ADDRESS_NOT_PASSED_ERROR;
+    }
+    if (!callerTexts.some((text) => HARD_EMERGENCY.test(text))) {
+      return ADDRESS_NOT_READ_BACK_ERROR;
+    }
+    return null;
   }
   if (callerTexts.some((text) => HARD_EMERGENCY.test(text))) {
     return null;

@@ -25,11 +25,22 @@ describe("saveBlockedReason (client feedback: no submitting before name and addr
     expect(result?.error).toBe("address_not_passed");
   });
 
-  it("allows the save once the street is given and passed in", () => {
+  it("blocks a save when the address was given but not read back to the caller", () => {
     expect(
       saveBlockedReason({
         ...base,
         callerTexts: ["it's 1200 Pine Street, Seattle"],
+        address: { street: "1200 Pine Street" },
+      })?.error,
+    ).toBe("address_not_confirmed");
+  });
+
+  it("allows the save once the street is given, passed in, and read back", () => {
+    expect(
+      saveBlockedReason({
+        ...base,
+        callerTexts: ["it's 1200 Pine Street, Seattle"],
+        agentTexts: [...base.agentTexts, "So that's 1200 Pine Street, Seattle?"],
         address: { street: "1200 Pine Street" },
       }),
     ).toBeNull();
@@ -85,11 +96,12 @@ describe("saveBlockedReason (client feedback: no submitting before name and addr
     const withAddress = {
       ...base,
       callerTexts: ["it's 1200 Pine Street, Seattle"],
+      agentTexts: [...base.agentTexts, "So that's 1200 Pine Street?"],
       address: { street: "1200 Pine Street" },
     };
 
     it("blocks a save when the callback number was never asked about", () => {
-      const result = saveBlockedReason({ ...withAddress, agentTexts: ["What's your address?"] });
+      const result = saveBlockedReason({ ...withAddress, agentTexts: ["What's your address?", "So that's 1200 Pine Street?"] });
       expect(result?.error).toBe("callback_number_not_confirmed");
     });
 
@@ -114,7 +126,7 @@ describe("saveBlockedReason (client feedback: no submitting before name and addr
       expect(
         saveBlockedReason({
           ...withAddress,
-          agentTexts: ["What's your address?"],
+          agentTexts: ["What's your address?", "So that's 1200 Pine Street?"],
           callerTexts: ["it's 1200 Pine Street", "my number is (206) 555-0184"],
           phone: "+12065550184",
         }),
@@ -204,6 +216,7 @@ describe("client feedback (Prateek, 2026-10-09): an address given early in a lon
     const result = saveBlockedReason({
       ...base,
       callerTexts: [...early, ...later],
+      agentTexts: [...base.agentTexts, "So that's 42 Maple Street, Atlanta?"],
       address: { street: "42 Maple Street" },
     });
     expect(result).toBeNull();

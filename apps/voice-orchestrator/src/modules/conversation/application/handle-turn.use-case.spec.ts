@@ -791,7 +791,12 @@ describe("HandleTurnUseCase", () => {
 
     it("createCustomer PERMANENTLY unavailable (no CRM configured) — reminder stops entirely instead of looping forever", async () => {
       const repository = new FakeConversationRepository();
-      const priorTranscript = fillerTranscript(6);
+      const at = new Date().toISOString();
+      const priorTranscript = [
+        ...fillerTranscript(4),
+        { turnIndex: 4, speaker: "caller" as const, text: "it's 1200 Pine Street", confidence: null, offsetMs: 0, at },
+        { turnIndex: 5, speaker: "agent" as const, text: "So that's 1200 Pine Street?", confidence: null, offsetMs: 0, at },
+      ];
       repository.seed(baseConversation({ transcript: priorTranscript }));
       const aiProvider = new FakeAiProvider();
       aiProvider.responses = [
@@ -922,7 +927,13 @@ describe("HandleTurnUseCase", () => {
      */
     it("createCustomer failing with 'no CRM configured' for the FIRST time THIS TURN still protects THIS turn's own response, not just later ones", async () => {
       const repository = new FakeConversationRepository();
-      repository.seed(baseConversation());
+      const at = new Date().toISOString();
+      repository.seed(baseConversation({
+        transcript: [
+          { turnIndex: 0, speaker: "caller", text: "it's 1200 Pine Street", confidence: null, offsetMs: 0, at },
+          { turnIndex: 1, speaker: "agent", text: "So that's 1200 Pine Street?", confidence: null, offsetMs: 0, at },
+        ],
+      }));
       const aiProvider = new FakeAiProvider();
       aiProvider.responses = [
         [
@@ -993,7 +1004,12 @@ describe("HandleTurnUseCase", () => {
 
     it("createCustomer SUCCEEDS — reminder switches from 'call createCustomer' to 'call createLead', never re-suggests createCustomer again", async () => {
       const repository = new FakeConversationRepository();
-      const priorTranscript = fillerTranscript(6);
+      const at = new Date().toISOString();
+      const priorTranscript = [
+        ...fillerTranscript(4),
+        { turnIndex: 4, speaker: "caller" as const, text: "it's 1200 Pine Street", confidence: null, offsetMs: 0, at },
+        { turnIndex: 5, speaker: "agent" as const, text: "So that's 1200 Pine Street?", confidence: null, offsetMs: 0, at },
+      ];
       repository.seed(baseConversation({ transcript: priorTranscript }));
       const aiProvider = new FakeAiProvider();
       aiProvider.responses = [
@@ -3650,6 +3666,14 @@ describe("HandleTurnUseCase with a matched record that has no name or address", 
             turnIndex: 2,
             speaker: "caller",
             text: "it's 1912 9th avenue west seattle 98119",
+            confidence: null,
+            offsetMs: 0,
+            at,
+          },
+          {
+            turnIndex: 3,
+            speaker: "agent",
+            text: "So that's 1912 9th Avenue West, Seattle, 98119?",
             confidence: null,
             offsetMs: 0,
             at,

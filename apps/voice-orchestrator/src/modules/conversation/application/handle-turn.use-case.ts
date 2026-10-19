@@ -12,7 +12,7 @@ import {
   saveBlockedReason,
   shouldNudgeForCallbackNumber,
 } from "../domain/save-readiness";
-import { isNameGroundedInCaller, NAME_NOT_GIVEN_ERROR } from "../domain/name-grounding";
+import { isNameGroundedInCaller, NAME_NOT_GIVEN_ERROR, DUPLICATE_NAME_ERROR } from "../domain/name-grounding";
 import { randomUUID } from "node:crypto";
 import {
   classifyZip,
@@ -804,7 +804,7 @@ export class HandleTurnUseCase {
         if (toolCall.name === "getBusinessHours") {
           conversation.businessHoursChecked = true;
         }
-        const ran = await this.runTool(conversation, toolCall, command.allowedTools);
+        const ran = await this.runTool(conversation, toolCall, command.allowedTools, responseText);
         let output = ran.output;
         const toolEscalation = ran.escalation;
         const toolHumanTransfer = ran.humanTransfer;
@@ -1464,6 +1464,7 @@ export class HandleTurnUseCase {
     conversation: Conversation,
     toolCall: AiToolCallRequest,
     allowedTools: readonly string[],
+    currentTurnText = "",
   ): Promise<{
     output: unknown;
     escalation?: { severity: string; action: string; transferDestination: string | null };
@@ -1485,13 +1486,16 @@ export class HandleTurnUseCase {
     });
 
     if (toolCall.name === "createCustomer") {
+      const priorAgentTexts = conversation.transcript
+        .filter((entry) => entry.speaker === "agent")
+        .map((entry) => entry.text);
       const blocked = saveBlockedReason({
         callerTexts: conversation.transcript
           .filter((entry) => entry.speaker === "caller")
           .map((entry) => entry.text),
-        agentTexts: conversation.transcript
-          .filter((entry) => entry.speaker === "agent")
-          .map((entry) => entry.text),
+        agentTexts: currentTurnText.trim()
+          ? [...priorAgentTexts, currentTurnText]
+          : priorAgentTexts,
         address: toolCall.arguments["address"],
         phone: toolCall.arguments["phone"],
       });
@@ -1522,6 +1526,13 @@ export class HandleTurnUseCase {
         conversationId: conversation.id,
       });
       return { output: NAME_NOT_GIVEN_ERROR };
+    }
+    if (toolCall.name === "createCustomer" && hasDuplicateName(toolCall.arguments)) {
+      this.logger.warn("createCustomer blocked: first and last name are identical", {
+        tenantId: conversation.tenantId,
+        conversationId: conversation.id,
+      });
+      return { output: DUPLICATE_NAME_ERROR };
     }
 
     try {
@@ -1693,6 +1704,14 @@ export class HandleTurnUseCase {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function hasDuplicateName(args: Record<string, unknown>): boolean {
+  const name = args["name"];
+  if (!isRecord(name)) return false;
+  const first = typeof name["first"] === "string" ? name["first"].trim().toLowerCase() : "";
+  const last = typeof name["last"] === "string" ? name["last"].trim().toLowerCase() : "";
+  return first.length > 0 && first === last;
 }
 
 /**
