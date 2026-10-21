@@ -458,9 +458,32 @@ export function addressReadbackNote(
   const streetWords = street.split(" ");
   const spokenStreet =
     streetWords.length > 1 && /^\d{3,}$/.test(streetWords[0] ?? "")
-      ? [streetWords[0]!.split("").join("-"), ...streetWords.slice(1)].join(" ")
+      ? [
+          streetWords[0]!
+            .split("")
+            .map((d) => (d === "0" ? "oh" : d))
+            .join("-"),
+          ...streetWords.slice(1),
+        ].join(" ")
       : street;
+  // Has the agent already read back a different address? If so, this is a
+  // correction -- not a first-time readback. Detected by hyphenated digits
+  // near a street suffix, which only appear in our own readback output.
+  const everReadBackAddress = agentTexts.some(
+    (text) =>
+      /\d-\d/.test(text) &&
+      /\b(street|st|avenue|ave|road|rd|drive|dr|lane|ln|way|place|pl|court|ct|boulevard|blvd|circle|cir|terrace|ter|parkway|pkwy|highway|hwy)\b/i.test(
+        text,
+      ),
+  );
+  if (everReadBackAddress) {
+    return `[The caller corrected their address to "${spokenStreet}". Say ONLY "Got it, ${spokenStreet}." and continue to the next question. Do NOT read the full address again or ask them to confirm it a second time.]`;
+  }
+  const spokenZip = zip
+    ?.split("")
+    .map((d) => (d === "0" ? "oh" : d))
+    .join("-");
   return zip
-    ? `[The caller just gave their address. Your whole reply: read it back once, slowly ("So that's ${spokenStreet}, ZIP ${zip.split("").join("-")}?") and ask if it's right. Ask nothing else.]`
+    ? `[The caller just gave their address. Your whole reply: read it back once, slowly ("So that's ${spokenStreet}, ZIP ${spokenZip}?") and ask if it's right. Ask nothing else.]`
     : `[The caller just gave their street address but no ZIP. Your whole reply: say the street back once ("${spokenStreet}") and ask for the ZIP. Ask nothing else.]`;
 }

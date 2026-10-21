@@ -129,6 +129,14 @@ describe("addressReadbackNote (QA 2026-10-13: a volunteered address was ignored)
     expect(note).toContain("9-8-1-1-9");
   });
 
+  it("uses oh for zeros in the ZIP readback", () => {
+    const note = addressReadbackNote(
+      ["It's 3810 248th Place South, Seattle, 98101."],
+      [],
+    );
+    expect(note).toContain("9-8-1-oh-1");
+  });
+
   it("asks for the ZIP when the address has none", () => {
     expect(addressReadbackNote(["3810 248th Place South, Kent."], [])).toContain("ask for the ZIP");
   });
@@ -144,5 +152,15 @@ describe("addressReadbackNote (QA 2026-10-13: a volunteered address was ignored)
 
   it("stays quiet when there is no address", () => {
     expect(addressReadbackNote(["my sink is leaking"], [])).toBeNull();
+  });
+
+  it("gives a brief correction note when the agent already read back a different address", () => {
+    const note = addressReadbackNote(
+      ["It's 6204 Main Street.", "No, it's 6240 Main Street."],
+      ["So that's 6-2-oh-4 Main Street?"],
+    );
+    expect(note).toContain("corrected");
+    expect(note).toContain("6-2-4-oh main street");
+    expect(note).not.toContain("read it back once");
   });
 });

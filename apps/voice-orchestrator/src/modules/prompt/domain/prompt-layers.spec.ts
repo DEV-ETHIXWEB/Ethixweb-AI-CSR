@@ -49,9 +49,9 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
   const prompt = PLATFORM_BASE_PROMPT_V1;
   const lower = prompt.toLowerCase();
 
-  it("is versioned v53 and far shorter than the 11,000-word v52", () => {
-    expect(PLATFORM_BASE_PROMPT_VERSION).toBe("v53");
-    expect(prompt.split(/\s+/).length).toBeLessThan(3500);
+  it("is versioned v54 and far shorter than the 11,000-word v52", () => {
+    expect(PLATFORM_BASE_PROMPT_VERSION).toBe("v54");
+    expect(prompt.split(/\s+/).length).toBeLessThan(3700);
   });
 
   describe("core boundaries", () => {
@@ -169,7 +169,7 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
 
     it("reads the address back once, digits one by one, and only the corrected part after a correction", () => {
       expect(lower).toContain("read the whole address back once");
-      expect(lower).toContain("say back only that part");
+      expect(lower).toContain("say back only that corrected part");
       expect(lower).toContain("never read the whole address again");
       expect(lower).toContain("a yes or \"that's right\" is final");
       expect(lower).toContain("the house number and a numbered street ran together");
@@ -250,7 +250,7 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
     });
 
     it("passes unknown questions to the team instead of inventing an answer", () => {
-      expect(lower).toContain("you will pass the question to the team");
+      expect(lower).toContain("you will make sure the team knows they asked");
       expect(lower).toContain(
         "never invent a service, a price, a discount, availability or a time",
       );

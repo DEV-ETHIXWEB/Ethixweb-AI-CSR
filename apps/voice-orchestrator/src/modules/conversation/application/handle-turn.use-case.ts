@@ -1967,6 +1967,18 @@ function looksEmergencyAdjacent(transcript: string): boolean {
     "no hot water",
     "overflowing",
     "water everywhere",
+    "emergency",
+    "urgent",
+    "pipe broke",
+    "backed up",
+    "backing up",
+    "coming up",
+    "can't stop",
+    "water is coming",
+    "water coming",
+    "pouring",
+    "gushing",
+    "spraying",
   ];
   return triggers.some((trigger) => lower.includes(trigger));
 }

@@ -74,15 +74,21 @@ const DIGIT_READBACK = /\b(?:\d[\s-]){4,}\d\b|\b\d{5}\b|\b\d{3}[-. ]\d{3}[-. ]\d
 
 /**
  * Client feedback: ElevenLabs reads "14101" as "fourteen" + "oh one oh one"
- * with an awkward split, not digit-by-digit. Hyphenating ("1-4-1-0-1") forces
- * TTS to read each digit separately, like a real receptionist would.
+ * with an awkward split, not digit-by-digit. Hyphenating forces TTS to read
+ * each digit separately, like a real receptionist would. Zeros become "oh"
+ * ("6-2-oh-4") because ElevenLabs garbles an isolated "0" into something
+ * that sounds like a different letter (client reported "6204" heard as "62L4").
  * Only applied inside the readback path (STREET_READBACK matched), never to
  * bare numbers in normal speech.
  */
 function hyphenateHouseNumber(sentence: string): string {
   return sentence.replace(
     /\b(\d{3,6})\b(?=\s+(?:[A-Za-z0-9'.]+\s+){0,3}(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|place|pl|court|ct|circle|cir|terrace|ter|parkway|pkwy|highway|hwy)\b)/gi,
-    (_, digits: string) => digits.split("").join("-"),
+    (_, digits: string) =>
+      digits
+        .split("")
+        .map((d) => (d === "0" ? "oh" : d))
+        .join("-"),
   );
 }
 
