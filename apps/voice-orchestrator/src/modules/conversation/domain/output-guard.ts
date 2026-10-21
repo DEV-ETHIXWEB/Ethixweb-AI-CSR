@@ -72,6 +72,20 @@ const STREET_READBACK =
   /\b\d{1,6}\s+(?:[A-Za-z0-9'.]+\s+){0,3}(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|place|pl|court|ct|circle|cir|terrace|ter|parkway|pkwy|highway|hwy)\b/i;
 const DIGIT_READBACK = /\b(?:\d[\s-]){4,}\d\b|\b\d{5}\b|\b\d{3}[-. ]\d{3}[-. ]\d{4}\b/;
 
+/**
+ * Client feedback: ElevenLabs reads "14101" as "fourteen" + "oh one oh one"
+ * with an awkward split, not digit-by-digit. Hyphenating ("1-4-1-0-1") forces
+ * TTS to read each digit separately, like a real receptionist would.
+ * Only applied inside the readback path (STREET_READBACK matched), never to
+ * bare numbers in normal speech.
+ */
+function hyphenateHouseNumber(sentence: string): string {
+  return sentence.replace(
+    /\b(\d{3,6})\b(?=\s+(?:[A-Za-z0-9'.]+\s+){0,3}(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|place|pl|court|ct|circle|cir|terrace|ter|parkway|pkwy|highway|hwy)\b)/gi,
+    (_, digits: string) => digits.split("").join("-"),
+  );
+}
+
 export type GuardAction =
   | "meta_leak"
   | "timing_promise"
@@ -305,11 +319,13 @@ export class OutputGuard {
         this.questionsThisTurn.push(normalizedWords(sentence));
       }
       this.wordsSoFar += sentenceWordCount;
-      out.push(
-        isQuestion(sentence)
-          ? plainSpoken(sentence)
-          : plainSpoken(sentence).replace(OWN_TODAY, "right away"),
-      );
+      let kept = isQuestion(sentence)
+        ? plainSpoken(sentence)
+        : plainSpoken(sentence).replace(OWN_TODAY, "right away");
+      if (slow) {
+        kept = hyphenateHouseNumber(kept);
+      }
+      out.push(kept);
     }
     // Keep the segment's own edge whitespace: segments are streamed one after
     // another, and a lost leading space would glue two spoken words together.

@@ -22,15 +22,20 @@ export interface VoiceDeliverySettings {
 }
 
 /**
- * `speed: 0.92` (not ElevenLabs' own neutral `1`) — real caller feedback:
+ * `speed: 0.92` (not ElevenLabs' own neutral `1`) -- real caller feedback:
  * at the neutral rate, words came fast enough that things she said were
  * getting missed. Kept above 0.9 (QUIET_SUBDUED, the slowest named mood
  * profile) deliberately, so this still reads as the baseline/fastest
  * pace and every mood-specific profile in emotional-delivery.ts keeps
  * its own relative slower-than-default ordering intact.
+ *
+ * `stability: 0.55` (raised from 0.5) -- client feedback: the voice
+ * "raises louder" on questions (name, phone confirmation). 0.55 reduces
+ * the pitch/volume variation ElevenLabs applies to intonation changes
+ * while still sounding natural, not robotic.
  */
 export const DEFAULT_VOICE_DELIVERY_SETTINGS: VoiceDeliverySettings = {
-  stability: 0.5,
+  stability: 0.55,
   similarityBoost: 0.75,
   style: 0,
   speed: 0.92,

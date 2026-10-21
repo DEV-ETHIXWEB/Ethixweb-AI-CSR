@@ -119,8 +119,11 @@ const EMOTION_PROFILES: Record<string, DeliveryProfile> = {
   slower: { speed: 0.85 },
   // Added by the orchestrator's output guard, never by the model: address and phone
   // read-backs were "not clearly hearable" (client feedback), so they are spoken
-  // slower than any emotional cue ever goes.
-  slowly: { speed: 0.78 },
+  // slower than any emotional cue ever goes. stability raised to 0.6 and speed
+  // softened from 0.78 to 0.85 after a second round of client feedback: the old
+  // values made ElevenLabs change the voice character noticeably (louder, higher
+  // pitch) on every readback, which the client described as "raises quite a bit".
+  slowly: { speed: 0.84, stability: 0.6 },
 };
 
 const PAUSE_WORD = "pause";

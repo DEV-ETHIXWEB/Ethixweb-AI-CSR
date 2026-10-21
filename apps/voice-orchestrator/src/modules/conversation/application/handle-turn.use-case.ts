@@ -1744,11 +1744,14 @@ function appendResponseSegment(existing: string, next: string): string {
 const MIN_SPEECH_SEGMENT_CHARS = 40;
 /**
  * The very first chunk of a turn can flush sooner: the caller is in
- * dead air (or hearing the filler "Mm-hmm"), and getting ANY real
- * words to TTS 15-20 chars earlier shaves ~200ms off perceived latency.
+ * dead air, and getting ANY real words to TTS earlier shaves perceived
+ * latency. Reduced from 24 to 16 after client feedback ("still has
+ * long pauses"): on a Sydney-to-US pipeline every character of
+ * accumulation adds ~50-80ms of dead air. 16 chars is roughly 3-4
+ * words, enough for a natural clause opener ("Ah, sorry about").
  * Subsequent chunks keep the normal minimum to avoid choppy delivery.
  */
-const MIN_FIRST_SEGMENT_CHARS = 24;
+const MIN_FIRST_SEGMENT_CHARS = 16;
 
 /**
  * Above this length with no sentence boundary at all (a long

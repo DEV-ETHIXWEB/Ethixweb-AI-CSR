@@ -72,11 +72,18 @@ describe("OutputGuard, on the exact lines from the clients' real test calls", ()
     expect(apply("Your zip is 98101, right?")).toMatch(/^\[slowly\] /);
   });
 
+  it("hyphenates the house number in a street readback so TTS reads each digit", () => {
+    expect(apply("So that's 14101 Pine Street?")).toBe("[slowly] So that's 1-4-1-0-1 Pine Street?");
+    expect(apply("Just to confirm, 1200 Pine Street, Seattle?")).toBe(
+      "[slowly] Just to confirm, 1-2-0-0 Pine Street, Seattle?",
+    );
+  });
+
   it("does not slow down ordinary sentences, and never doubles the cue", () => {
     expect(apply("Got it, what's going on with the sink?")).toBe(
       "Got it, what's going on with the sink?",
     );
-    expect(apply("[slowly] 1200 Pine Street?")).toBe("[slowly] 1200 Pine Street?");
+    expect(apply("[slowly] 1-2-0-0 Pine Street?")).toBe("[slowly] 1-2-0-0 Pine Street?");
   });
 
   it("passes emotional cues and empty input through untouched", () => {
