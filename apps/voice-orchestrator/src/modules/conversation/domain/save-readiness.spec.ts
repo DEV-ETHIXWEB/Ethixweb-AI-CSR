@@ -1,4 +1,8 @@
-import { saveBlockedReason, shouldNudgeForCallbackNumber } from "./save-readiness";
+import {
+  leadProblemBlockedReason,
+  saveBlockedReason,
+  shouldNudgeForCallbackNumber,
+} from "./save-readiness";
 
 const asked = "Is the number you're calling from the best number to reach you?";
 const base = {
@@ -270,5 +274,59 @@ describe("2026-10-14: an address Grace read back is accepted even when spoken in
         phone: "+18722784999",
       })?.error,
     ).toBe("address_needed");
+  });
+});
+
+/**
+ * 2026-10-22 tester call: "I didn't give any issue or problem at all, it just
+ * took the name and address and said you are all set, without even asking the
+ * problem." Every other part of a complete request had a gate; the reason for
+ * the call had none.
+ */
+describe("leadProblemBlockedReason", () => {
+  const askedTwice = ["So what's going on?", "And what's the problem exactly?"];
+
+  it("blocks a lead when the caller never said what was wrong", () => {
+    expect(
+      leadProblemBlockedReason({
+        callerTexts: ["my name is akash", "it's 4512 maple street, 98032", "yes that's right"],
+        agentTexts: ["Can I get your name?"],
+      })?.error,
+    ).toBe("problem_not_described");
+  });
+
+  it.each([
+    "my kitchen sink is leaking",
+    "the toilet is backed up",
+    "no hot water since yesterday",
+    "I need someone to look at my water heater",
+    "nobody showed up for my appointment",
+    "I just need a quote",
+  ])("allows the save once the caller has said %p", (said) => {
+    expect(leadProblemBlockedReason({ callerTexts: [said], agentTexts: [] })).toBeNull();
+  });
+
+  it("never traps a caller who cannot say what is wrong", () => {
+    expect(
+      leadProblemBlockedReason({
+        callerTexts: ["I don't know, I just need someone to come look"],
+        agentTexts: [],
+      }),
+    ).toBeNull();
+  });
+
+  it("gives up after asking twice rather than looping", () => {
+    expect(
+      leadProblemBlockedReason({ callerTexts: ["my name is akash"], agentTexts: askedTwice }),
+    ).toBeNull();
+  });
+
+  it("never blocks a clear emergency, where speed wins", () => {
+    expect(
+      leadProblemBlockedReason({
+        callerTexts: ["there's water everywhere"],
+        agentTexts: [],
+      }),
+    ).toBeNull();
   });
 });

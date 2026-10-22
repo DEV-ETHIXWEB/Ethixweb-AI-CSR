@@ -49,6 +49,69 @@ export const ADDRESS_NOT_READ_BACK_ERROR = {
     "Do not save yet. You have the caller's address but have not read it back to them. Read the full address back once (house number, street, city, ZIP) and ask if it is right. Then call this again with the same address. Everything else the caller already gave you is still valid: do not ask for it again.",
 } as const;
 
+/**
+ * 2026-10-22 tester call: "I didn't give any issue or problem at all, it
+ * just took the name and address and said you are all set, without even
+ * asking the problem."
+ *
+ * Every other part of a complete request had a deterministic gate; the
+ * reason for the call had none. `problem_summary` is a required tool
+ * argument, so the model can and did satisfy it with something it was
+ * never told, and a lead with an invented problem is worse than no lead:
+ * the team dispatches on it.
+ *
+ * Deliberately LIBERAL — anything that reads as a reason to call a plumber
+ * counts, including a complaint or an appointment change, which are real
+ * call reasons with no fixture in them. A false "described" costs nothing
+ * (the gate simply does not fire); a false "not described" would block an
+ * honest save, which is the regression this must not cause. The escape
+ * hatches below exist for the same reason.
+ */
+const PROBLEM_WORDS =
+  /\b(leak(s|ed|ing|age)?|clog(s|ged|ging)?|block(ed|age)|back(ed|ing)? up|backup|overflow(s|ed|ing)?|burst|broke(n)?|crack(s|ed)?|drip(s|ping)?|running|won'?t (drain|flush|stop|turn|work|shut)|no (hot )?water|low (water )?pressure|flood(s|ed|ing)?|smell(s|ing)?|stuck|jam(med)?|noise|not working|stopped working|replace(d|ment)?|install(ed|ation)?|repair(s|ed)?|fix(ed|ing)?|service|maintenance|inspect(ion)?|estimate|quote|re-?pipe|snake|pump out)\b|\b(water heater|hot water|pipe|pipes|plumbing|drain|toilet|sink|faucet|tap|shower|bathtub|tub|disposal|garbage disposal|sewer|sewage|septic|valve|spigot|hose bib|sprinkler|boiler|radiator|softener|sump|main line|gas line|washer|dishwasher)\b|\b(problem|issue|trouble|emergency|something('s| is)? wrong|need (some )?help|help with)\b|\b(appointment|reschedul(e|ing)|cancel(led|lation)?|missed|no.?show|complain(t|ing)?|came out|technician came)\b/i;
+
+const PROBLEM_ASKED =
+  /\bwhat'?s (going on|the (problem|issue|trouble)|happening)\b|\bwhat (can|may) i help\b|\bhow can i help\b|\bwhat happened\b|\bgoing on with\b|\bwhat seems to be\b|\bwhat kind of (problem|issue|trouble)\b|\btell me (what|about)\b|\bwhat (are|is) you (calling|needing)\b|\bwhat do you need\b/i;
+
+const DECLINED_PROBLEM =
+  /\b(don'?t know|not sure|no idea|can'?t say|rather not|just (want|need) (someone|a) (to come|call|quote|estimate)|just calling (about|for))\b/i;
+
+/** True when the caller has said anything that reads as a reason for the call. */
+export function problemDescribed(callerTexts: readonly string[]): boolean {
+  return callerTexts.some((text) => PROBLEM_WORDS.test(text));
+}
+
+export const PROBLEM_NEEDED_ERROR = {
+  error: "problem_not_described",
+  detail:
+    "Do not save yet. The caller has not told you what is wrong, and problem_summary must be their words, never your own. Ask once, in one short question, what is going on. Everything else they already gave you (name, address, number) is still valid: do not ask for any of it again.",
+} as const;
+
+/**
+ * The error to hand back when a lead is being saved with no reason for the
+ * call, or null when the save may go ahead. Escape hatches, in order: a
+ * clear emergency (speed wins, same rule as the address gate), a caller who
+ * cannot or will not say, and a caller who has already been asked twice.
+ */
+export function leadProblemBlockedReason(args: {
+  callerTexts: readonly string[];
+  agentTexts: readonly string[];
+}) {
+  if (problemDescribed(args.callerTexts)) {
+    return null;
+  }
+  if (isHardEmergency(args.callerTexts)) {
+    return null;
+  }
+  if (args.callerTexts.some((text) => DECLINED_PROBLEM.test(text))) {
+    return null;
+  }
+  if (args.agentTexts.filter((text) => PROBLEM_ASKED.test(text)).length >= 2) {
+    return null;
+  }
+  return PROBLEM_NEEDED_ERROR;
+}
+
 export const NUMBER_ASKED =
   /\b(best number|number (to|we can|i can) (reach|call)|reach you (at|on)|call you (at|on|back)|(right|correct|best|good|usable) number|call ?back number|contact number|phone number|number (you'?re|you are) calling from|number on (this|the) (call|line)|this number)\b/i;
 

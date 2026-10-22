@@ -1160,7 +1160,10 @@ describe("HandleTurnUseCase", () => {
       });
 
       await useCase.execute(
-        baseCommand({ transcript: "yes please submit it", allowedTools: ["createLead"] }),
+        baseCommand({
+          transcript: "my water heater is leaking, yes please submit it",
+          allowedTools: ["createLead"],
+        }),
       );
 
       const saved = await repo.findById("tenant-1", "conv-1");
@@ -1634,7 +1637,10 @@ describe("HandleTurnUseCase", () => {
     });
 
     await useCase.execute(
-      baseCommand({ transcript: "please create the lead", allowedTools: ["createLead"] }),
+      baseCommand({
+        transcript: "my sink is clogged, please create the lead",
+        allowedTools: ["createLead"],
+      }),
     );
 
     expect(eventBus.eventsOfType("lead.created")).toHaveLength(1);
@@ -3425,7 +3431,9 @@ describe("address check (client feedback: random street plus ZIP was accepted)",
         repository,
         registeredTools: [{ name: "createLead", handler: createLeadHandler }],
       });
-      await useCase.execute(baseCommand({ transcript: address, allowedTools: ["createLead"] }));
+      await useCase.execute(
+        baseCommand({ transcript: `my sink is clogged, ${address}`, allowedTools: ["createLead"] }),
+      );
       return (createLeadHandler.execute.mock.calls[0]?.[0] as { problem_summary: string })
         .problem_summary;
     };
@@ -3649,7 +3657,7 @@ describe("HandleTurnUseCase with a matched record that has no name or address", 
           {
             turnIndex: 0,
             speaker: "caller",
-            text: "my name is patrick",
+            text: "my name is patrick and my toilet keeps running",
             confidence: null,
             offsetMs: 0,
             at,
@@ -4079,5 +4087,88 @@ describe("a turn can never run long and silent (2026-10-22 'I'm having trouble')
     const result = await useCase.execute(baseCommand({ transcript: "my address is" }));
 
     expect(result.responseText).toBe("");
+  });
+});
+
+/**
+ * 2026-10-22 tester call: "I didn't give any issue or problem at all, it just
+ * took the name and address and said you are all set, without even asking the
+ * problem." A lead whose problem the caller never gave is worse than no lead:
+ * the team dispatches on it.
+ */
+describe("a lead is never saved without the caller's own reason for calling", () => {
+  const at = new Date().toISOString();
+
+  function seededIntake(firstCallerLine: string) {
+    const repository = new FakeConversationRepository();
+    repository.seed(
+      baseConversation({
+        customerId: "cust-9",
+        customerDetailsOnFile: true,
+        transcript: [
+          { turnIndex: 0, speaker: "caller", text: firstCallerLine, confidence: null, offsetMs: 0, at },
+          {
+            turnIndex: 1,
+            speaker: "agent",
+            text: "So that's 4-5-1-2 Maple Street, 9-8-0-3-2?",
+            confidence: null,
+            offsetMs: 0,
+            at,
+          },
+        ],
+      }),
+    );
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        {
+          type: "tool_call",
+          toolCall: {
+            id: "call-1",
+            name: "createLead",
+            arguments: {
+              customer_id: "3f0c2b1e-9d5a-4c8e-8a57-0b1c2d3e4f50",
+              problem_summary: "Plumbing service requested",
+              priority: "routine",
+              lead_type: "residential",
+            },
+          },
+        },
+        { type: "done", stopReason: "tool_use" },
+      ],
+      [
+        { type: "text_delta", text: "What's going on over there?" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const createLead = { execute: jest.fn().mockResolvedValue({ lead_id: "l1" }) };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "createLead", handler: createLead }],
+    });
+    return { useCase, createLead };
+  }
+
+  it("refuses the save when nothing the caller said is a reason to call a plumber", async () => {
+    const { useCase, createLead } = seededIntake("my name is akash, 4512 maple street, 98032");
+
+    await useCase.execute(
+      baseCommand({ transcript: "yes that's right", allowedTools: ["createLead"] }),
+    );
+
+    expect(createLead.execute).not.toHaveBeenCalled();
+  });
+
+  it("saves it as before once the caller has said what is wrong", async () => {
+    const { useCase, createLead } = seededIntake(
+      "my name is akash, my kitchen sink is leaking, 4512 maple street, 98032",
+    );
+
+    await useCase.execute(
+      baseCommand({ transcript: "yes that's right", allowedTools: ["createLead"] }),
+    );
+
+    expect(createLead.execute).toHaveBeenCalledTimes(1);
   });
 });

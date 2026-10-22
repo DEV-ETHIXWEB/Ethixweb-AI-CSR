@@ -9,6 +9,7 @@ import {
   callbackNumberNote,
   isHardEmergency,
   LEAD_NEEDS_CUSTOMER_DETAILS_ERROR,
+  leadProblemBlockedReason,
   saveBlockedReason,
   shouldNudgeForCallbackNumber,
 } from "../domain/save-readiness";
@@ -1607,6 +1608,29 @@ export class HandleTurnUseCase {
           });
           return { output: blocked };
         }
+      }
+    }
+    if (toolCall.name === "createLead") {
+      // See leadProblemBlockedReason: the one part of a complete request
+      // that had no gate, and a lead whose problem the caller never gave
+      // is worse than no lead, because the team dispatches on it. Refused
+      // at most once per turn, for the same dead-air reason SOFT_SAVE_GATES
+      // documents.
+      const blocked = leadProblemBlockedReason({
+        callerTexts: conversation.transcript
+          .filter((entry) => entry.speaker === "caller")
+          .map((entry) => entry.text),
+        agentTexts: conversation.transcript
+          .filter((entry) => entry.speaker === "agent")
+          .map((entry) => entry.text),
+      });
+      if (blocked && !gateRejections.has(blocked.error)) {
+        gateRejections.add(blocked.error);
+        this.logger.warn("createLead blocked: the caller never said what was wrong", {
+          tenantId: conversation.tenantId,
+          conversationId: conversation.id,
+        });
+        return { output: blocked };
       }
     }
     if (toolCall.name === "createLead" && conversation.customerDetailsOnFile === false) {
