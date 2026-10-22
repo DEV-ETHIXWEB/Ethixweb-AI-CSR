@@ -118,13 +118,36 @@ export class InterruptConversationUseCase {
   }
 }
 
+/**
+ * Annotates the last thing Grace actually SAID this turn, which is not
+ * always the last message.
+ *
+ * Found 2026-10-22, by the two e2e tests that had been failing: this used to
+ * look only at `messages.at(-1)`, and since the searchCustomer and
+ * escalateEmergency backstops were added, a turn very often ends with a
+ * `role: "tool"` message instead -- the backstop's own tool_use/tool_result
+ * pair lands after the spoken text. So on the common case this whole class
+ * exists for, the note was never applied at all, and the model went on
+ * believing the caller heard a response they had cut off. The bug it was
+ * written to prevent, silently switched off by a later change.
+ *
+ * Scans back past tool results and empty tool-call turns to the last
+ * assistant message with words in it, and stops at a user message: past
+ * that point a new caller turn has already begun, and whatever Grace said
+ * before it is not what is being interrupted now.
+ */
 function annotateInterruptedResponse(conversation: Conversation): void {
-  const lastMessage = conversation.messages.at(-1);
-  if (!lastMessage || lastMessage.role !== "assistant" || !lastMessage.content) {
+  for (let index = conversation.messages.length - 1; index >= 0; index -= 1) {
+    const message = conversation.messages[index]!;
+    if (message.role === "user") {
+      return;
+    }
+    if (message.role !== "assistant" || !message.content) {
+      continue;
+    }
+    if (!message.content.includes(INTERRUPTION_NOTE)) {
+      message.content = `${message.content} ${INTERRUPTION_NOTE}`;
+    }
     return;
   }
-  if (lastMessage.content.includes(INTERRUPTION_NOTE)) {
-    return;
-  }
-  lastMessage.content = `${lastMessage.content} ${INTERRUPTION_NOTE}`;
 }

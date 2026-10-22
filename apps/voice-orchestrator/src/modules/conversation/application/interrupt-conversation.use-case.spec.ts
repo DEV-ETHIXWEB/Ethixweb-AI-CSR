@@ -224,3 +224,60 @@ describe("InterruptConversationUseCase", () => {
     });
   });
 });
+
+/**
+ * Found 2026-10-22 from two e2e tests that had been failing: the annotation
+ * used to look only at the LAST message, and since the searchCustomer and
+ * escalateEmergency backstops were added a turn very often ends with a tool
+ * result instead. On the common case this class exists for, the note was
+ * never applied at all -- the bug it was written to prevent, switched off by
+ * a later change.
+ */
+describe("InterruptConversationUseCase when a backstop tool ran after Grace spoke", () => {
+  it("annotates the words she actually said, not the tool result after them", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(
+      baseConversation({
+        messages: [
+          { role: "user", content: "my AC stopped cooling" },
+          { role: "assistant", content: "Sorry about that. Is it blowing warm air?" },
+          {
+            role: "assistant",
+            content: "",
+            toolCalls: [{ id: "t1", name: "searchCustomer", arguments: { phone: "+15551234567" } }],
+          },
+          { role: "tool", toolCallId: "t1", content: '{"found":false}' },
+        ],
+      }),
+    );
+    const useCase = new InterruptConversationUseCase(repository);
+
+    const result = await useCase.execute("tenant-1", "conv-1");
+
+    const spoken = result.messages.find(
+      (message) => message.role === "assistant" && message.content.includes("blowing warm air"),
+    );
+    expect(spoken?.content).toContain("the caller interrupted");
+    expect(result.messages.at(-1)?.role).toBe("tool");
+    expect(result.messages.at(-1)?.content).not.toContain("the caller interrupted");
+  });
+
+  it("does not reach back past the caller's own last utterance", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(
+      baseConversation({
+        messages: [
+          { role: "assistant", content: "What's going on over there?" },
+          { role: "user", content: "my AC stopped cooling" },
+        ],
+      }),
+    );
+    const useCase = new InterruptConversationUseCase(repository);
+
+    const result = await useCase.execute("tenant-1", "conv-1");
+
+    expect(result.messages.map((message) => message.content).join(" ")).not.toContain(
+      "the caller interrupted",
+    );
+  });
+});

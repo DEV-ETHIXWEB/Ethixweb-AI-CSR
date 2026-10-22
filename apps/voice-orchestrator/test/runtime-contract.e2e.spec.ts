@@ -440,18 +440,22 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
         payload: {
           tenantId: conversation.tenantId,
           idempotencyKey: randomUUID(),
-          transcript: "Please just get someone out here",
+          // Says what is wrong: createLead is refused without a problem the
+          // caller actually gave (save-readiness.ts leadProblemBlockedReason).
+          transcript: "My water heater is leaking, please just get someone out here",
           allowedTools: ["createLead"],
         },
       });
 
       expect(res.statusCode).toBe(200);
       expect(parseTurnResult(res)["toolCallsExecuted"]).toEqual(["createLead"]);
-      // postCalls[0] is StartConversationUseCase's own POST /internal/calls
-      // (the production-blocker fix's ordering guarantee, fired during the
-      // shared startConversation() helper above) — the createLead tool
-      // call is the NEXT one on this shared fake client.
-      expect(sim.coreApiClient.postCalls[1]?.path).toBe("/internal/leads");
+      // Asserted by PATH, not by index. postCalls[0] is
+      // StartConversationUseCase's own POST /internal/calls (the
+      // production-blocker fix's ordering guarantee, fired during the shared
+      // startConversation() helper above), and the searchCustomer backstop
+      // adds its own /internal/customers/resolve ahead of the lead -- an
+      // index here broke each time a backstop was added, for no gain.
+      expect(sim.coreApiClient.postCalls.map((call) => call.path)).toContain("/internal/leads");
 
       const fetched = await sim.inject({
         method: "GET",
@@ -496,11 +500,17 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       });
 
       expect(res.statusCode).toBe(200);
-      // Exactly 1 (StartConversationUseCase's own POST /internal/calls from
-      // the startConversation() helper above) — the rejected tool call
-      // itself never reached the handler, so no SECOND post call happens.
-      expect(sim.coreApiClient.postCalls).toHaveLength(1);
-      expect(sim.coreApiClient.postCalls[0]?.path).toBe("/internal/calls");
+      // The point is that the REJECTED tool never reached a handler, so no
+      // call of its own was made. Asserted that way rather than as a total
+      // count: StartConversationUseCase posts /internal/calls, and the
+      // searchCustomer backstop legitimately resolves the customer, so a
+      // count broke whenever a backstop was added.
+      const paths = sim.coreApiClient.postCalls.map((call) => call.path);
+      expect(paths[0]).toBe("/internal/calls");
+      expect(paths).not.toContain("/internal/leads");
+      expect(paths.filter((path) => path !== "/internal/calls" && path !== "/internal/customers/resolve")).toEqual(
+        [],
+      );
       expect(parseTurnResult(res)["responseText"]).toContain("recovered gracefully");
     });
 
@@ -814,13 +824,17 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
 
       expect(res.statusCode).toBe(200);
       expect(parseTurnResult(res)["responseText"]).toContain("no scheduling tool exists");
-      // The real proof of no-scheduling-capability: exactly one core-api
-      // call happened this whole turn (StartConversationUseCase's own
-      // POST /internal/calls from startConversation() above) — the
-      // rejected "scheduleAppointment" request never reached core-api at
-      // all, because no handler for it exists to call anything with.
-      expect(sim.coreApiClient.postCalls).toHaveLength(1);
-      expect(sim.coreApiClient.postCalls[0]?.path).toBe("/internal/calls");
+      // The real proof of no-scheduling-capability: nothing resembling a
+      // booking ever reached core-api, because no handler for it exists to
+      // call anything with. Asserted as "no path beyond the two a turn
+      // legitimately makes" rather than as a total count -- startConversation
+      // posts /internal/calls and the searchCustomer backstop resolves the
+      // customer, so a count broke whenever a backstop was added.
+      const paths = sim.coreApiClient.postCalls.map((call) => call.path);
+      expect(paths[0]).toBe("/internal/calls");
+      expect(paths.filter((path) => path !== "/internal/calls" && path !== "/internal/customers/resolve")).toEqual(
+        [],
+      );
     });
   });
 
@@ -863,7 +877,8 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
         payload: {
           tenantId: conversation.tenantId,
           idempotencyKey: randomUUID(),
-          transcript: "test",
+          // See the createLead test above on why this names a problem.
+          transcript: "my kitchen sink is clogged",
           allowedTools: ["createLead"],
         },
       });
@@ -879,13 +894,16 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       // that lets telephonyCallSid -> Call -> Conversation -> Lead all be
       // reconstructed from logs/traces alone.
       const startCallBody = sim.coreApiClient.postCalls[0]?.body as { telephonyCallSid?: string };
-      const leadBody = sim.coreApiClient.postCalls[1]?.body as { callId?: string };
+      // By path, not by index: the searchCustomer backstop posts its own
+      // customer resolve ahead of the lead.
+      const leadBody = sim.coreApiClient.postCalls.find((c) => c.path === "/internal/leads")
+        ?.body as { callId?: string };
       const usageBody = sim.coreApiClient.postCalls.find((c) => c.path === "/internal/usage")
         ?.body as { callId?: string };
       const endCallPath = sim.coreApiClient.postCalls.find((c) => c.path.includes("/end"))?.path;
 
       expect(startCallBody.telephonyCallSid).toBe(callId);
-      expect(leadBody.callId).toBe(callId);
+      expect(leadBody?.callId).toBe(callId);
       expect(usageBody?.callId).toBe(callId);
       expect(endCallPath).toBe(`/internal/calls/by-telephony-sid/${callId}/end`);
     });
