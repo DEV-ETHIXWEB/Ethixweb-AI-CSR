@@ -562,6 +562,13 @@ export class HandleTurnUseCase {
     // no other note fires at all. The call-notes FYI (below) is suppressed
     // while trailing off, so "say only Mm-hm" is never diluted by a second
     // instruction in the same message.
+    // ONE buildCallNotes per turn, built before the directive chain because
+    // the closing confirmation note below needs the name. It used to be
+    // called again for each guard fact, inside a method the tool loop can
+    // run five times -- fifteen scans of the whole call where one does, on
+    // the path a caller is waiting on.
+    const notes = buildCallNotes(callerTextsSoFar, conversation.transcript);
+    const houseNumber = notes.street?.split(" ")[0] ?? "";
     const isTrailingOff = trailsOff(command.transcript);
     // Ranked directly below "the caller is still talking" and above
     // everything else: a caller who did not hear has nothing to answer yet,
@@ -626,7 +633,12 @@ export class HandleTurnUseCase {
       // ceiling" reasoning as the reminders above: a deterministic note.
       annotatedTranscript = `${directive(NAME_MISSING_NOTE)} ${annotatedTranscript}`;
     } else if (needsCallbackNumber) {
-      annotatedTranscript = `${directive(callbackNumberNote(conversation.callerAni))} ${annotatedTranscript}`;
+      annotatedTranscript = `${directive(
+        callbackNumberNote(conversation.callerAni, {
+          spelled: notes.spelledName,
+          stated: notes.statedName,
+        }),
+      )} ${annotatedTranscript}`;
     } else if (owesAnAnswer) {
       // 2026-10-22 tester call: asked whether both problems were booked, the
       // reply was "you are all set, anything else" and the answer came after
@@ -651,12 +663,6 @@ export class HandleTurnUseCase {
     // See call-notes.ts: what the caller already said, restated every turn so
     // nothing they gave is asked for again or said back under a new name.
     // Skipped while trailing off — see the priority comment above.
-    // ONE buildCallNotes per turn. It used to be called again for each of
-    // the two guard facts below, inside a method the tool loop can run five
-    // times -- fifteen scans of the whole call where one does, on the path a
-    // caller is waiting on.
-    const notes = buildCallNotes(callerTextsSoFar, conversation.transcript);
-    const houseNumber = notes.street?.split(" ")[0] ?? "";
     const guardFacts = {
       // The name the CALLER gave this call, never a matched record's: several
       // people share a phone number. See output-guard.ts VOCATIVE_TRAILING.
@@ -665,6 +671,17 @@ export class HandleTurnUseCase {
       // recognised when the street type is not in the same sentence.
       houseNumber: /^\d{3,6}$/.test(houseNumber) ? houseNumber : null,
       repeatRequested: wantsItAgain,
+      // Every word of the name, for the spelled-run guard — see
+      // output-guard.ts SPELLED_RUN. The caller's own spelling wins over
+      // what speech recognition heard.
+      nameWords:
+        notes.spelledName ??
+        notes.statedName
+          ?.toLowerCase()
+          .split(/\s+/)
+          .map((word) => word.replace(/[^a-z]/g, ""))
+          .filter((word) => word.length > 1) ??
+        [],
     };
     if (!isTrailingOff) {
       const callNotes = formatCallNotes(notes);
@@ -1364,7 +1381,12 @@ export class HandleTurnUseCase {
     signal: AbortSignal | undefined,
     iteration: number,
     /** Facts the output guard needs about THIS call, built once per turn. */
-    guardFacts: { callerName: string | null; houseNumber: string | null; repeatRequested: boolean },
+    guardFacts: {
+      callerName: string | null;
+      houseNumber: string | null;
+      repeatRequested: boolean;
+      nameWords: readonly string[];
+    },
     onChunk?: (text: string) => void,
     /** What earlier passes of this same turn already said, so a later pass cannot say it again. */
     alreadySaidThisTurn = "",
@@ -1392,6 +1414,7 @@ export class HandleTurnUseCase {
       guardFacts.callerName,
       guardFacts.houseNumber,
       guardFacts.repeatRequested,
+      guardFacts.nameWords,
     );
     const emit = (segment: string): void => {
       const guarded = guard.apply(segment);

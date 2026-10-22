@@ -49,8 +49,8 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
   const prompt = PLATFORM_BASE_PROMPT_V1;
   const lower = prompt.toLowerCase();
 
-  it("is versioned v54 and far shorter than the 11,000-word v52", () => {
-    expect(PLATFORM_BASE_PROMPT_VERSION).toBe("v54");
+  it("is versioned v55 and far shorter than the 11,000-word v52", () => {
+    expect(PLATFORM_BASE_PROMPT_VERSION).toBe("v55");
     expect(prompt.split(/\s+/).length).toBeLessThan(3700);
   });
 
@@ -133,25 +133,34 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
       expect(lower).toContain("a wrong name is worse than no name");
     });
 
-    it("2026-10-14 tester feedback: spells every name back once on her own, without being asked", () => {
-      // v53's first draft dropped this rule entirely (kept only "ask to
-      // spell if unusual"), which is exactly what the testers hit: Grace
-      // never confirmed a name's spelling unless the caller demanded it.
-      expect(lower).toContain("say it back letter by letter, once");
-      expect(lower).toContain("do this for every name, common or not, without being asked");
-      expect(lower).toContain("never spell back, or ask them to spell, the same name twice");
+    /**
+     * v55 (2026-10-22, Akash): "instead of asking in between to recheck the
+     * details, can he just confirm that details at the end of the call?"
+     *
+     * The 2026-10-14 finding this replaces was that a name's spelling was
+     * never confirmed AT ALL unless the caller demanded it. It still always
+     * is — once, at the end, with the number, which is a different place and
+     * not a dropped rule. The test is rewritten rather than deleted so the
+     * guarantee stays covered: a name is never left unconfirmed.
+     */
+    it("confirms every name's spelling exactly once, at the end, not mid-intake", () => {
+      expect(lower).toContain("do not read its letters back in the middle of the call");
+      expect(lower).toContain("confirmed once, at the end, together with the callback number");
+      expect(lower).toContain("never ask for the same name's spelling twice");
+      expect(lower).toContain("could you spell that for me?");
     });
 
-    it("2026-10-14 tester feedback: spelling takes priority even when the name arrives bundled with the problem — the real QA failure mode", () => {
-      // Confirmed live: "my name is Dana Whitfield and my disposal is jammed"
-      // in one breath made Grace skip the spell-back and go straight to a
-      // diagnostic question, 3/3 real-model attempts. The 25-word reply
-      // shape and "absorb everything in one pass" rule were winning out
-      // over the spelling rule with nothing telling the model which comes
-      // first when both compete for the same short reply.
+    /**
+     * The 2026-10-14 competing-rules problem ("my name is Dana Whitfield and
+     * my disposal is jammed" in one breath made Grace skip the spell-back
+     * 3/3 real-model attempts) is dissolved rather than re-ruled by v55:
+     * with no mid-call spell-back to compete with the reply-shape rule,
+     * there is nothing left to lose the race. The bundled case still gets an
+     * explicit instruction so the model is not left to infer it.
+     */
+    it("takes a bundled name and problem together, confirming the name later", () => {
       expect(lower).toContain("when the name arrives bundled with other things in the same breath");
-      expect(lower).toContain("confirming the spelling still comes first, before any reaction to the problem");
-      expect(lower).toContain("save the sympathetic reaction and the diagnostic follow-up for your next reply");
+      expect(lower).toContain("the name is confirmed at the end, not here");
     });
 
     it("never takes a greeting name as the caller's, never invents one, never changes a confirmed one", () => {
@@ -175,10 +184,15 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
       expect(lower).toContain("the house number and a numbered street ran together");
     });
 
-    it("confirms the callback number in its own reply (vendor call Oct 8 never asked for one)", () => {
-      expect(lower).toContain(
-        "ask once, in its own reply, whether the number they are calling from is the best one",
-      );
+    /**
+     * v55: still always confirmed (vendor call Oct 8 never asked for one at
+     * all), but together with the name at the end instead of in a turn of
+     * its own — see the NAMES tests above.
+     */
+    it("confirms the callback number together with the name, at the end", () => {
+      expect(lower).toContain("the callback number, confirmed together with the name, at the end");
+      expect(lower).toContain("in one short line and nothing else");
+      expect(lower).toContain("this is the only place either is confirmed");
     });
 
     it("lets the caller explain the problem before asking for contact details", () => {

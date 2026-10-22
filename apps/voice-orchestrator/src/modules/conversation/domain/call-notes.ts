@@ -265,8 +265,20 @@ export function formatCallNotes(notes: CallNotes): string | null {
       `name, spelled out by the caller: ${letters}, which is "${spoken}". Use exactly this name; never a different-sounding one`,
     );
   } else if (notes.statedName) {
+    // The LETTERS of what was actually heard, not just the word.
+    //
+    // 2026-10-22, second tester: "there are few instances where the csr
+    // still guesses big names - i tried with mexican, caucasian and black
+    // names". Asked to spell a name it only has by ear, the model supplies
+    // the spelling of the nearest name it knows — "Siobhan" read back as
+    // S-H-A-V-O-N-N-E. Handing it the exact letters removes the gap it was
+    // filling with a guess, and does so for every name equally: a short
+    // name from one region is no more or less at risk than a long one from
+    // another, which a length rule could never say.
     facts.push(
-      `name as heard: "${notes.statedName}" (speech recognition can mishear names; if unsure, ask them to spell it once)`,
+      `name as heard: "${notes.statedName}", which is spelled ${spellOut(notes.statedName)} ` +
+        "— confirm it back as EXACTLY those letters, never a different or more familiar-sounding " +
+        "spelling, and use whatever they correct it to",
     );
   }
   if (notes.street) {
@@ -292,29 +304,7 @@ export function formatCallNotes(notes: CallNotes): string | null {
   // SEVERAL, too -- one problem has never been seen getting lost, and adding
   // a line to every turn of every call to fix a two-problem bug would change
   // calls that are working.
-  // 2026-10-22, second tester (Yash): "there are few instances where the csr
-  // still guesses big names - i tried with mexican, caucasian and black
-  // names (the main races living in seatle)".
-  //
-  // The prompt tells Grace to say every name back letter by letter, which is
-  // right for a name she HAS and is the source of the guess for one she
-  // doesn't: asked to produce letters for a name speech recognition only
-  // approximated, the model supplies the spelling of the nearest familiar
-  // name instead. So for a name long enough to be worth getting right, and
-  // that the caller has not spelled, she is told to ask rather than assert.
-  //
-  // Length, not a list of common names: a list would have to decide which
-  // names are "normal", which is both a maintenance problem and precisely
-  // the bias that produced the complaint. Seven characters costs a caller
-  // named Michelle one short question, and saves a caller named Okonkwo
-  // from a wrong name on the record.
-  const spelling =
-    !notes.spelledName && notes.statedName && !notes.spellingAsked && isWorthSpelling(notes.statedName)
-      ? ` You have "${notes.statedName}" by ear only. Do NOT spell it back as if you know it,` +
-        " and never swap in a more familiar-sounding name: ask them to spell it, once, and use" +
-        " exactly the letters they give."
-      : "";
-  const problems =
+    const problems =
     notes.fixtures.length > 1
       ? ` The caller has raised more than one separate problem: ${notes.fixtures.join("; ")}.` +
         " Keep them separate, name each one as the caller did, and never let one stand for the" +
@@ -322,7 +312,7 @@ export function formatCallNotes(notes: CallNotes): string | null {
         " that must not be asked for again."
       : "";
   if (facts.length === 0) {
-    return problems || spelling ? `[Call notes.${spelling}${problems}]` : null;
+    return problems ? `[Call notes.${problems}]` : null;
   }
   if (notes.spellingAsked) {
     facts.push("you already asked for a spelling once; do not ask for one again");
@@ -330,8 +320,17 @@ export function formatCallNotes(notes: CallNotes): string | null {
   return (
     `[Call notes. Already said by the caller, from speech recognition: ${facts.join("; ")}. ` +
     "Never ask again for anything listed here. If one item looks wrong, confirm that one item once; " +
-    `never restart the intake.${spelling}${problems}]`
+    `never restart the intake.${problems}]`
   );
+}
+
+/** "Siobhan Okonkwo" -> "S-I-O-B-H-A-N, O-K-O-N-K-W-O". */
+export function spellOut(name: string): string {
+  return name
+    .split(/\s+/)
+    .map((word) => word.replace(/[^a-z]/gi, "").toUpperCase().split("").join("-"))
+    .filter((word) => word.length > 0)
+    .join(", ");
 }
 
 /**
@@ -344,15 +343,6 @@ export function formatCallNotes(notes: CallNotes): string | null {
  */
 function neutralTiming(timing: string): string {
   return /\b(today|tonight)\b/i.test(timing) ? "as soon as possible" : timing;
-}
-
-/** A name long enough that getting it wrong is a real cost -- see `spelling` in formatCallNotes. */
-const MIN_SPELL_WORTHY_LENGTH = 7;
-
-function isWorthSpelling(statedName: string): boolean {
-  return statedName
-    .split(/\s+/)
-    .some((word) => word.replace(/[^a-z]/gi, "").length >= MIN_SPELL_WORTHY_LENGTH);
 }
 
 /** See spelled-letters.ts for the two spelling shapes this used to miss entirely. */

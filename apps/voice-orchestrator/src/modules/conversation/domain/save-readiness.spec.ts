@@ -1,4 +1,5 @@
 import {
+  callbackNumberNote,
   leadProblemBlockedReason,
   saveBlockedReason,
   shouldNudgeForCallbackNumber,
@@ -328,5 +329,40 @@ describe("leadProblemBlockedReason", () => {
         agentTexts: [],
       }),
     ).toBeNull();
+  });
+});
+
+/**
+ * 2026-10-22, Akash: "instead of asking in between to recheck the details,
+ * can he just confirm that details at the end of the call?" The name's
+ * letters were read back mid-intake and the number was its own turn.
+ */
+describe("the closing confirmation", () => {
+  it("confirms the name and the number together, in one line", () => {
+    const note = callbackNumberNote("+12065550147", { spelled: ["tom"], stated: "Tom" });
+    expect(note).toContain("T-O-M");
+    expect(note).toContain("206-555-0147");
+    expect(note).toContain("exactly two things in one short line");
+    expect(note).toContain("Then save");
+  });
+
+  it("uses the spelled letters when the caller spelled their name", () => {
+    const note = callbackNumberNote("+12065550147", {
+      spelled: ["siobhan", "okonkwo"],
+      stated: "Siobhan Okonkwo",
+    });
+    expect(note).toContain("S-I-O-B-H-A-N, O-K-O-N-K-W-O");
+  });
+
+  it("does not read the address back again, which was already confirmed in place", () => {
+    expect(callbackNumberNote("+12065550147", { spelled: null, stated: "Tom" })).toContain(
+      "Do not read the address back again",
+    );
+  });
+
+  it("confirms the number alone when there is no name to confirm", () => {
+    const note = callbackNumberNote("+12065550147", { spelled: null, stated: null });
+    expect(note).toContain("confirms ONE thing");
+    expect(note).toContain("206-555-0147");
   });
 });

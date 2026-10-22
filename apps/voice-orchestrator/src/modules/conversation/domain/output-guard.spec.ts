@@ -429,3 +429,52 @@ describe("a repeat the caller asked for", () => {
     expect(guard.apply(readback)).toContain("4-5-1-2 Maple Street");
   });
 });
+
+/**
+ * 2026-10-22, second tester: "there are few instances where the csr still
+ * guesses big names - i tried with mexican, caucasian and black names."
+ * Asked for letters it does not have, the model supplies the nearest
+ * familiar name's spelling. The backstop for when it does it anyway.
+ */
+describe("a spelling that is not the caller's own", () => {
+  it("replaces a guessed spelling with the caller's letters", () => {
+    const guard = new OutputGuard([], false, "", "Siobhan", null, false, ["siobhan"]);
+    expect(guard.apply("Siobhan — S-H-A-V-O-N-N-E, is that right?")).toContain("S-I-O-B-H-A-N");
+  });
+
+  it("fixes each name in its own position", () => {
+    const guard = new OutputGuard([], false, "", "Siobhan", null, false, ["siobhan", "okonkwo"]);
+    const out = guard.apply("That's S-H-A-V-O-N-N-E, O-C-O-N-K-O. Right?");
+    expect(out).toContain("S-I-O-B-H-A-N");
+    expect(out).toContain("O-K-O-N-K-W-O");
+  });
+
+  it.each([["Jose", "jose", "J-O-S-E"], ["Luz", "luz", "L-U-Z"], ["Kwame", "kwame", "K-W-A-M-E"]])(
+    "works for %p regardless of length or origin",
+    (_name, word, letters) => {
+      const guard = new OutputGuard([], false, "", _name, null, false, [word]);
+      expect(guard.apply("So that's J-O-S-E-P-H, right?")).toContain(letters);
+    },
+  );
+
+  it("leaves a correct spelling exactly as it was", () => {
+    const guard = new OutputGuard([], false, "", "Siobhan", null, false, ["siobhan"]);
+    expect(guard.apply("Siobhan — S-I-O-B-H-A-N, right?")).toBe("Siobhan — S-I-O-B-H-A-N, right?");
+  });
+
+  it("tolerates a one-letter difference rather than fighting over it", () => {
+    const guard = new OutputGuard([], false, "", "Ana", null, false, ["anna"]);
+    expect(guard.apply("That's A-N-A, right?")).toContain("A-N-A");
+  });
+
+  it("changes nothing when no name is known", () => {
+    expect(new OutputGuard().apply("So that's S-H-A-V-O-N, right?")).toBe(
+      "So that's S-H-A-V-O-N, right?",
+    );
+  });
+
+  it("does not touch a hyphenated digit read-back", () => {
+    const guard = new OutputGuard([], false, "", "Tom", "4512", false, ["tom"]);
+    expect(guard.apply("So that's 4-5-1-2 Maple Street?")).toContain("4-5-1-2");
+  });
+});

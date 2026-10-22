@@ -295,39 +295,40 @@ describe("a hard name spelled out", () => {
 
 /**
  * 2026-10-22, second tester (Yash): "there are few instances where the csr
- * still guesses big names - i tried with mexican, caucasian and black names".
- * The prompt tells Grace to spell every name back, which for a name she only
- * has by ear is an invitation to supply the nearest familiar spelling.
+ * still guesses big names - i tried with mexican, caucasian and black names
+ * (the main races living in seatle)".
+ *
+ * The first attempt at this asked the caller to spell any name of seven
+ * characters or more. That was the wrong instrument twice over: it missed
+ * every short name from any region (Jose, Luz, Kwame) while adding a
+ * question for common long ones, and a length rule cannot tell which names
+ * a model will guess at. The letters of what was actually HEARD are handed
+ * over instead, which covers every region identically and asks the caller
+ * for nothing.
  */
-describe("a big name she only has by ear", () => {
-  it.each([["Siobhan"], ["Okonkwo"], ["Xochitl"], ["Guadalupe"], ["Michelle"]])(
-    "tells her to ask for the spelling of %p instead of asserting one",
-    (name) => {
-      const text = formatCallNotes(buildCallNotes([`my name is ${name}`]))!;
-      expect(text).toContain("Do NOT spell it back as if you know it");
-      expect(text).toContain("ask them to spell it, once");
-    },
-  );
-
-  it.each([["Dana"], ["Tom"], ["Maria"], ["Jose"], ["Akash"]])(
-    "leaves a short name like %p alone, so nothing changes for most callers",
-    (name) => {
-      const text = formatCallNotes(buildCallNotes([`my name is ${name}`]))!;
-      expect(text).not.toContain("Do NOT spell it back");
-    },
-  );
-
-  it("says nothing once the caller has actually spelled it", () => {
-    const text = formatCallNotes(buildCallNotes(["my name is Siobhan, s i o b h a n"]))!;
-    expect(text).not.toContain("Do NOT spell it back");
-    expect(text).toContain("S-I-O-B-H-A-N");
+describe("a name she only has by ear", () => {
+  it.each([
+    ["Siobhan", "S-I-O-B-H-A-N"],
+    ["Okonkwo", "O-K-O-N-K-W-O"],
+    ["Xochitl", "X-O-C-H-I-T-L"],
+    ["Jose", "J-O-S-E"],
+    ["Luz", "L-U-Z"],
+    ["Kwame", "K-W-A-M-E"],
+    ["Tom", "T-O-M"],
+  ])("hands over the exact letters of %p, whatever its length or origin", (name, letters) => {
+    const text = formatCallNotes(buildCallNotes([`my name is ${name}`]))!;
+    expect(text).toContain(letters);
+    expect(text).toContain("never a different or more familiar-sounding");
   });
 
-  it("says nothing once she has already asked for a spelling", () => {
-    const text = formatCallNotes(buildCallNotes(["my name is Siobhan"], [
-      { speaker: "agent", text: "Could you spell that for me?" },
-      { speaker: "caller", text: "my name is Siobhan" },
-    ]))!;
-    expect(text).not.toContain("Do NOT spell it back");
+  it("spells both names when two were given", () => {
+    const text = formatCallNotes(buildCallNotes(["my name is Jose Hernandez"]))!;
+    expect(text).toContain("J-O-S-E, H-E-R-N-A-N-D-E-Z");
+  });
+
+  it("prefers the caller's own spelling once they have given one", () => {
+    const text = formatCallNotes(buildCallNotes(["my name is Siobhan, s i o b h a n"]))!;
+    expect(text).toContain("spelled out by the caller: S-I-O-B-H-A-N");
+    expect(text).not.toContain("name as heard");
   });
 });

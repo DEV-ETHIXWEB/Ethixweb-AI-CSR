@@ -137,7 +137,8 @@ export type GuardAction =
   | "slow_readback"
   | "repeated_statement"
   | "word_limit"
-  | "wrong_name";
+  | "wrong_name"
+  | "wrong_spelling";
 
 /**
  * 2026-10-22 tester call: "Called as a returning customer, also gave name in
@@ -213,6 +214,33 @@ const NOT_A_VOCATIVE_NAME = new Set([
   "alright",
   "got",
 ]);
+
+/**
+ * A spelled-out run in Grace's own speech: "S-I-O-B-H-A-N". Three letters
+ * minimum, so an initial ("J. R.") and ordinary hyphenated words
+ * ("mother-in-law", "T-shirt") are not candidates.
+ *
+ * HYPHENS ONLY, deliberately. A space-separated alternative was tried first
+ * and its own test caught it eating a letter out of the preceding word:
+ * "That's A-N-A" matched from the "s" of "That's" and came back as
+ * "That'A-N-N-A". Hyphens are the form the call notes hand over and the
+ * form the prompt asks for, and a mangled word is a worse failure than a
+ * missed spelling.
+ *
+ * 2026-10-22, second tester: "there are few instances where the csr still
+ * guesses big names - i tried with mexican, caucasian and black names."
+ * Asked to spell a name it only has by ear, the model supplies the letters
+ * of the nearest name it knows. The call notes now hand it the real letters,
+ * and this is the backstop for when it spells something else anyway — the
+ * same "prompt wording has a ceiling, put a guard in the code" rule the
+ * rest of this file is built on.
+ *
+ * Nothing is invented: the replacement letters are the caller's own name, so
+ * the worst case is Grace spelling the name she was actually given.
+ */
+const SPELLED_RUN = /\b[A-Za-z](?:-[A-Za-z]){2,}\b/g;
+
+const lettersOf = (run: string): string => run.replace(/[^a-z]/gi, "").toLowerCase();
 
 const sameName = (a: string, b: string): boolean => {
   const left = a.toLowerCase().replace(/[^a-z]/g, "");
@@ -315,6 +343,8 @@ export class OutputGuard {
      * already could not hear. See isRepeatRequest.
      */
     private readonly repeatRequested = false,
+    /** Every word of the name the caller gave, lowercase — see SPELLED_RUN. */
+    private readonly nameWords: readonly string[] = [],
   ) {
     this.spokeAlready = alreadySpokeThisTurn;
     this.questionsThisTurn = splitSentences(alreadySaidThisTurn)
@@ -413,6 +443,41 @@ export class OutputGuard {
     return cleaned.replace(/\s{2,}/g, " ").replace(/\s+([.!?,])/g, "$1");
   }
 
+  /**
+   * Replaces a spelled-out run that does not match any name the caller gave
+   * with that caller's own letters. See SPELLED_RUN.
+   *
+   * Matched by POSITION: the first run in a reply is the first name, the
+   * second is the second. That is the order Grace says them in, and it is
+   * the only mapping available once the letters themselves are wrong.
+   */
+  private withTheRealSpelling(sentence: string): string {
+    if (this.nameWords.length === 0) {
+      return sentence;
+    }
+    let runIndex = -1;
+    let changed = false;
+    const cleaned = sentence.replace(SPELLED_RUN, (run) => {
+      runIndex += 1;
+      const spoken = lettersOf(run);
+      // Already one of the caller's own names, in any position: leave it.
+      if (this.nameWords.some((word) => sameName(spoken, word))) {
+        return run;
+      }
+      const expected = this.nameWords[runIndex];
+      if (!expected) {
+        return run;
+      }
+      changed = true;
+      return expected.toUpperCase().split("").join("-");
+    });
+    if (!changed) {
+      return sentence;
+    }
+    this.actions.push("wrong_spelling");
+    return cleaned;
+  }
+
   /** Returns the text to speak for this segment; an empty string means say nothing. */
   apply(segment: string): string {
     const out: string[] = [];
@@ -501,6 +566,7 @@ export class OutputGuard {
         ? plainSpoken(sentence)
         : plainSpoken(sentence).replace(OWN_TODAY, "right away");
       kept = this.withoutAStrangersName(kept);
+      kept = this.withTheRealSpelling(kept);
       if (slow) {
         kept = hyphenateHouseNumber(kept, this.houseNumber);
       }

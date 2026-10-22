@@ -239,17 +239,47 @@ const NAME_ASKED =
  * nothing else this turn") was echoed aloud as "you asked me only one thing
  * this turn".
  */
-export function callbackNumberNote(callerAni: string | null | undefined): string {
+export function callbackNumberNote(
+  callerAni: string | null | undefined,
+  name?: { spelled: readonly string[] | null; stated: string | null },
+): string {
   const digits = (callerAni ?? "").replace(/\D/g, "").slice(-10);
   const spoken =
     digits.length === 10
       ? `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`
       : "the number they are calling from";
+  // 2026-10-22, Akash: "instead of asking in between to recheck the details,
+  // can he just confirm that details at the end of the call?" The number was
+  // its own turn, and the name's letters were read back in the middle of the
+  // intake — two interruptions where one line at the end does the same work.
+  // The address keeps its own read-back in place: it is the longest item, it
+  // needs the ZIP with it, and it is the one a wrong value sends a truck to.
+  const letters = nameLetters(name);
+  if (!letters) {
+    return (
+      "[You have their address. Your whole reply confirms ONE thing: whether " +
+      `${spoken} is the best number to reach them, read digit by digit, without the +1. ` +
+      "Ask nothing else.]"
+    );
+  }
   return (
-    "[System note: you have their address but have not confirmed a callback number. " +
-    `Your reply asks only one question: whether ${spoken} is the best number to reach them, ` +
-    "reading it digit by digit, without the +1.]"
+    "[You have everything you need, so confirm it now, once, at the end — not earlier. " +
+    `Your whole reply confirms exactly two things in one short line: the name, spelled out (${letters}), ` +
+    `and whether ${spoken} is the best number to reach them, read digit by digit, without the +1. ` +
+    "Then save. Do not read the address back again, and ask nothing else.]"
   );
+}
+
+/** The caller's name as spoken letters for the closing confirmation, or null when there is no name to confirm. */
+function nameLetters(name?: { spelled: readonly string[] | null; stated: string | null }): string | null {
+  const words = name?.spelled ?? name?.stated?.split(/\s+/).filter(Boolean) ?? null;
+  if (!words || words.length === 0) {
+    return null;
+  }
+  return words
+    .map((word) => word.replace(/[^a-z]/gi, "").toUpperCase().split("").join("-"))
+    .filter((word) => word.length > 0)
+    .join(", ");
 }
 
 /**
