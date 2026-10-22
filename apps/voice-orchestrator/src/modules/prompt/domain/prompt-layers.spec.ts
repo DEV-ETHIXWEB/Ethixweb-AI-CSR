@@ -49,8 +49,8 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
   const prompt = PLATFORM_BASE_PROMPT_V1;
   const lower = prompt.toLowerCase();
 
-  it("is versioned v55 and far shorter than the 11,000-word v52", () => {
-    expect(PLATFORM_BASE_PROMPT_VERSION).toBe("v55");
+  it("is versioned v56 and far shorter than the 11,000-word v52", () => {
+    expect(PLATFORM_BASE_PROMPT_VERSION).toBe("v56");
     expect(prompt.split(/\s+/).length).toBeLessThan(3700);
   });
 
@@ -178,11 +178,17 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
       expect(lower).toContain("the city is enough");
     });
 
-    it("reads the address back once, digits one by one, and only the corrected part after a correction", () => {
-      expect(lower).toContain("read the whole address back once");
+    /**
+     * v56 (2026-10-22, client call): "the system confirmed my address more
+     * than three times ... it should only reconfirm it once, at the end of
+     * the call." The read-back is still guaranteed, and still digit by
+     * digit; it just happens once, at the close, with the name and number.
+     */
+    it("does not read the address back when taking it, only once at the close", () => {
+      expect(lower).toContain("do not read the address back when you take it");
+      expect(lower).toContain("read back once, at the end, in the same breath as the name");
       expect(lower).toContain("say back only that corrected part");
-      expect(lower).toContain("never read the whole address again");
-      expect(lower).toContain('a yes or "that\'s right" is final');
+      expect(lower).toContain("never read the whole address out to check it mid-call");
       expect(lower).toContain("the house number and a numbered street ran together");
     });
 
@@ -191,12 +197,12 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
      * all), but together with the name at the end instead of in a turn of
      * its own — see the NAMES tests above.
      */
-    it("confirms the callback number together with the name, at the end", () => {
+    it("confirms the callback number with the name AND the address, at the end", () => {
       expect(lower).toContain(
-        "the callback number, confirmed together with the name, once, right before you save",
+        "the callback number, confirmed together with the name and the address, once, right before you save",
       );
       expect(lower).toContain("in one short line and nothing else");
-      expect(lower).toContain("this is the only place either is confirmed");
+      expect(lower).toContain("this is the only place any of it is confirmed");
     });
 
     it("lets the caller explain the problem before asking for contact details", () => {

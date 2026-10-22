@@ -182,6 +182,32 @@ function isPartialNumber(words: readonly string[]): boolean {
 }
 
 /**
+ * Whether this utterance is held because it MIGHT be half of a number, as
+ * opposed to a sentence that is grammatically unfinished.
+ *
+ * 2026-10-22, from a client call: "there is a significant delay between when
+ * I finish speaking and when I receive a response". Measured, and a house
+ * number is the worst case by far: "four five one two" is a partial number
+ * (four digits, not a ZIP and not a phone), so it took the STRONG hold of a
+ * full four seconds before the turn even started. Every address turn paid
+ * that.
+ *
+ * The strong hold is right for "I was fixing my", where the caller is
+ * genuinely mid-thought and may take seconds to continue. A number is not
+ * that: Deepgram only finalises after 500ms of silence, so a caller still
+ * reading digits continues well inside a second. The call site uses this to
+ * pick a much shorter wait, which is the difference between a pause and a
+ * silence.
+ */
+export function isPartialNumberUtterance(transcript: string): boolean {
+  const words = transcript
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word.length > 0);
+  return words.length > 0 && isPartialNumber(words);
+}
+
+/**
  * 2026-10-22 tester call, twice: "I said 4512, it only registered 512."
  *
  * The leading digit was never misheard. Deepgram endpointed after it, so

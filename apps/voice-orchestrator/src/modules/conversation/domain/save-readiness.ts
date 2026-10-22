@@ -242,6 +242,7 @@ const NAME_ASKED =
 export function callbackNumberNote(
   callerAni: string | null | undefined,
   name?: { spelled: readonly string[] | null; stated: string | null },
+  address?: { street: string | null; zip: string | null },
 ): string {
   const digits = (callerAni ?? "").replace(/\D/g, "").slice(-10);
   const spoken =
@@ -254,6 +255,11 @@ export function callbackNumberNote(
   // intake — two interruptions where one line at the end does the same work.
   // The address keeps its own read-back in place: it is the longest item, it
   // needs the ZIP with it, and it is the one a wrong value sends a truck to.
+  // 2026-10-22, client call: "the system confirmed my address more than
+  // three times ... it should only reconfirm it once, at the end of the
+  // call, just before ending the conversation." So the address joins this
+  // one closing confirmation instead of being read back when it is taken.
+  const spokenAddress = addressForConfirmation(address);
   const letters = nameLetters(name);
   if (!letters) {
     return (
@@ -268,12 +274,37 @@ export function callbackNumberNote(
   // Telling the model "not earlier" while firing it mid-call would be its
   // own contradiction, which is the class of bug this module keeps finding.
   return (
-    "[You now have everything you need, so confirm it once, here, before you save — this is " +
-    `the only time either is confirmed. Your whole reply confirms exactly two things in one ` +
-    `short line: the name, spelled out (${letters}), and whether ${spoken} is the best number ` +
-    "to reach them, read digit by digit, without the +1. Then save. Do not read the address " +
-    "back again, and ask nothing else.]"
+    "[You now have everything you need, so confirm it once, here, before you save. This is the " +
+    "ONLY time any of it is confirmed, and it must not be confirmed again afterwards. Your " +
+    `whole reply reads back, in one short line: the name, spelled out (${letters})` +
+    `${spokenAddress}, and whether ${spoken} is the best number to reach them. Say every digit ` +
+    "one at a time. Then ask if that is all correct, and save. Ask nothing else.]"
   );
+}
+
+/** The address as it should be spoken in the closing confirmation, or "" when there is none. */
+function addressForConfirmation(address?: { street: string | null; zip: string | null }): string {
+  if (!address?.street) {
+    return "";
+  }
+  const words = address.street.split(" ");
+  const house = words[0] ?? "";
+  const spokenStreet = /^\d{3,6}$/.test(house)
+    ? [
+        house
+          .split("")
+          .map((digit) => (digit === "0" ? "oh" : digit))
+          .join("-"),
+        ...words.slice(1),
+      ].join(" ")
+    : address.street;
+  const spokenZip = address.zip
+    ? `, ZIP ${address.zip
+        .split("")
+        .map((digit) => (digit === "0" ? "oh" : digit))
+        .join("-")}`
+    : "";
+  return `, the address (${spokenStreet}${spokenZip})`;
 }
 
 /** The caller's name as spoken letters for the closing confirmation, or null when there is no name to confirm. */
@@ -329,17 +360,11 @@ export function shouldNudgeForCallbackNumber(args: {
   if (!notes.statedName && !notes.spelledName && !nameAsked) {
     return false;
   }
-  // QA 2026-10-13: the note pushed Grace straight to the callback question
-  // and the address was never read back. It waits until she has said the
-  // house number back to the caller.
-  const houseNumber = notes.street?.split(" ")[0];
-  if (
-    houseNumber &&
-    !args.agentTexts.some((text) =>
-      collapseSpokenDigits(text).replace(/[\s-]/g, "").includes(houseNumber),
-    )
-  ) {
-    return false;
-  }
+  // The QA 2026-10-13 version of this waited until Grace had already said
+  // the house number back, because the address had to be read back before
+  // the save. That precondition is gone with the mid-call readback it was
+  // waiting on (2026-10-22): this note now DOES the address readback, so
+  // waiting for one would deadlock and the call would never reach a
+  // confirmation at all.
   return !args.agentTexts.some((text) => NUMBER_ASKED.test(text));
 }

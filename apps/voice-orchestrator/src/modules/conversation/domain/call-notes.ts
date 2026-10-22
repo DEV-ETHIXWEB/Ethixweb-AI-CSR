@@ -56,7 +56,7 @@ export interface CallNotes {
  * an introduction PHRASE then the name, or the name then "here"/"speaking".
  */
 const NAME_STATEMENT =
-  /\b(?:my name is|my name's|name is|i go by|my first name is|first name is|i'?m|i am|this is|it'?s|it is|you'?re speaking (?:with|to)|speaking with|call me)\s+([a-z][a-z'-]+)(?:\s+([a-z][a-z'-]+))?/gi;
+  /\b(?:my name is|my name's|name is|i go by|my first name is|first name is|i'?m|i am|this is|it'?s|it is|you'?re speaking (?:with|to)|speaking with|call me|(?:update|change|correct|fix) (?:my |the )?name to)\s+(?:actually\s+|really\s+|just\s+|gonna be\s+|going to be\s+)?([a-z][a-z'-]+)(?:\s+([a-z][a-z'-]+))?/gi;
 
 /** The trailing form: "Tom Harris here", "Dana speaking". */
 const NAME_FIRST_STATEMENT =
@@ -183,8 +183,25 @@ export function buildCallNotes(
   const spellingAsked = turns.some(
     (turn) => turn.speaker === "agent" && /\bspell\b/i.test(turn.text),
   );
-  const stated = statedName(callerTexts) ?? answeredName(turns);
-  let spelled = spelledName(callerTexts, spellingAsked);
+  const statedFound = statedNameAt(callerTexts);
+  const stated = statedFound?.value ?? answeredName(turns);
+  const spelledFound = spelledNameAt(callerTexts, spellingAsked);
+  // The LATER of the two wins.
+  //
+  // 2026-10-22, client call: "when I said goodbye it still used my old name
+  // instead of the updated one". A spelled name used to beat a stated one
+  // unconditionally, so a caller who spelled a name early and changed it by
+  // voice later was stuck with the first one for the rest of the call. Worse,
+  // the output guard enforces this same choice, so it actively rewrote the
+  // NEW name back to the old one when Grace said it.
+  //
+  // Order, not kind, decides it: "my name is Akash" then "a k a s h" is a
+  // spelling of the name just given (spelled wins, as before), while
+  // "a k a s h" then "update my name to Prateek" is a correction.
+  let spelled =
+    spelledFound && statedFound && statedFound.index > spelledFound.index
+      ? null
+      : (spelledFound?.words ?? null);
   if (spelled && spelled.length === 1 && stated) {
     spelled = splitSpelledByStated(spelled[0]!, stated);
   }
@@ -408,12 +425,19 @@ function neutralTiming(timing: string): string {
   return /\b(today|tonight)\b/i.test(timing) ? "as soon as possible" : timing;
 }
 
-/** See spelled-letters.ts for the two spelling shapes this used to miss entirely. */
-function spelledName(callerTexts: readonly string[], spellingAsked: boolean): string[] | null {
+/**
+ * The most recent spelled name and WHICH utterance it came from. The index
+ * is what lets a later spoken correction win; see buildCallNotes.
+ * See spelled-letters.ts for the two spelling shapes this used to miss.
+ */
+function spelledNameAt(
+  callerTexts: readonly string[],
+  spellingAsked: boolean,
+): { words: string[]; index: number } | null {
   for (let i = callerTexts.length - 1; i >= 0; i -= 1) {
     const words = spelledWordsIn(callerTexts[i] ?? "", spellingAsked);
     if (words.length > 0) {
-      return words;
+      return { words, index: i };
     }
   }
   return null;
@@ -493,6 +517,7 @@ const NOT_A_NAME_EXTRA = new Set([
   "able",
   "thanks",
   "thank",
+  "please",
   "im",
   "ive",
   "ill",
@@ -548,9 +573,10 @@ function canBeName(token: string): boolean {
   return !new RegExp(`^(?:${FIXTURE.source})$`, "i").test(word);
 }
 
-function statedName(callerTexts: readonly string[]): string | null {
-  let found: string | null = null;
-  for (const text of callerTexts) {
+/** The most recent stated name and which utterance it came from. */
+function statedNameAt(callerTexts: readonly string[]): { value: string; index: number } | null {
+  let found: { value: string; index: number } | null = null;
+  for (const [index, text] of callerTexts.entries()) {
     const lower = text.toLowerCase();
     for (const pattern of [NAME_STATEMENT, NAME_FIRST_STATEMENT]) {
       for (const match of lower.matchAll(pattern)) {
@@ -560,7 +586,7 @@ function statedName(callerTexts: readonly string[]): string | null {
         }
         const second = match[2] ?? "";
         const last = second && canBeName(second) ? ` ${capitalize(second)}` : "";
-        found = `${capitalize(first)}${last}`;
+        found = { value: `${capitalize(first)}${last}`, index };
       }
     }
   }
@@ -888,11 +914,16 @@ export function addressReadbackNote(
   if (everReadBackAddress) {
     return `[The caller corrected their address to "${spokenStreet}". Say ONLY "Got it, ${spokenStreet}." and continue to the next question. Do NOT read the full address again or ask them to confirm it a second time.]`;
   }
-  const spokenZip = zip
-    ?.split("")
-    .map((d) => (d === "0" ? "oh" : d))
-    .join("-");
-  return zip
-    ? `[The caller just gave their address. Your whole reply: read it back once, slowly ("So that's ${spokenStreet}, ZIP ${spokenZip}?") and ask if it's right. Ask nothing else.]`
-    : `[The caller just gave their street address but no ZIP. Your whole reply: say the street back once ("${spokenStreet}") and ask for the ZIP. Ask nothing else.]`;
+  // 2026-10-22, client call: "the system confirmed my address more than
+  // three times, which is unnecessary and makes the call repetitive ... it
+  // should only reconfirm it once, at the end of the call."
+  //
+  // So taking the address no longer confirms it. A missing ZIP is still
+  // asked for, because that is COLLECTING a fact rather than confirming one,
+  // and the address is then read back exactly once, in the closing
+  // confirmation alongside the name and the number (callbackNumberNote).
+  if (zip) {
+    return null;
+  }
+  return `[The caller just gave their street address but no ZIP. Your whole reply: ask for the ZIP. Do not read the address back, that happens once at the end. Ask nothing else.]`;
 }

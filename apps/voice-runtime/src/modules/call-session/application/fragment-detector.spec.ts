@@ -1,4 +1,8 @@
-import { fragmentStrength, looksLikeIncompleteFragment } from "./fragment-detector";
+import {
+  fragmentStrength,
+  isPartialNumberUtterance,
+  looksLikeIncompleteFragment,
+} from "./fragment-detector";
 
 describe("looksLikeIncompleteFragment", () => {
   it.each([
@@ -203,5 +207,33 @@ describe("fragmentStrength (client feedback: silent hold for a caller who is sti
     // sentence in this domain, unlike the other trailing words here.
     expect(fragmentStrength("I don't know where from.")).toBe("none");
     expect(fragmentStrength("that's who it's from")).toBe("none");
+  });
+});
+
+/**
+ * 2026-10-22, client call: "there is a significant delay between when I
+ * finish speaking and when I receive a response". A house number was the
+ * worst case: four digits is a partial number (neither a ZIP nor a phone),
+ * so it took the full four-second STRONG hold before the turn even started.
+ */
+describe("isPartialNumberUtterance", () => {
+  it.each([["four five one two"], ["4512"], ["one one two four six zero three"], ["nine eight"]])(
+    "marks %p as a number being read, for the shorter hold",
+    (said) => {
+      expect(isPartialNumberUtterance(said)).toBe(true);
+    },
+  );
+
+  it.each([
+    // A complete ZIP or phone is not held at all.
+    ["nine eight zero three two"],
+    ["two zero six five five five zero one four seven"],
+    // An unfinished SENTENCE still gets the long hold: the caller is
+    // genuinely mid-thought, which is a different problem.
+    ["i was fixing my"],
+    ["can you"],
+    ["my sink is leaking"],
+  ])("does not mark %p", (said) => {
+    expect(isPartialNumberUtterance(said)).toBe(false);
   });
 });

@@ -105,12 +105,12 @@ Collect these, in roughly this order, one per reply, skipping anything they alre
 1. What is wrong, where it is (which fixture or room), and whether it is happening right now. Let them explain first; do not ask for contact details before they have said why they called.
 2. Their name.
 3. The service address: house number, street name with any direction (like "11th Avenue West"), city, and ZIP. If they give an address without a ZIP, your very next question asks for the ZIP. Ask once; if they do not know it, the city is enough. While they are giving the address in pieces, collect it quietly.
-   - Read the whole address back ONCE, when they are done: say the house number digit by digit with a short pause between each ("one-four-one-oh-one", not "fourteen thousand one hundred one"), and say any zero as "oh". Then the street, the city, and the ZIP also digit by digit. Then wait for a yes or a correction.
+   - Do NOT read the address back when you take it. Take it, ask for the ZIP if they did not give one, and move on. The whole address is read back ONCE, at the end, in the same breath as the name and the callback number (see point 4). Confirming it when you take it AND again later is what makes a call feel repetitive.
    - If the number before the street name is longer than five digits, the house number and a numbered street ran together ("1234048 Place South" is 12340 48th Place South). Do not read that long number back; ask "What's the house number?" and then "And the street?"
-   - If they correct one part, say back only that corrected part ("Got it, one-four-two-one-oh.") and move on immediately. Never read the whole address again. Never ask "is that right?" about the same address a second time. One readback, one confirmation, done.
-   - A yes or "that's right" is final. The address is locked. Do not mention, re-read, or re-confirm it again at any point in the call, not even to save.
-   - Never save the customer record before you have read the full address back and the caller confirmed it. The system will block the save if you try.
-4. The callback number, confirmed TOGETHER WITH THE NAME, once, right before you save — not earlier in the call and not twice — in ONE short line and nothing else: "Last thing — that's Dana, D-A-N-A, and 2-0-6-5-5-5-0-1-4-7 as your number?" Say the name's letters and the number's digits one at a time. If they correct either, say back only the corrected part. This is the only place either is confirmed; it replaces confirming them separately earlier in the call. If they give a different number, use that one.
+   - If they correct one part, say back only that corrected part ("Got it, one-four-two-one-oh.") and move on immediately. Never read the whole address out to check it mid-call.
+   - Once the closing confirmation in point 4 has happened and they have said yes, the address is locked. Do not mention, re-read, or re-confirm it again, not even to save.
+   - Never save the customer record before that one closing confirmation. The system will block the save if you try.
+4. The callback number, confirmed TOGETHER WITH THE NAME AND THE ADDRESS, once, right before you save — not earlier in the call and not twice — in ONE short line and nothing else: "Last thing, let me just check I have it all: Dana, D-A-N-A, at 1-2-oh-oh Pine Street, ZIP 9-8-1-oh-1, and 2-0-6-5-5-5-0-1-4-7. All correct?" Say every letter and digit one at a time. If they correct one part, say back only that part. This is the ONLY place any of it is confirmed, and nothing is confirmed again afterwards; it replaces confirming the name, the address and the number separately earlier in the call. If they give a different number, use that one.
 5. Home or business, only if it is not already obvious.
 6. When they would like someone to come out. Ask once. Note their preference; never agree to a time.
 In an emergency, speed wins: take what you can get and save it right away.`,
@@ -178,6 +178,13 @@ escalateEmergency: every time the caller describes their problem. transferToHuma
 export const PLATFORM_BASE_PROMPT_V1 = SECTIONS.join("\n\n");
 
 /**
+ * v56 (2026-10-22, client call): "the system confirmed my address more than
+ * three times, which is unnecessary and makes the call repetitive ... it
+ * should only reconfirm it once, at the end of the call, just before ending
+ * the conversation." The address read-back moves out of the moment it is
+ * taken and into the single closing confirmation, which now covers the name,
+ * the address and the number together.
+ *
  * v55 (2026-10-22, Akash): "instead of asking in between to recheck the
  * details, can he just confirm that details at the end of the call?" The
  * name's letters were read back mid-intake and the callback number was its
@@ -190,4 +197,4 @@ export const PLATFORM_BASE_PROMPT_V1 = SECTIONS.join("\n\n");
  * v53: rewrite. See the comment on SECTIONS above for why, and git history
  * for v1 to v52.
  */
-export const PLATFORM_BASE_PROMPT_VERSION = "v55";
+export const PLATFORM_BASE_PROMPT_VERSION = "v56";

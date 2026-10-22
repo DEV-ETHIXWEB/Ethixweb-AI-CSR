@@ -170,13 +170,20 @@ describe("shouldNudgeForCallbackNumber (client feedback: ask the callback number
     ],
   };
 
-  it("QA 2026-10-13: waits until the address has been read back", () => {
+  /**
+   * The QA 2026-10-13 version of this waited for Grace to have read the
+   * address back first. That precondition went with the mid-call readback it
+   * was waiting on (2026-10-22, client call: confirm the address once at the
+   * end): this note now DOES the readback, so waiting for one would deadlock
+   * and the call would never reach any confirmation at all.
+   */
+  it("no longer waits for a read-back that now happens inside this note", () => {
     expect(
       shouldNudgeForCallbackNumber({
         ...base2,
         agentTexts: ["Can I get your name?", "What's your address?"],
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("QA 2026-10-13: waits until the caller's name is known, so it never fires on a caller's opening line", () => {
@@ -341,12 +348,17 @@ describe("leadProblemBlockedReason", () => {
  * letters were read back mid-intake and the number was its own turn.
  */
 describe("the closing confirmation", () => {
-  it("confirms the name and the number together, in one line", () => {
-    const note = callbackNumberNote("+12065550147", { spelled: ["tom"], stated: "Tom" });
+  it("confirms the name, the address and the number together, in one line", () => {
+    const note = callbackNumberNote(
+      "+12065550147",
+      { spelled: ["tom"], stated: "Tom" },
+      { street: "4512 maple street", zip: "98032" },
+    );
     expect(note).toContain("T-O-M");
     expect(note).toContain("206-555-0147");
-    expect(note).toContain("exactly two things in one short line");
-    expect(note).toContain("Then save");
+    expect(note).toContain("4-5-1-2 maple street");
+    expect(note).toContain("ZIP 9-8-oh-3-2");
+    expect(note).toContain("in one short line");
     // Fires the moment the intake is complete, so it must not claim to be
     // waiting for a later moment that never comes.
     expect(note).toContain("here, before you save");
@@ -361,10 +373,21 @@ describe("the closing confirmation", () => {
     expect(note).toContain("S-I-O-B-H-A-N, O-K-O-N-K-W-O");
   });
 
-  it("does not read the address back again, which was already confirmed in place", () => {
-    expect(callbackNumberNote("+12065550147", { spelled: null, stated: "Tom" })).toContain(
-      "Do not read the address back again",
+  /**
+   * The reverse of what this asserted before 2026-10-22. The address used to
+   * be confirmed when it was taken and then explicitly NOT repeated here;
+   * the client asked for the opposite, so this is the one place it is read
+   * back, and it must say so.
+   */
+  it("is the only place the address is confirmed, and says so", () => {
+    const note = callbackNumberNote(
+      "+12065550147",
+      { spelled: null, stated: "Tom" },
+      { street: "4512 maple street", zip: null },
     );
+    expect(note).toContain("ONLY time any of it is confirmed");
+    expect(note).toContain("must not be confirmed again afterwards");
+    expect(note).toContain("4-5-1-2 maple street");
   });
 
   it("confirms the number alone when there is no name to confirm", () => {

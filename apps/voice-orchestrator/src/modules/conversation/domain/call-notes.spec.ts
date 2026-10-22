@@ -131,22 +131,29 @@ describe("2026-10-15: spelled name split when stated name has multiple words", (
 });
 
 describe("addressReadbackNote (QA 2026-10-13: a volunteered address was ignored)", () => {
-  it("asks for a read-back when the caller just gave a full address", () => {
-    const note = addressReadbackNote(
-      ["My name is Pat Lee.", "It's 1912 9th Avenue West, Seattle, 98119."],
-      ["Is it leaking right now?"],
-    );
-    expect(note).toContain("read it back once");
-    expect(note).toContain("9-8-1-1-9");
+  /**
+   * 2026-10-22, client call: "the system confirmed my address more than
+   * three times, which is unnecessary and makes the call repetitive ... it
+   * should only reconfirm it once, at the end of the call, just before
+   * ending the conversation."
+   *
+   * So a complete address is taken quietly now. It is read back exactly
+   * once, in the closing confirmation beside the name and the number (see
+   * callbackNumberNote in save-readiness.spec.ts).
+   */
+  it("takes a complete address quietly, leaving the read-back to the close", () => {
+    expect(
+      addressReadbackNote(
+        ["My name is Pat Lee.", "It's 1912 9th Avenue West, Seattle, 98119."],
+        ["Is it leaking right now?"],
+      ),
+    ).toBeNull();
   });
 
-  it("uses oh for zeros in the ZIP readback", () => {
-    const note = addressReadbackNote(["It's 3810 248th Place South, Seattle, 98101."], []);
-    expect(note).toContain("9-8-1-oh-1");
-  });
-
-  it("asks for the ZIP when the address has none", () => {
-    expect(addressReadbackNote(["3810 248th Place South, Kent."], [])).toContain("ask for the ZIP");
+  it("still asks for a missing ZIP, which is collecting rather than confirming", () => {
+    const note = addressReadbackNote(["3810 248th Place South, Kent."], [])!;
+    expect(note).toContain("ask for the ZIP");
+    expect(note).toContain("that happens once at the end");
   });
 
   it("stays quiet once the address has been read back", () => {
@@ -519,5 +526,49 @@ describe("a full name is split for the model, not by it", () => {
   it("splits a spelled name the same way", () => {
     const text = formatCallNotes(buildCallNotes(["s i o b h a n, o k o n k w o"]))!;
     expect(text).toContain('first name "Siobhan", last name "Okonkwo"');
+  });
+});
+
+/**
+ * 2026-10-22, client call: "when I introduced myself and later asked to
+ * update my name to [NEW NAME], the system updated it on its own. However,
+ * when I said goodbye at the end of the call, it still used my old name."
+ *
+ * Two faults behind it. The change was never recognised as a name statement
+ * at all, and a spelled name beat a stated one unconditionally, so the first
+ * name stood for the rest of the call however many times it was corrected.
+ */
+describe("a caller who changes their name mid-call", () => {
+  it.each([
+    ["actually can you update my name to Prateek", "Prateek"],
+    ["change my name to Prateek please", "Prateek"],
+    ["my name is actually Prateek", "Prateek"],
+    ["it's actually Prateek", "Prateek"],
+    ["correct the name to Prateek", "Prateek"],
+    ["I go by Prateek", "Prateek"],
+  ])("takes the new name from %p", (correction, expected) => {
+    const notes = buildCallNotes(["hi my name is Akash", "a k a s h", correction]);
+    expect(notes.statedName).toBe(expected);
+    // The old SPELLING must not outrank the newer spoken name.
+    expect(notes.spelledName).toBeNull();
+    expect(formatCallNotes(notes)).toContain("Prateek");
+    expect(formatCallNotes(notes)).not.toContain("Akash");
+  });
+
+  it("still lets a spelling of the name just given win, which is the normal case", () => {
+    const notes = buildCallNotes(["my name is Akash", "a k a s h"]);
+    expect(notes.spelledName).toEqual(["akash"]);
+    expect(formatCallNotes(notes)).toContain("A-K-A-S-H");
+  });
+
+  it("uses the newest name even when the caller spells the correction too", () => {
+    const notes = buildCallNotes([
+      "my name is Akash",
+      "a k a s h",
+      "update my name to Prateek",
+      "p r a t e e k",
+    ]);
+    expect(notes.spelledName).toEqual(["prateek"]);
+    expect(formatCallNotes(notes)).toContain("P-R-A-T-E-E-K");
   });
 });

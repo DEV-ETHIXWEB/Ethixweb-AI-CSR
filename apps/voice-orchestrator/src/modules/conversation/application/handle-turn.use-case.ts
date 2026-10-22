@@ -637,10 +637,11 @@ export class HandleTurnUseCase {
       annotatedTranscript = `${directive(NAME_MISSING_NOTE)} ${annotatedTranscript}`;
     } else if (needsCallbackNumber) {
       annotatedTranscript = `${directive(
-        callbackNumberNote(conversation.callerAni, {
-          spelled: notes.spelledName,
-          stated: notes.statedName,
-        }),
+        callbackNumberNote(
+          conversation.callerAni,
+          { spelled: notes.spelledName, stated: notes.statedName },
+          { street: notes.street, zip: notes.zip },
+        ),
       )} ${annotatedTranscript}`;
     } else if (owesAnAnswer) {
       // 2026-10-22 tester call: asked whether both problems were booked, the

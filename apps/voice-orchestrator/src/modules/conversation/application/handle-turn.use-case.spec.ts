@@ -4280,16 +4280,20 @@ describe("a caller's own question survives a directive note", () => {
     return typeof sent === "string" ? sent : "";
   }
 
+  // Uses an address with NO ZIP on purpose: since 2026-10-22 a COMPLETE
+  // address is taken quietly (confirmed once at the end), so the note that
+  // still fires mid-call, and therefore the one the answer-first clause has
+  // to attach itself to, is the ask-for-the-ZIP note.
   it("tells the model to answer the question first, inside the same single note", async () => {
-    const sent = await noteSentFor("it's 4512 maple street 98032, and can someone come out today");
+    const sent = await noteSentFor("it's 4512 maple street, and can someone come out today");
     expect(sent).toContain("answer that in one short sentence first");
     // Still exactly one directive note, and it no longer contradicts itself.
-    expect(sent.match(/read it back once/g)).toHaveLength(1);
+    expect(sent.match(/ask for the ZIP/g)).toHaveLength(1);
     expect(sent).not.toContain("Ask nothing else");
   });
 
   it("leaves the note exactly as it was when the caller asked nothing", async () => {
-    const sent = await noteSentFor("it's 4512 maple street 98032");
+    const sent = await noteSentFor("it's 4512 maple street");
     expect(sent).not.toContain("answer that in one short sentence first");
     expect(sent).toContain("Ask nothing else");
   });

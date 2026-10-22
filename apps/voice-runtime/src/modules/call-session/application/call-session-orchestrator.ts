@@ -37,7 +37,7 @@ import {
   silenceBuffer,
   type DeliverySegment,
 } from "./emotional-delivery";
-import { fragmentStrength } from "./fragment-detector";
+import { fragmentStrength, isPartialNumberUtterance } from "./fragment-detector";
 
 /**
  * H1 — how long to wait, for a SHORT finalized transcript that
@@ -73,6 +73,25 @@ const FRAGMENT_COALESCE_WINDOW_MS = 1200;
  * and that reply then talked over the real answer. See `fragmentStrength`.
  */
 const STRONG_FRAGMENT_HOLD_MS = 4000;
+
+/**
+ * The hold for an utterance that is only digits, which is held because it
+ * might be half of a number rather than because the sentence is unfinished.
+ * See `isPartialNumberUtterance`.
+ *
+ * 2026-10-22, from a client call reporting "a significant delay between when
+ * I finish speaking and when I receive a response": a house number is a
+ * partial number by that test (four digits, neither a ZIP nor a phone), so
+ * it was taking STRONG_FRAGMENT_HOLD_MS, a full four seconds, before the
+ * turn even began. Every address turn paid it.
+ *
+ * 1500ms, not the 1200ms weak window and nowhere near 4000ms: Deepgram only
+ * finalises after 500ms of silence, so a caller part-way through reading
+ * digits has already paused that long and continues well inside another
+ * second. This keeps a real margin over that while giving back two and a
+ * half seconds on the turn a caller notices most.
+ */
+const PARTIAL_NUMBER_HOLD_MS = 1500;
 
 /** Bounds a capacity-429 wait loop — a caller genuinely on hold this long has almost certainly already hung up or should hit the tenant's configured overflowNumber instead of waiting forever. Not a documented constant, an INFERRED safety limit (same honesty convention as voice-orchestrator's own MAX_TOOL_ITERATIONS). */
 const MAX_CAPACITY_RETRY_ATTEMPTS = 3;
@@ -689,13 +708,16 @@ export class CallSessionOrchestrator {
       this.commitPendingFragment(params, sink, log);
       return;
     }
-    this.fragmentCoalesceTimer = setTimeout(
-      () => {
-        this.fragmentCoalesceTimer = null;
-        this.commitPendingFragment(params, sink, log);
-      },
-      strength === "strong" ? STRONG_FRAGMENT_HOLD_MS : FRAGMENT_COALESCE_WINDOW_MS,
-    );
+    const holdMs =
+      strength === "strong"
+        ? isPartialNumberUtterance(result.transcript)
+          ? PARTIAL_NUMBER_HOLD_MS
+          : STRONG_FRAGMENT_HOLD_MS
+        : FRAGMENT_COALESCE_WINDOW_MS;
+    this.fragmentCoalesceTimer = setTimeout(() => {
+      this.fragmentCoalesceTimer = null;
+      this.commitPendingFragment(params, sink, log);
+    }, holdMs);
   }
 
   /** Sends whatever's currently buffered in `pendingFragment` (if anything) to `handleFinalTranscript` as one ordinary turn, and clears the buffer. A no-op if nothing is pending (defensive — every real caller of this method only calls it when it knows something's there). */
