@@ -420,6 +420,8 @@ describe("a caller who says everything in their opening", () => {
     ["I'm Siobhan, my toilet is overflowing right now", "Siobhan"],
     ["I am Robert Chen, 1912 9th avenue west, the disposal is jammed", "Robert Chen"],
     ["hey it's Maria, my shower won't drain", "Maria"],
+    // Speech recognition writes the contraction out in full often enough.
+    ["it is Maria, my shower won't drain", "Maria"],
     ["Tom Harris here, water heater leaking", "Tom Harris"],
     ["Dana speaking, my sink is clogged", "Dana"],
     ["you're speaking with Akash, the drain is slow", "Akash"],

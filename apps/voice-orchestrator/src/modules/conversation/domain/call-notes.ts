@@ -56,7 +56,7 @@ export interface CallNotes {
  * an introduction PHRASE then the name, or the name then "here"/"speaking".
  */
 const NAME_STATEMENT =
-  /\b(?:my name is|my name's|name is|i go by|my first name is|first name is|i'?m|i am|this is|it'?s|you'?re speaking (?:with|to)|speaking with|call me)\s+([a-z][a-z'-]+)(?:\s+([a-z][a-z'-]+))?/gi;
+  /\b(?:my name is|my name's|name is|i go by|my first name is|first name is|i'?m|i am|this is|it'?s|it is|you'?re speaking (?:with|to)|speaking with|call me)\s+([a-z][a-z'-]+)(?:\s+([a-z][a-z'-]+))?/gi;
 
 /** The trailing form: "Tom Harris here", "Dana speaking". */
 const NAME_FIRST_STATEMENT =
