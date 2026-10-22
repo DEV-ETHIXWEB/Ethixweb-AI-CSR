@@ -906,6 +906,46 @@ export function addressDisputeNote(
   );
 }
 
+/** "that's not my name", "you got my name wrong", "wrong name". */
+const NAME_DISPUTED =
+  /\b(?:not|isn'?t|wasn'?t)\s+my\s+(?:first\s+|last\s+)?name\b|\bwrong\s+name\b|\bmy\s+name\s+(?:is\s+not|isn'?t|is\s+wrong)\b|\b(?:got|have|said|heard|saying|spelled|spelling|spell)\s+my\s+name\s+wrong\b|\bmispronounc/i;
+
+/**
+ * 2026-10-23, tester call: "My name is Yash", transcribed as "Josh". The
+ * caller corrected it and it was transcribed as "Josh" again, so every
+ * correction by voice only repeated the mistake, and the notes kept handing
+ * Grace "Josh" with "never ask again for anything listed here".
+ *
+ * When the caller says the name is wrong, either in words ("that's not my
+ * name") or by negating the very name in the notes ("no, not Josh"), the one
+ * way out that does not depend on hearing the name again is the letters.
+ * Skipped when this same reply already spells it, since that IS the fix.
+ */
+export function nameDisputeNote(
+  callerTexts: readonly string[],
+  notedFirstName: string | null,
+): string | null {
+  const latest = (callerTexts.at(-1) ?? "").trim();
+  if (!latest || spelledWordsIn(latest, true).length > 0) {
+    return null;
+  }
+  const negatedTheNotedName =
+    notedFirstName !== null &&
+    new RegExp(
+      `\\b(?:not|isn'?t|wasn'?t)\\s+${notedFirstName.toLowerCase().replace(/[^a-z'-]/g, "")}\\b`,
+      "i",
+    ).test(latest);
+  if (!NAME_DISPUTED.test(latest) && !negatedTheNotedName) {
+    return null;
+  }
+  return (
+    "[The caller is telling you their name is wrong. The name in the call notes above is NOT " +
+    "confirmed: ignore it and do not say it again. Your whole reply: a short sorry, then ask them " +
+    "to spell their first name letter by letter. Use exactly the letters they give, never a " +
+    "familiar-sounding name instead.]"
+  );
+}
+
 /**
  * QA 2026-10-13: a caller who volunteered the address while Grace was waiting
  * on a different question ("is it leaking right now?") was ignored, and she

@@ -4549,3 +4549,73 @@ describe("identifiers come from our own records, not the model's copy", () => {
     expect(passed.customer_id).toBe(MISTYPED);
   });
 });
+
+/**
+ * 2026-10-23 tester call: "My name is Yash", transcribed as "Josh", corrected
+ * by voice and transcribed as "Josh" again. Saying it again cannot fix a
+ * mishearing; the letters can.
+ */
+describe("a disputed name is asked for letter by letter (2026-10-23 'Yash' heard as 'Josh')", () => {
+  const at = new Date().toISOString();
+
+  async function turn(callerNow: string, modelReply: string) {
+    const repository = new FakeConversationRepository();
+    repository.seed(
+      baseConversation({
+        transcript: [
+          {
+            turnIndex: 0,
+            speaker: "caller",
+            text: "my name is josh",
+            confidence: null,
+            offsetMs: 0,
+            at,
+          },
+          {
+            turnIndex: 1,
+            speaker: "agent",
+            text: "Thanks, Josh. And what's the service address?",
+            confidence: null,
+            offsetMs: 0,
+            at,
+          },
+        ],
+      }),
+    );
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: modelReply },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+    const result = await useCase.execute(baseCommand({ transcript: callerNow }));
+    const sent = aiProvider.requests[0]!.messages.find((m) => m.role === "user")!.content;
+    return { sent, result };
+  }
+
+  it("tells the model to ask for a spelling, and stops handing it the wrong name", async () => {
+    const { sent } = await turn(
+      "no that's not my name",
+      "Sorry about that. Could you spell your first name?",
+    );
+    expect(sent).toContain("spell their first name letter by letter");
+    expect(sent).not.toContain("J-O-S-H");
+    expect(sent).not.toContain("service address is wrong");
+  });
+
+  it("does not rewrite the reply back to the disputed name", async () => {
+    const { result } = await turn(
+      "no not josh",
+      "Sorry about that, Yash. Could you spell it for me?",
+    );
+    expect(result.responseText).toContain("Yash");
+    expect(result.responseText).not.toMatch(/josh/i);
+  });
+
+  it("leaves an ordinary 'no' alone", async () => {
+    const { sent } = await turn("no, not right now", "Okay.");
+    expect(sent).not.toContain("spell their first name letter by letter");
+  });
+});

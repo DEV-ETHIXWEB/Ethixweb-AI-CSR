@@ -1,5 +1,6 @@
 import {
   addressDisputeNote,
+  nameDisputeNote,
   addressReadbackNote,
   buildCallNotes,
   formatCallNotes,
@@ -635,5 +636,35 @@ describe("filler and debris are not names", () => {
         ],
       ).spelledName,
     ).toEqual(["bob"]);
+  });
+});
+
+/** 2026-10-23 tester call: "My name is Yash", heard as "Josh" every time it was said. */
+describe("nameDisputeNote", () => {
+  it.each([
+    ["no, that's not my name"],
+    ["you got my name wrong"],
+    ["wrong name"],
+    ["my name isn't josh"],
+    ["no not Josh"],
+    ["it's not josh it's yash"],
+  ])("asks for a spelling when the caller says %p", (said) => {
+    expect(nameDisputeNote([said], "Josh")).toContain("spell their first name letter by letter");
+  });
+
+  it.each([
+    // Ordinary replies that happen to contain "not".
+    ["no, not right now"],
+    ["it's not leaking anymore"],
+    ["no that's not the address"],
+    ["no"],
+    // Already the fix: the caller is spelling it.
+    ["no it's y a s h"],
+  ])("stays quiet for %p", (said) => {
+    expect(nameDisputeNote([said], "Josh")).toBeNull();
+  });
+
+  it("only looks at the latest thing the caller said", () => {
+    expect(nameDisputeNote(["that's not my name", "y a s h"], "Yash")).toBeNull();
   });
 });

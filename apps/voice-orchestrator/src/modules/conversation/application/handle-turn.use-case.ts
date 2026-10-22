@@ -42,6 +42,7 @@ import { ExecuteToolUseCase } from "../../tool-broker/application/execute-tool.u
 import { ToolRegistry } from "../../tool-broker/application/tool-registry";
 import {
   addressDisputeNote,
+  nameDisputeNote,
   addressReadbackNote,
   buildCallNotes,
   formatCallNotes,
@@ -584,20 +585,31 @@ export class HandleTurnUseCase {
     // a whole parseable address is already handled there, and better (it says
     // the new address back). This covers the corrections that do not parse,
     // which used to produce no note at all. See addressDisputeNote.
-    const addressDisputed =
+    // Above addressDisputed: "no, not Josh" right after a closing readback
+    // opens with a negation too, and would otherwise be taken as an address
+    // correction. Only a dispute that names the name gets here, so a bare
+    // "no" to a readback still goes to the address. See nameDisputeNote.
+    const notedFirstName = notes.spelledName?.[0] ?? notes.statedName?.split(/\s+/)[0] ?? null;
+    const nameDisputed =
       !isTrailingOff && !wantsItAgain && !pendingReadback
+        ? nameDisputeNote(callerTextsSoFar, notedFirstName)
+        : null;
+    const addressDisputed =
+      !isTrailingOff && !wantsItAgain && !pendingReadback && !nameDisputed
         ? addressDisputeNote(callerTextsSoFar, agentTextsSoFar)
         : null;
     const needsName =
       !isTrailingOff &&
       !wantsItAgain &&
       !pendingReadback &&
+      !nameDisputed &&
       !addressDisputed &&
       shouldNudgeForName(conversation);
     const needsCallbackNumber =
       !isTrailingOff &&
       !wantsItAgain &&
       !pendingReadback &&
+      !nameDisputed &&
       !addressDisputed &&
       !needsName &&
       shouldNudgeForCallbackNumber({
@@ -617,6 +629,7 @@ export class HandleTurnUseCase {
       isTrailingOff ||
       wantsItAgain ||
       pendingReadback !== null ||
+      nameDisputed !== null ||
       addressDisputed !== null ||
       needsName ||
       needsCallbackNumber ||
@@ -627,6 +640,8 @@ export class HandleTurnUseCase {
       annotatedTranscript = `${REPEAT_NOTE} ${annotatedTranscript}`;
     } else if (pendingReadback) {
       annotatedTranscript = `${directive(pendingReadback)} ${annotatedTranscript}`;
+    } else if (nameDisputed) {
+      annotatedTranscript = `${directive(nameDisputed)} ${annotatedTranscript}`;
     } else if (addressDisputed) {
       annotatedTranscript = `${directive(addressDisputed)} ${annotatedTranscript}`;
     } else if (needsName) {
@@ -670,7 +685,9 @@ export class HandleTurnUseCase {
     const guardFacts = {
       // The name the CALLER gave this call, never a matched record's: several
       // people share a phone number. See output-guard.ts VOCATIVE_TRAILING.
-      callerName: notes.spelledName?.[0] ?? notes.statedName?.split(/\s+/)[0] ?? null,
+      // Nothing to enforce while the caller is disputing it: the guards would
+      // otherwise rewrite Grace's words back to the very name being disputed.
+      callerName: nameDisputed ? null : notedFirstName,
       // See output-guard.ts mentionsHouseNumber: lets a readback be
       // recognised when the street type is not in the same sentence.
       houseNumber: /^\d{3,6}$/.test(houseNumber) ? houseNumber : null,
@@ -678,17 +695,22 @@ export class HandleTurnUseCase {
       // Every word of the name, for the spelled-run guard — see
       // output-guard.ts SPELLED_RUN. The caller's own spelling wins over
       // what speech recognition heard.
-      nameWords:
-        notes.spelledName ??
-        notes.statedName
-          ?.toLowerCase()
-          .split(/\s+/)
-          .map((word) => word.replace(/[^a-z]/g, ""))
-          .filter((word) => word.length > 1) ??
-        [],
+      nameWords: nameDisputed
+        ? []
+        : (notes.spelledName ??
+          notes.statedName
+            ?.toLowerCase()
+            .split(/\s+/)
+            .map((word) => word.replace(/[^a-z]/g, ""))
+            .filter((word) => word.length > 1) ??
+          []),
     };
     if (!isTrailingOff) {
-      const callNotes = formatCallNotes(notes);
+      // A disputed name is left out of the notes entirely rather than listed
+      // under "never ask again", which is the opposite of the instruction.
+      const callNotes = formatCallNotes(
+        nameDisputed ? { ...notes, spelledName: null, statedName: null } : notes,
+      );
       if (callNotes) {
         annotatedTranscript = `${callNotes} ${annotatedTranscript}`;
       }
