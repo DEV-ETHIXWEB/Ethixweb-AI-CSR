@@ -31,6 +31,8 @@ export interface CallNotes {
   phone: string | null;
   property: "home" | "business" | null;
   timing: string | null;
+  /** Each distinct fixture the caller named, in the words they used, first mention first. */
+  fixtures: string[];
 }
 
 const NAME_STATEMENT =
@@ -168,7 +170,54 @@ export function buildCallNotes(
     phone: spokenPhoneDigits(callerTexts),
     property: propertyType(callerTexts),
     timing: lastMatch(callerTexts, TIMING),
+    fixtures: mentionedFixtures(callerTexts),
   };
+}
+
+/**
+ * 2026-10-22 tester call: two problems in one call, a kitchen sink and a
+ * toilet. Asked "both are booked, not one, right?", Grace answered that
+ * "both of the toilets" would be looked at — two separate problems collapsed
+ * into one, and the wrong one.
+ *
+ * Nothing in these notes had ever carried WHAT the call was about, so the
+ * model was working from its own memory of a long call for the one fact the
+ * lead is actually built on. Fixtures are listed verbatim, in the caller's
+ * own words, first mention first, exactly like the street and the name:
+ * cheap to read, impossible to merge by accident.
+ *
+ * Capped at three. A fourth is well past the point where a reply could
+ * sensibly cover them, and the cap keeps the note short enough that the
+ * model still reads the rest of it.
+ */
+const FIXTURE =
+  /\b((?:kitchen|bathroom|master|guest|hall|upstairs|downstairs|basement|outside|outdoor|front|back|main|second|half)\s+)?(water heater|hot water tank|garbage disposal|disposal|toilet|sink|faucet|tap|shower|bathtub|tub|drain|pipe|sewer line|sewer|septic|sump pump|water line|gas line|main line|valve|spigot|hose bib|sprinkler|boiler|radiator|water softener|dishwasher|washing machine|washer)s?\b/gi;
+const MAX_FIXTURES = 3;
+
+function mentionedFixtures(callerTexts: readonly string[]): string[] {
+  const found: string[] = [];
+  for (const text of callerTexts) {
+    for (const match of text.toLowerCase().matchAll(FIXTURE)) {
+      const label = `${match[1] ?? ""}${match[2] ?? ""}`.replace(/\s+/g, " ").trim();
+      if (!label) {
+        continue;
+      }
+      // A bare "sink" after "kitchen sink" is the same fixture said again,
+      // not a second one; a qualified "kitchen sink" after a bare "sink"
+      // replaces it, since the caller has now said which one.
+      const sameAs = found.findIndex(
+        (earlier) => earlier.endsWith(label) || label.endsWith(earlier),
+      );
+      if (sameAs >= 0) {
+        if (label.length > found[sameAs]!.length) {
+          found[sameAs] = label;
+        }
+        continue;
+      }
+      found.push(label);
+    }
+  }
+  return found.slice(0, MAX_FIXTURES);
 }
 
 /**
@@ -203,6 +252,16 @@ function splitSpelledByStated(singleSpelled: string, stated: string): string[] {
 /** The note text for the model, or null when the caller has not given anything yet. */
 export function formatCallNotes(notes: CallNotes): string | null {
   const facts: string[] = [];
+  // Only ever listed when there are SEVERAL. One problem has never needed
+  // restating -- the model has never been observed losing it -- and adding a
+  // line to every call's every turn to fix a two-problem bug would be a
+  // change to calls that are working.
+  if (notes.fixtures.length > 1) {
+    facts.push(
+      `separate problems the caller has raised, all of them still open: ${notes.fixtures.join("; ")}` +
+        ". Keep them separate, name each one as the caller did, and never let one stand for the other",
+    );
+  }
   if (notes.spelledName) {
     const spoken = notes.spelledName.map(capitalize).join(" ");
     const letters = notes.spelledName

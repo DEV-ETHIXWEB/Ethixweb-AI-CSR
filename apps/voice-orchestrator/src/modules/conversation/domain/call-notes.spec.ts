@@ -164,3 +164,42 @@ describe("addressReadbackNote (QA 2026-10-13: a volunteered address was ignored)
     expect(note).not.toContain("read it back once");
   });
 });
+
+/**
+ * 2026-10-22 tester call: a kitchen sink and a toilet, both raised in one
+ * call. Asked "both are booked, not one, right?", Grace answered that "both
+ * of the toilets" would be looked at: two separate problems collapsed into
+ * one, and the wrong one. Nothing in these notes had ever carried what the
+ * call was actually about.
+ */
+describe("several problems in one call", () => {
+  it("lists each fixture the caller named, in their own words", () => {
+    const notes = buildCallNotes([
+      "my kitchen sink is leaking",
+      "and the toilet upstairs keeps running",
+    ]);
+    expect(notes.fixtures).toEqual(["kitchen sink", "toilet"]);
+    const text = formatCallNotes(notes);
+    expect(text).toContain("kitchen sink; toilet");
+    expect(text).toContain("never let one stand for the other");
+  });
+
+  it("does not count the same fixture twice, and prefers the qualified name", () => {
+    expect(buildCallNotes(["the sink is clogged", "the kitchen sink again"]).fixtures).toEqual([
+      "kitchen sink",
+    ]);
+  });
+
+  it("says nothing extra on a one-problem call, which was never broken", () => {
+    const notes = buildCallNotes(["my water heater is leaking"]);
+    expect(notes.fixtures).toEqual(["water heater"]);
+    expect(formatCallNotes(notes)).toBeNull();
+  });
+
+  it("caps the list so the note stays short enough to be read", () => {
+    expect(
+      buildCallNotes(["the toilet, the sink, the shower and the dishwasher are all backed up"])
+        .fixtures,
+    ).toHaveLength(3);
+  });
+});
