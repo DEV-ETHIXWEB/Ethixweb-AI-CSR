@@ -13,8 +13,14 @@ import { collapseSpokenDigits } from "./service-area";
  * caller who was asked twice already.
  */
 
+// `overflow` added 2026-10-22, from a tester's own words: "I mentioned that
+// there's an active overflow still and asked that can someone come today but
+// it just gives a generic response". Every other list in the codebase that
+// decides urgency already carries it (looksEmergencyAdjacent's own triggers,
+// the prompt's active-problem rule); this one did not, so an active overflow
+// was the one phrasing that did NOT relax the save gate for speed.
 const HARD_EMERGENCY =
-  /\b(burst|flood(?:ing|ed)?|gas leak|smell(?:s)? (?:like )?gas|gas smell|sewage|sewer back|no water|water everywhere|pouring|gushing|spraying)\b/i;
+  /\b(burst|flood(?:ing|ed)?|overflow(?:s|ed|ing)?|gas leak|smell(?:s)? (?:like )?gas|gas smell|sewage|sewer back|no water|water everywhere|pouring|gushing|spraying)\b/i;
 const DECLINED_ADDRESS =
   /\b(don'?t|do not|won'?t|rather not|prefer not|not comfortable|no need|skip)\b.{0,40}\b(address|give|say|share|location)\b|\bno address\b/i;
 const ASKED_FOR_ADDRESS =

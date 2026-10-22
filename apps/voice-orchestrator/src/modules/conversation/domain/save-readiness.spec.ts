@@ -1,5 +1,6 @@
 import {
   callbackNumberNote,
+  isHardEmergency,
   leadProblemBlockedReason,
   saveBlockedReason,
   shouldNudgeForCallbackNumber,
@@ -394,5 +395,28 @@ describe("the closing confirmation", () => {
     const note = callbackNumberNote("+12065550147", { spelled: null, stated: null });
     expect(note).toContain("confirms ONE thing");
     expect(note).toContain("206-555-0147");
+  });
+});
+
+/**
+ * 2026-10-22, reviewing the whole tester backlog: "I mentioned that there's
+ * an active overflow still and asked that can someone come today but it just
+ * gives a generic response."
+ *
+ * Every other list that decides urgency already carried "overflow"; this one
+ * did not, so an active overflow was the single phrasing that would not
+ * relax the save gate for speed.
+ */
+describe("an active overflow counts as an emergency", () => {
+  it.each([
+    ["there is an active overflow still"],
+    ["the toilet is overflowing right now"],
+    ["it overflowed all over the floor"],
+  ])("treats %p as a hard emergency", (said) => {
+    expect(isHardEmergency([said])).toBe(true);
+  });
+
+  it("still does not treat an ordinary drip as one", () => {
+    expect(isHardEmergency(["my water heater is leaking a little"])).toBe(false);
   });
 });
