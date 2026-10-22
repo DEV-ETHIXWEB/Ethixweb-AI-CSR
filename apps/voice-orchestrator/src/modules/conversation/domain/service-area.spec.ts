@@ -1,5 +1,6 @@
 import {
   classifyZip,
+  collapseSpokenDigits,
   coveredZipsFromPrompt,
   detectServiceAreaFromTranscript,
 } from "./service-area";
@@ -121,5 +122,51 @@ describe("detectServiceAreaFromTranscript", () => {
 
   it("returns nothing when the business has no ZIP list", () => {
     expect(detectServiceAreaFromTranscript("my zip is 98014", new Set())).toBeNull();
+  });
+});
+
+/**
+ * 2026-10-22, Phase 2 of the pre-handover recheck: every realistic address
+ * form was run through this parser instead of being assumed correct, and
+ * compound spoken numbers were being mangled into a DIFFERENT address.
+ * "forty five twelve maple street" came out as "5 twelve maple street" —
+ * worse than the 4512-became-512 bug a tester reported, because it does not
+ * lose a digit, it asserts a wrong house number as fact.
+ */
+describe("collapseSpokenDigits with compound spoken numbers", () => {
+  it.each([
+    ["forty five twelve maple street", "4512 maple street"],
+    ["fifty three twelve maple street", "5312 maple street"],
+    ["nineteen twelve ninth avenue west", "1912 ninth avenue west"],
+    ["thirty eight ten 248th place south", "3810 248th place south"],
+    ["two hundred fifty maple street", "250 maple street"],
+    ["two hundred fifty six maple street", "256 maple street"],
+    // Tens in a ZIP never worked before either.
+    ["my zip is ninety eight zero three two", "my zip is 98032"],
+    ["my zip is nine eight zero three two", "my zip is 98032"],
+    ["two oh six five five five oh one four seven", "2065550147"],
+  ])("reads %p as %p", (said, expected) => {
+    expect(collapseSpokenDigits(said)).toBe(expected);
+  });
+
+  it("still reads our OWN hyphenated read-back, which several callers depend on", () => {
+    expect(collapseSpokenDigits("so that's 1-2-oh-oh pine street, 9-8-1-oh-1")).toBe(
+      "so that's 1200 pine street, 98101",
+    );
+    expect(collapseSpokenDigits("206-555-0147")).toBe("2065550147");
+  });
+
+  it("leaves a spoken ORDINAL for street-name.ts, which needs both words", () => {
+    expect(collapseSpokenDigits("one three zero zero five se twenty fifth street")).toBe(
+      "13005 se twenty fifth street",
+    );
+  });
+
+  it.each([
+    ["I have two bathrooms", "i have 2 bathrooms"],
+    ["it's been leaking for three days", "it's been leaking for 3 days"],
+    ["we're open 24/7 right", "we're open 24/7 right"],
+  ])("does not invent a number out of ordinary speech: %p", (said, expected) => {
+    expect(collapseSpokenDigits(said)).toBe(expected);
   });
 });

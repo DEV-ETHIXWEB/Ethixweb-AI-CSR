@@ -332,3 +332,62 @@ describe("a name she only has by ear", () => {
     expect(text).not.toContain("name as heard");
   });
 });
+
+/**
+ * Phase 2 of the 2026-10-22 pre-handover recheck: the whole address path,
+ * form by form, rather than assumed. These are the shapes real callers use.
+ */
+describe("every address form a caller actually uses", () => {
+  const street = (said: string) => buildCallNotes([said]).street;
+
+  it.each([
+    ["4512 maple street", "4512 maple street"],
+    ["4512 maple st", "4512 maple st"],
+    ["1912 9th avenue west", "1912 9th avenue west"],
+    ["13005 se 245th street", "13005 se 245th street"],
+    ["3810 248th place south", "3810 248th place south"],
+    ["4512 south maple street", "4512 south maple street"],
+    ["4512 maple boulevard southeast", "4512 maple boulevard southeast"],
+    ["my address is 4512 maple street in kent", "4512 maple street"],
+    ["4512 maple street, kent, washington 98032", "4512 maple street"],
+    // Compound spoken numbers — see service-area.spec.ts.
+    ["forty five twelve maple street", "4512 maple street"],
+    ["four five one two maple street", "4512 maple street"],
+    // Units, which used to be dropped entirely.
+    ["4512 maple street apartment b", "4512 maple street apartment b"],
+    ["4512 maple street apt 2b", "4512 maple street apt 2b"],
+    ["4512 maple street unit 304", "4512 maple street unit 304"],
+  ])("reads %p", (said, expected) => {
+    expect(street(said)).toBe(expected);
+  });
+
+  it.each([
+    // A unit word with nothing after it is a caller mid-sentence.
+    ["4512 maple street apartment", "4512 maple street"],
+  ])("is careful with %p", (said, expected) => {
+    expect(street(said)).toBe(expected);
+  });
+
+  it.each([
+    // KNOWN AND DELIBERATE: no street type means no address. Accepting
+    // "<number> <word>" would read "4512 and my zip is..." as a street, and
+    // a wrong street is worse than asking for it — which the save gate makes
+    // Grace do anyway.
+    ["it's 4512 maple"],
+    ["it's on maple street, number 4512"],
+    ["p o box 123"],
+    // A house number and a numbered street run together with no pause comes
+    // out as one long number that no street parses from, so Grace asks for
+    // the two parts separately (prompt v55 owns that wording) instead of
+    // asserting the wrong one.
+    ["fifty three twelve one fifty six drive northeast"],
+  ])("takes no address from %p, and asks instead", (said) => {
+    expect(street(said)).toBeNull();
+  });
+
+  it("keeps the ZIP alongside the street", () => {
+    const notes = buildCallNotes(["4512 maple street apartment b, kent, 98032"]);
+    expect(notes.street).toBe("4512 maple street apartment b");
+    expect(notes.zip).toBe("98032");
+  });
+});
