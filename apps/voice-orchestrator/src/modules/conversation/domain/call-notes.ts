@@ -256,16 +256,6 @@ function splitSpelledByStated(singleSpelled: string, stated: string): string[] {
 /** The note text for the model, or null when the caller has not given anything yet. */
 export function formatCallNotes(notes: CallNotes): string | null {
   const facts: string[] = [];
-  // Only ever listed when there are SEVERAL. One problem has never needed
-  // restating -- the model has never been observed losing it -- and adding a
-  // line to every call's every turn to fix a two-problem bug would be a
-  // change to calls that are working.
-  if (notes.fixtures.length > 1) {
-    facts.push(
-      `separate problems the caller has raised, all of them still open: ${notes.fixtures.join("; ")}` +
-        ". Keep them separate, name each one as the caller did, and never let one stand for the other",
-    );
-  }
   if (notes.spelledName) {
     const spoken = notes.spelledName.map(capitalize).join(" ");
     const letters = notes.spelledName
@@ -295,8 +285,22 @@ export function formatCallNotes(notes: CallNotes): string | null {
   if (notes.timing) {
     facts.push(`when they want help: "${notes.timing}"`);
   }
+  // Kept OUT of `facts` on purpose. Everything in that list is covered by
+  // "Never ask again for anything listed here", which is right for a name,
+  // an address or a ZIP and badly wrong for a problem: it would stop Grace
+  // asking whether the leak is running right now. Listed only when there are
+  // SEVERAL, too -- one problem has never been seen getting lost, and adding
+  // a line to every turn of every call to fix a two-problem bug would change
+  // calls that are working.
+  const problems =
+    notes.fixtures.length > 1
+      ? ` The caller has raised more than one separate problem: ${notes.fixtures.join("; ")}.` +
+        " Keep them separate, name each one as the caller did, and never let one stand for the" +
+        " other. Questions about each problem are still welcome; it is only the details above" +
+        " that must not be asked for again."
+      : "";
   if (facts.length === 0) {
-    return null;
+    return problems ? `[Call notes.${problems}]` : null;
   }
   if (notes.spellingAsked) {
     facts.push("you already asked for a spelling once; do not ask for one again");
@@ -304,7 +308,7 @@ export function formatCallNotes(notes: CallNotes): string | null {
   return (
     `[Call notes. Already said by the caller, from speech recognition: ${facts.join("; ")}. ` +
     "Never ask again for anything listed here. If one item looks wrong, confirm that one item once; " +
-    "never restart the intake.]"
+    `never restart the intake.${problems}]`
   );
 }
 

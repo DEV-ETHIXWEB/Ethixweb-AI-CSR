@@ -187,6 +187,21 @@ describe("several problems in one call", () => {
     const text = formatCallNotes(notes);
     expect(text).toContain("kitchen sink; toilet");
     expect(text).toContain("never let one stand for the other");
+    // The problems must sit OUTSIDE "never ask again for anything listed
+    // here", which is right for a name or an address and badly wrong for a
+    // problem: it would stop Grace asking whether the leak is running now.
+    expect(text).toContain("Questions about each problem are still welcome");
+    const neverAskAgain = text!.indexOf("Never ask again");
+    expect(neverAskAgain === -1 || text!.indexOf("kitchen sink; toilet") > neverAskAgain).toBe(
+      true,
+    );
+  });
+
+  it("still says it when the problems are all the caller has given so far", () => {
+    const text = formatCallNotes(
+      buildCallNotes(["my kitchen sink is leaking and the toilet keeps running"]),
+    );
+    expect(text).toContain("more than one separate problem");
   });
 
   it("does not count the same fixture twice, and prefers the qualified name", () => {

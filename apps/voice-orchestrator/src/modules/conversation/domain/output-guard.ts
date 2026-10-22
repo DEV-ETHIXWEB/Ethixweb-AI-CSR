@@ -196,6 +196,22 @@ const NOT_A_VOCATIVE_NAME = new Set([
   "saturday",
   "sunday",
   "grace",
+  // Words that can follow a comma, capitalised, without being anyone's name.
+  "thanks",
+  "thank",
+  "sorry",
+  "please",
+  "bye",
+  "goodbye",
+  "okay",
+  "ok",
+  "sure",
+  "right",
+  "perfect",
+  "great",
+  "absolutely",
+  "alright",
+  "got",
 ]);
 
 const sameName = (a: string, b: string): boolean => {

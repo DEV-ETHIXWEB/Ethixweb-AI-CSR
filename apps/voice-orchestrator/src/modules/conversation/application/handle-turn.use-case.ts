@@ -551,18 +551,30 @@ export class HandleTurnUseCase {
       .filter((entry) => entry.speaker === "agent")
       .map((entry) => entry.text);
     // 2026-10-14 tester feedback ("address taken randomly, correction
-    // abruptly cancels the whole flow"): these five deterministic notes each
-    // used to say, independently, "your WHOLE reply is only X" — and nothing
-    // stopped more than one from firing on the same turn (a trailing
-    // fragment that also happened to contain a street, say). Two
-    // contradictory "this is your entire reply" instructions in one prompt
-    // is exactly the kind of thing that makes a small model produce a
-    // garbled or non-sequitur reply. Exactly one directive note now fires
-    // per turn, in this priority order: the caller hasn't finished talking
-    // (nothing else is relevant yet) > confirm what they just gave >
-    // get the name > confirm the callback number. The call-notes FYI
-    // (below) is suppressed too while trailing off, so "say only Mm-hm" is
-    // never diluted by a second instruction in the same message.
+    // abruptly cancels the whole flow"): these deterministic notes each say,
+    // independently, "your WHOLE reply is only X" — and nothing stopped more
+    // than one from firing on the same turn (a trailing fragment that also
+    // happened to contain a street, say). Two contradictory "this is your
+    // entire reply" instructions in one prompt is exactly the kind of thing
+    // that makes a small model produce a garbled or non-sequitur reply.
+    //
+    // Exactly ONE fires per turn, in this priority order, each step reading
+    // "nothing below me can matter yet if this is true":
+    //
+    //   1. the caller hasn't finished talking
+    //   2. they didn't hear the last reply       (2026-10-22)
+    //   3. confirm the address they just gave
+    //   4. they say the address on file is wrong (2026-10-22)
+    //   5. get the name
+    //   6. confirm the callback number
+    //   7. answer the question they just asked   (2026-10-22)
+    //
+    // 7 is last because 3-6 can carry the answer themselves: when the caller
+    // asked something, whichever note fires gains the answer-first clause
+    // (see caller-question.ts), so 7 only has to exist for the turns where
+    // no other note fires at all. The call-notes FYI (below) is suppressed
+    // while trailing off, so "say only Mm-hm" is never diluted by a second
+    // instruction in the same message.
     const isTrailingOff = trailsOff(command.transcript);
     // Ranked directly below "the caller is still talking" and above
     // everything else: a caller who did not hear has nothing to answer yet,

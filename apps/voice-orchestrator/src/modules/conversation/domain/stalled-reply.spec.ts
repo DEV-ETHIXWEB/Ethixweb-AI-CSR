@@ -85,6 +85,9 @@ describe("isRepeatRequest", () => {
     "yes that's right",
     "my kitchen sink is leaking",
     "sorry about the noise, my dog is barking",
+    // Has its own established answer ("Yes, I'm here"), so it stays there.
+    "hello",
+    "hello?",
     "",
   ])("does not treat %p as a request to repeat", (said) => {
     expect(isRepeatRequest(said)).toBe(false);

@@ -40,8 +40,12 @@ const CLOSING_LINE =
  * "what time do you open" and "what do you need from me" out of it -- those
  * are real questions, and answering them with a repeat would be its own bug.
  */
+// "hello" is deliberately NOT here. A caller saying "hello?" mid-call has
+// its own established answer ("Yes, I'm here", prompt # LISTEN BEFORE YOU
+// ASK) and taking that over with a repeat would be a change to behaviour
+// nobody reported as broken.
 const REPEAT_WORDS =
-  /^\s*(what|what'?s that|huh|sorry|pardon|excuse me|come again|again|hello|say (that )?again)\b[\s?.!]*$/i;
+  /^\s*(what|what'?s that|huh|sorry|pardon|excuse me|come again|again|say (that )?again)\b[\s?.!]*$/i;
 const REPEAT_PHRASES =
   /\b(say that again|repeat that|repeat it|come again|didn'?t (quite )?(catch|hear|get) (that|you)|could'?nt hear|can'?t hear you|couldn'?t hear you|you broke up|broke up|one more time|what did you say|say it again)\b/i;
 const REPEAT_MAX_WORDS = 5;
