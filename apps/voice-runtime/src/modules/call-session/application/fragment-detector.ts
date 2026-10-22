@@ -158,7 +158,7 @@ const SPOKEN_DIGITS: Record<string, string> = {
  * left alone: "two" is far more often a complete answer ("how many
  * bathrooms?") than the start of a number.
  */
-function isPartialNumber(words: readonly string[]): boolean {
+function spokenDigitsOnly(words: readonly string[]): string | null {
   let digits = "";
   for (const raw of words) {
     const word = raw.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -170,10 +170,35 @@ function isPartialNumber(words: readonly string[]): boolean {
     } else if (SPOKEN_DIGITS[word]) {
       digits += SPOKEN_DIGITS[word];
     } else {
-      return false;
+      return null;
     }
   }
-  return digits.length >= 2 && ![5, 10, 11].includes(digits.length);
+  return digits.length > 0 ? digits : null;
+}
+
+function isPartialNumber(words: readonly string[]): boolean {
+  const digits = spokenDigitsOnly(words);
+  return digits !== null && digits.length >= 2 && ![5, 10, 11].includes(digits.length);
+}
+
+/**
+ * 2026-10-22 tester call, twice: "I said 4512, it only registered 512."
+ *
+ * The leading digit was never misheard. Deepgram endpointed after it, so
+ * "four" arrived as its own finalized utterance and "512 Maple Street"
+ * as the next one. A lone digit used to be the one numeric utterance
+ * treated as a finished thought (the comment this replaces reasoned that
+ * "two" answers "how many bathrooms?" more often than it starts a
+ * number) -- so it committed immediately, ran a turn of its own, and the
+ * house number the model actually saw began at the second digit.
+ *
+ * Held WEAK, not strong: the bathrooms case is real, and a weak hold is
+ * the short coalesce window rather than the multi-second one. A caller
+ * whose answer genuinely is one digit waits ~1.2s; a caller reading out a
+ * house number keeps their first digit.
+ */
+function isLoneDigit(words: readonly string[]): boolean {
+  return spokenDigitsOnly(words)?.length === 1;
 }
 
 function normalizeWord(word: string): string {
@@ -217,6 +242,9 @@ export function fragmentStrength(transcript: string): FragmentStrength {
   }
   if (isPartialNumber(words)) {
     return "strong";
+  }
+  if (isLoneDigit(words)) {
+    return "weak";
   }
   if (words.length > OPENING_WORD_COUNT_MAX) {
     return "none";

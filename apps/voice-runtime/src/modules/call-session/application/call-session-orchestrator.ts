@@ -630,7 +630,7 @@ export class CallSessionOrchestrator {
   ): void {
     this.pendingFragment = this.pendingFragment
       ? {
-          transcript: `${this.pendingFragment.transcript} ${result.transcript}`.trim(),
+          transcript: joinFragments(this.pendingFragment.transcript, result.transcript),
           confidence: Math.min(this.pendingFragment.confidence, result.confidence),
         }
       : { transcript: result.transcript, confidence: result.confidence };
@@ -1727,4 +1727,26 @@ export class CallSessionOrchestrator {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Joins a held fragment to the piece that continued it.
+ *
+ * A space between them is right for words and wrong for digits. 2026-10-22
+ * tester call: "4512 Maple Street" was endpointed after its first digit, so
+ * the two halves were "four" and "512 Maple Street" — and gluing those with
+ * a space hands the model "4 512 Maple Street", which reads as a stray digit
+ * next to a different house number. Deepgram writes a spoken digit run as
+ * digits, so a pending piece that ENDS in a digit continuing into a piece
+ * that STARTS with one is the same number either way, and joining it closes
+ * the split the coalesce window exists to close. Anything else keeps the
+ * space.
+ */
+export function joinFragments(pending: string, next: string): string {
+  const left = pending.trimEnd();
+  const right = next.trimStart();
+  if (/\d$/.test(left) && /^\d/.test(right)) {
+    return `${left}${right}`;
+  }
+  return `${left} ${right}`.trim();
 }

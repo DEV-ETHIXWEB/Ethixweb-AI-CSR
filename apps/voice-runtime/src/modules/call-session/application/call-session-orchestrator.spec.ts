@@ -8,7 +8,7 @@ import { FakeSpeechToTextProvider } from "../../speech/infrastructure/__fakes__/
 import { FakeTextToSpeechProvider } from "../../speech/infrastructure/__fakes__/fake-text-to-speech.provider";
 import { DEFAULT_VOICE_DELIVERY_SETTINGS } from "../../speech/domain/text-to-speech.port";
 import type { CallSessionParams } from "../domain/call-session";
-import { CallSessionOrchestrator } from "./call-session-orchestrator";
+import { CallSessionOrchestrator, joinFragments } from "./call-session-orchestrator";
 import { createNoopLogger } from "./__fakes__/fake-logger";
 import { FakeMediaStreamSink } from "./__fakes__/fake-media-stream-sink";
 
@@ -2579,3 +2579,24 @@ describe("CallSessionOrchestrator", () => {
 function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
+
+/**
+ * 2026-10-22 tester call: "I said 4512, it only registered 512." The held
+ * first digit now reaches the same turn as the rest of the number, so the
+ * join between the two halves decides whether the model sees one house
+ * number or two.
+ */
+describe("joinFragments", () => {
+  it("joins a digit run split across two finalized utterances", () => {
+    expect(joinFragments("4", "512 Maple Street")).toBe("4512 Maple Street");
+  });
+
+  it("keeps the space between words", () => {
+    expect(joinFragments("can you", "hear me")).toBe("can you hear me");
+  });
+
+  it("keeps the space when only one side is a digit", () => {
+    expect(joinFragments("I'm at", "4512 Maple")).toBe("I'm at 4512 Maple");
+    expect(joinFragments("unit 4", "Maple Street")).toBe("unit 4 Maple Street");
+  });
+});

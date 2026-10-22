@@ -169,12 +169,25 @@ describe("fragmentStrength (client feedback: silent hold for a caller who is sti
       ["98119"],
       ["nine eight one one nine"],
       ["206 409 2093"],
-      ["two"],
       ["it's 98119"],
       ["s u d e e t"],
-    ])("does not hold %p (complete number, single digit, or not only digits)", (utterance) => {
+    ])("does not hold %p (complete number, or not only digits)", (utterance) => {
       expect(fragmentStrength(utterance)).toBe("none");
     });
+
+    /**
+     * 2026-10-22 tester call, twice: "I said 4512, it only registered 512."
+     * Deepgram endpointed after the first digit, so "four" committed as a
+     * turn of its own and the house number the model saw started at the
+     * second digit. A lone digit used to be the one numeric utterance
+     * treated as finished.
+     */
+    it.each([["four"], ["4"], ["two"]])(
+      "holds the lone digit %p briefly, so a house number cannot lose its first digit",
+      (utterance) => {
+        expect(fragmentStrength(utterance)).toBe("weak");
+      },
+    );
   });
 
   it("2026-10-14: a spelled name ending in the letter 'a' is complete, not a trailing article", () => {
