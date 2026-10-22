@@ -341,6 +341,65 @@ describe("a whole call, and whether every injected instruction still agrees", ()
   }, 30_000);
 
   /**
+   * 2026-10-22, Akash: "when a customer is telling everything at the
+   * starting ... soon after it is asking the same and customer finds that it
+   * is just not understanding."
+   *
+   * The whole opening in one breath — name, problem, address, ZIP, urgency —
+   * and then the test asserts the one thing that matters: none of it is
+   * asked for again on the turns that follow.
+   */
+  it("asks for nothing it was already told in the opening breath", async () => {
+    sim.coreApiClient.postResponses.set("/internal/customers", { id: CUSTOMER_ID });
+    sim.coreApiClient.postResponses.set("/internal/leads", { id: randomUUID() });
+    const conversation = await startConversation();
+
+    const opening =
+      "hi, I'm Tom Harris, my water heater is leaking pretty bad at 4512 maple street, kent, 98032, and I need someone as soon as possible";
+
+    const notes: string[] = [];
+    for (const [index, caller] of [opening, "yes that's right", "no that's everything"].entries()) {
+      sim.aiProvider.responses = [
+        says(
+          index === 0
+            ? "Ah, sorry about that. So that's 4-5-1-2 Maple Street, 9-8-0-3-2?"
+            : "Understood.",
+        ),
+      ];
+      sim.aiProvider.reset();
+      await sim.inject({
+        method: "POST",
+        url: `/v1/conversations/${conversation.id}/turns`,
+        headers: authHeader(sim.serviceToken),
+        payload: {
+          tenantId: conversation.tenantId,
+          idempotencyKey: randomUUID(),
+          transcript: caller,
+          allowedTools: ALL_TOOLS,
+        },
+      });
+      const sent = sim.aiProvider.requests
+        .at(-1)
+        ?.messages.filter((m) => m.role === "user")
+        .at(-1)?.content;
+      notes.push(typeof sent === "string" ? sent : "");
+    }
+
+    // Everything the caller gave is on the record from the turn after the
+    // opening onward.
+    for (const later of notes.slice(1)) {
+      // Named as two separate fields, so the model never splits it itself.
+      expect(later).toContain('first name "Tom", last name "Harris"');
+      expect(later).toContain("4512 maple street");
+      expect(later).toContain("9-8-0-3-2");
+      expect(later).toContain("water heater");
+      expect(later).toContain("Never ask again for anything listed here");
+      // And it is never told to go and get any of it.
+      expect(later).not.toContain("ONLY question you ask is for their name");
+    }
+  }, 30_000);
+
+  /**
    * An emergency, which is the one path where the save gates must get OUT of
    * the way: speed beats a complete record. Checks that the whole chain
    * still agrees about that — the gates, the backstop and the transfer

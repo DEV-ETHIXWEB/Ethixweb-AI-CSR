@@ -36,8 +36,31 @@ export interface CallNotes {
   fixtures: string[];
 }
 
+/**
+ * How a caller actually introduces themselves.
+ *
+ * 2026-10-22, Akash: "if CSR is asking name and on that time if customer is
+ * telling the problem that CSR is not understanding... when a customer is
+ * telling everything at the starting... soon after it is asking the same and
+ * customer finds that it is just not understanding."
+ *
+ * Measured against nine realistic openings before touching anything: FIVE
+ * lost the name completely, because the only forms recognised were "my name
+ * is", "name is", "i go by" and a line-initial "this is". The most common
+ * phrasings of all were missing — "I'm Tom Harris", "I am Robert Chen",
+ * "hey it's Maria", "Tom Harris here" — so a caller who opened with
+ * everything got asked for their name a turn later, which is exactly the
+ * "it's just not understanding" complaint.
+ *
+ * Split in two because the name can come before or after the cue:
+ * an introduction PHRASE then the name, or the name then "here"/"speaking".
+ */
 const NAME_STATEMENT =
-  /(?:\b(?:my name is|my name's|name is|i go by|my first name is|first name is)|^(?:(?:hi|hey|hello|yeah|yes)[, ]+)?this is)\s+([a-z][a-z'-]+)(?:\s+([a-z][a-z'-]+))?/gi;
+  /\b(?:my name is|my name's|name is|i go by|my first name is|first name is|i'?m|i am|this is|it'?s|you'?re speaking (?:with|to)|speaking with|call me)\s+([a-z][a-z'-]+)(?:\s+([a-z][a-z'-]+))?/gi;
+
+/** The trailing form: "Tom Harris here", "Dana speaking". */
+const NAME_FIRST_STATEMENT =
+  /(?:^|[.,!?]\s*)([a-z][a-z'-]+)(?:\s+([a-z][a-z'-]+))?\s+(?:here|speaking)\b/gi;
 const NOT_A_NAME = new Set([
   "a",
   "an",
@@ -195,7 +218,7 @@ export function buildCallNotes(
  * model still reads the rest of it.
  */
 const FIXTURE =
-  /\b((?:kitchen|bathroom|master|guest|hall|upstairs|downstairs|basement|outside|outdoor|front|back|main|second|half)\s+)?(water heater|hot water tank|garbage disposal|disposal|toilet|sink|faucet|tap|shower|bathtub|tub|drain|pipe|sewer line|sewer|septic|sump pump|water line|gas line|main line|valve|spigot|hose bib|sprinkler|boiler|radiator|water softener|dishwasher|washing machine|washer)s?\b/gi;
+  /\b((?:kitchen|bathroom|master|guest|hall|upstairs|downstairs|basement|outside|outdoor|front|back|main|second|half)\s+)?(water heater|hot water tank|hot water|garbage disposal|disposal|toilet|sink|faucet|tap|shower|bathtub|tub|drain|pipe|sewer line|sewer|septic|sump pump|water line|gas line|main line|valve|spigot|hose bib|sprinkler|boiler|radiator|water softener|dishwasher|washing machine|washer)s?\b/gi;
 const MAX_FIXTURES = 3;
 
 function mentionedFixtures(callerTexts: readonly string[]): string[] {
@@ -257,12 +280,13 @@ function splitSpelledByStated(singleSpelled: string, stated: string): string[] {
 export function formatCallNotes(notes: CallNotes): string | null {
   const facts: string[] = [];
   if (notes.spelledName) {
-    const spoken = notes.spelledName.map(capitalize).join(" ");
     const letters = notes.spelledName
       .map((word) => word.toUpperCase().split("").join("-"))
       .join(" ");
     facts.push(
-      `name, spelled out by the caller: ${letters}, which is "${spoken}". Use exactly this name; never a different-sounding one`,
+      `name, spelled out by the caller: ${letters}. ` +
+        `${splitForFields(notes.spelledName.map(capitalize).join(" "))}. ` +
+        "Use exactly this name; never a different-sounding one",
     );
   } else if (notes.statedName) {
     // The LETTERS of what was actually heard, not just the word.
@@ -276,8 +300,9 @@ export function formatCallNotes(notes: CallNotes): string | null {
     // name from one region is no more or less at risk than a long one from
     // another, which a length rule could never say.
     facts.push(
-      `name as heard: "${notes.statedName}", which is spelled ${spellOut(notes.statedName)} ` +
-        "— confirm it back as EXACTLY those letters, never a different or more familiar-sounding " +
+      `name as heard, spelled ${spellOut(notes.statedName)}. ` +
+        `${splitForFields(notes.statedName)}. ` +
+        "Confirm it back as EXACTLY those letters, never a different or more familiar-sounding " +
         "spelling, and use whatever they correct it to",
     );
   }
@@ -304,13 +329,23 @@ export function formatCallNotes(notes: CallNotes): string | null {
   // SEVERAL, too -- one problem has never been seen getting lost, and adding
   // a line to every turn of every call to fix a two-problem bug would change
   // calls that are working.
+  // 2026-10-22, Akash: a caller who says everything in their opening must
+  // not be asked any of it again. This used to appear only when there were
+  // SEVERAL problems — on the reasoning that one had never been seen getting
+  // lost — but a single problem given in the opening breath was then the one
+  // thing the notes did not carry, so it survived only in message history,
+  // which compaction caps. One problem is now stated too; the "keep them
+  // separate" rule still only applies when there is more than one.
   const problems =
     notes.fixtures.length > 1
       ? ` The caller has raised more than one separate problem: ${notes.fixtures.join("; ")}.` +
         " Keep them separate, name each one as the caller did, and never let one stand for the" +
         " other. Questions about each problem are still welcome; it is only the details above" +
         " that must not be asked for again."
-      : "";
+      : notes.fixtures.length === 1
+        ? ` What they called about: the ${notes.fixtures[0]}. Questions about it are still` +
+          " welcome; it is only the details above that must not be asked for again."
+        : "";
   if (facts.length === 0) {
     return problems ? `[Call notes.${problems}]` : null;
   }
@@ -322,6 +357,28 @@ export function formatCallNotes(notes: CallNotes): string | null {
     "Never ask again for anything listed here. If one item looks wrong, confirm that one item once; " +
     `never restart the intake.${problems}]`
   );
+}
+
+/**
+ * Names the first and last parts separately, so the model never has to split
+ * a name itself.
+ *
+ * 2026-10-22, Akash: "when I say a full name to it, it sometimes just take my
+ * first name and say it like twice, so it adds my first name as first name,
+ * and even last name." The notes handed over one string ("Tom Harris") and
+ * left the split to the model, which sometimes filled both tool fields with
+ * the first token. A duplicate is already REFUSED at the save
+ * (DUPLICATE_NAME_ERROR in name-grounding.ts), so the record stayed clean —
+ * but the caller still heard the wrong name and the save had to round-trip.
+ * This removes the guess instead of catching it afterwards.
+ */
+function splitForFields(fullName: string): string {
+  const parts = fullName.split(/\s+/).filter(Boolean);
+  const first = parts[0] ?? "";
+  if (parts.length < 2) {
+    return `that is a FIRST name only: first "${first}", and no last name — leave the last name empty, never repeat "${first}" as both`;
+  }
+  return `first name "${first}", last name "${parts.slice(1).join(" ")}" — pass them as those two separate fields, and never the same word as both`;
 }
 
 /** "Siobhan Okonkwo" -> "S-I-O-B-H-A-N, O-K-O-N-K-W-O". */
@@ -362,16 +419,149 @@ function spelledName(callerTexts: readonly string[], spellingAsked: boolean): st
   return null;
 }
 
+/**
+ * Prepositions and fillers that follow an introduction cue without being a
+ * name. "this is Tom at 4512 maple street" captured "Tom At" as the full
+ * name before this existed (2026-10-22), because "at" was in neither list.
+ */
+const NOT_A_NAME_EXTRA = new Set([
+  "at",
+  "in",
+  "on",
+  "near",
+  "by",
+  "over",
+  "under",
+  "to",
+  "out",
+  "up",
+  "down",
+  "back",
+  "still",
+  "now",
+  "today",
+  "tonight",
+  "home",
+  "house",
+  "work",
+  "office",
+  "sorry",
+  "hi",
+  "hey",
+  "hello",
+  "speaking",
+  "here",
+  "trying",
+  "wondering",
+  "hoping",
+  "worried",
+  "concerned",
+  "frustrated",
+  "upset",
+  "afraid",
+  "street",
+  "avenue",
+  "road",
+  "drive",
+  "lane",
+  "place",
+  "court",
+  "address",
+  "number",
+  "phone",
+  "zip",
+  "plumber",
+  "technician",
+  "appointment",
+  "estimate",
+  "quote",
+  "service",
+  // Found by hunting false positives after widening the patterns above
+  // (2026-10-22): "it's been going for an hour" gave "Been", "i'm good
+  // thanks" gave "Good Thanks", "i am done with it" gave "Done", and
+  // "i'm here" gave "I'm" itself.
+  "been",
+  "being",
+  "good",
+  "great",
+  "fine",
+  "done",
+  "ready",
+  "busy",
+  "free",
+  "available",
+  "able",
+  "thanks",
+  "thank",
+  "im",
+  "ive",
+  "ill",
+  "id",
+  "youre",
+  "theyre",
+  "thats",
+  "theres",
+  "whats",
+  "dont",
+  "cant",
+  "wont",
+  "didnt",
+  "isnt",
+  "arent",
+  "me",
+  "mine",
+  "us",
+  "we",
+  "they",
+  "them",
+]);
+
+/**
+ * Whether a captured token can be a person's name at all.
+ *
+ * Checked against the FIXTURE pattern as well as the word lists, so the two
+ * cannot drift: 2026-10-22 measurement found "dishwasher", "washer",
+ * "boiler", "septic" and "sump pump" being saved as caller NAMES when the
+ * caller answered the name question with their problem — every one of them
+ * a word this module's own fixture detector already knew.
+ *
+ * An "-ing" word of six letters or more is rejected too, which covers
+ * "calling", "having", "trying", "looking", "wondering" and the rest in one
+ * rule rather than a list that keeps growing. It costs a real surname like
+ * Harding, and the cost is one extra question; accepting "Trying" as a name
+ * writes it to the customer record.
+ */
+function canBeName(token: string): boolean {
+  // Apostrophes are stripped for the LOOKUP (so "i'm" tests as "im" and
+  // "don't" as "dont"); a real apostrophe name like O'Brien is unaffected,
+  // since nothing in the lists matches "obrien".
+  const word = token.toLowerCase().replace(/[^a-z]/g, "");
+  if (word.length < 2) {
+    return false;
+  }
+  if (NOT_A_NAME.has(word) || NOT_A_NAME_EXTRA.has(word)) {
+    return false;
+  }
+  if (word.length >= 6 && word.endsWith("ing")) {
+    return false;
+  }
+  return !new RegExp(`^(?:${FIXTURE.source})$`, "i").test(word);
+}
+
 function statedName(callerTexts: readonly string[]): string | null {
   let found: string | null = null;
   for (const text of callerTexts) {
-    for (const match of text.toLowerCase().matchAll(NAME_STATEMENT)) {
-      const first = match[1] ?? "";
-      if (NOT_A_NAME.has(first)) {
-        continue;
+    const lower = text.toLowerCase();
+    for (const pattern of [NAME_STATEMENT, NAME_FIRST_STATEMENT]) {
+      for (const match of lower.matchAll(pattern)) {
+        const first = match[1] ?? "";
+        if (!canBeName(first)) {
+          continue;
+        }
+        const second = match[2] ?? "";
+        const last = second && canBeName(second) ? ` ${capitalize(second)}` : "";
+        found = `${capitalize(first)}${last}`;
       }
-      const last = match[2] && !NOT_A_NAME.has(match[2]) ? ` ${capitalize(match[2])}` : "";
-      found = `${capitalize(first)}${last}`;
     }
   }
   return found;
@@ -395,10 +585,15 @@ function answeredName(turns: ReadonlyArray<{ speaker: string; text: string }>): 
       .replace(/[^a-z\s'-]/g, " ")
       .split(/\s+/)
       .filter(Boolean);
+    // The whole answer is checked against FIXTURE as well as each word,
+    // because a fixture can be two words: "sump pump" passed a per-word
+    // check and was saved as the caller's name (2026-10-22).
+    const whole = words.join(" ");
     if (
       words.length >= 1 &&
       words.length <= 3 &&
-      words.every((word) => !NOT_A_NAME.has(word) && word.length > 1)
+      words.every((word) => canBeName(word)) &&
+      !new RegExp(FIXTURE.source, "i").test(whole)
     ) {
       found = words.map(capitalize).join(" ");
     }

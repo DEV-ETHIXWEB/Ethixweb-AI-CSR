@@ -98,24 +98,47 @@ export function spelledWordsIn(text: string, spellingAsked = false): string[] {
     // and the name came out as "ssiobhan" -- true of the shape this
     // replaces too, and a real way a careful spelling still came out wrong.
     .replace(/['’]/g, "")
-    .replace(/[^a-z\s]/g, " ")
+    // Sentence punctuation is KEPT, as its own token: it marks where one
+    // spelled word ends. 2026-10-22: without it, "s i o b h a n, o k o n k w
+    // o" came back as the single run "siobhanokonkwo", because only a
+    // multi-letter token broke a run.
+    .replace(/([,.;:!?])/g, " $1 ")
+    .replace(/[^a-z\s,.;:!?]/g, " ")
     .split(/\s+/)
     .filter(Boolean);
   const words: string[] = [];
   let run = "";
-  for (const token of tokens) {
-    const letter = letterOf(token, spellingAsked);
-    if (letter) {
-      run += letter;
-      continue;
-    }
+  // How many letters have arrived since the last punctuation mark. This is
+  // what tells the two comma habits apart, and both are real:
+  //   "s i o b h a n, o k o n k w o"        -> 7 letters, then a comma:
+  //                                            the comma ends a WORD.
+  //   "s for sam, i for india, o for oscar" -> ONE letter per comma: the
+  //                                            comma is just the rhythm of
+  //                                            spelling, mid-word.
+  let lettersSinceBreak = 0;
+  const flush = (): void => {
     if (run.length >= 3) {
       words.push(run);
     }
     run = "";
+  };
+  for (const token of tokens) {
+    if (/^[,.;:!?]$/.test(token)) {
+      if (lettersSinceBreak >= 2) {
+        flush();
+      }
+      lettersSinceBreak = 0;
+      continue;
+    }
+    const letter = letterOf(token, spellingAsked);
+    if (letter) {
+      run += letter;
+      lettersSinceBreak += 1;
+      continue;
+    }
+    flush();
+    lettersSinceBreak = 0;
   }
-  if (run.length >= 3) {
-    words.push(run);
-  }
+  flush();
   return words;
 }

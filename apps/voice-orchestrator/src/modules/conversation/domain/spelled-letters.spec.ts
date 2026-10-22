@@ -45,3 +45,23 @@ describe("reducePhoneticSpelling", () => {
     expect(reducePhoneticSpelling(said)).toBe(said);
   });
 });
+
+/**
+ * 2026-10-22: "s i o b h a n, o k o n k w o" came back as ONE run,
+ * "siobhanokonkwo" — only a multi-letter token broke the run, and a comma
+ * was simply stripped. A caller spelling a first and last name pauses
+ * between them, and that pause is the comma in the transcript.
+ */
+describe("punctuation ends a spelled word", () => {
+  it("keeps a comma-separated first and last name apart", () => {
+    expect(spelledWordsIn("s i o b h a n, o k o n k w o")).toEqual(["siobhan", "okonkwo"]);
+  });
+
+  it("handles a full stop between them too", () => {
+    expect(spelledWordsIn("t o m. h a r r i s")).toEqual(["tom", "harris"]);
+  });
+
+  it("still joins letters within one word", () => {
+    expect(spelledWordsIn("s i o b h a n")).toEqual(["siobhan"]);
+  });
+});

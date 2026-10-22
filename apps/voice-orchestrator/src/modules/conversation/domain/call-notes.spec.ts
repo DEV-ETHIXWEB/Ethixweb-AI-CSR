@@ -16,7 +16,11 @@ describe("buildCallNotes", () => {
       "it's for the kitchen sink",
     ]);
     expect(notes.spelledName).toEqual(["renata", "kowal"]);
-    expect(formatCallNotes(notes)).toContain('R-E-N-A-T-A K-O-W-A-L, which is "Renata Kowal"');
+    const text = formatCallNotes(notes)!;
+    expect(text).toContain("R-E-N-A-T-A K-O-W-A-L");
+    // 2026-10-22: the first and last parts are named separately now, so the
+    // model never splits a full name itself — see splitForFields.
+    expect(text).toContain('first name "Renata", last name "Kowal"');
   });
 
   it("uses the latest stated name, so a correction wins", () => {
@@ -65,7 +69,18 @@ describe("buildCallNotes", () => {
   });
 
   it("produces no note before the caller has said anything useful", () => {
-    expect(formatCallNotes(buildCallNotes(["hi", "my sink is leaking"]))).toBeNull();
+    expect(formatCallNotes(buildCallNotes(["hi", "are you there"]))).toBeNull();
+  });
+
+  /**
+   * 2026-10-22: a problem IS something useful, and used to produce no note.
+   * A caller who gave it in their opening breath then had it carried only by
+   * message history, which compaction caps — see `problems` in formatCallNotes.
+   */
+  it("carries the problem from the moment the caller gives it", () => {
+    expect(formatCallNotes(buildCallNotes(["hi", "my sink is leaking"]))).toContain(
+      "What they called about: the sink",
+    );
   });
 
   it("tells the model not to re-ask and not to restart", () => {
@@ -198,10 +213,12 @@ describe("several problems in one call", () => {
     ]);
   });
 
-  it("says nothing extra on a one-problem call, which was never broken", () => {
+  it("states a single problem too, without the keep-them-separate rule", () => {
     const notes = buildCallNotes(["my water heater is leaking"]);
     expect(notes.fixtures).toEqual(["water heater"]);
-    expect(formatCallNotes(notes)).toBeNull();
+    const text = formatCallNotes(notes)!;
+    expect(text).toContain("What they called about: the water heater");
+    expect(text).not.toContain("never let one stand for the other");
   });
 
   it("caps the list so the note stays short enough to be read", () => {
@@ -380,5 +397,125 @@ describe("every address form a caller actually uses", () => {
     const notes = buildCallNotes(["4512 maple street apartment b, kent, 98032"]);
     expect(notes.street).toBe("4512 maple street apartment b");
     expect(notes.zip).toBe("98032");
+  });
+});
+
+/**
+ * 2026-10-22, Akash: "when a customer is telling everything at the starting
+ * ... soon after it is asking the same and customer finds that it is just
+ * not understanding", and "if CSR is asking name and on that time if
+ * customer is telling the problem, that CSR is not understanding".
+ *
+ * Measured before changing anything: of nine realistic openings, FIVE lost
+ * the caller's name entirely and one captured it wrongly.
+ */
+describe("a caller who says everything in their opening", () => {
+  it.each([
+    [
+      "hi, I'm Tom Harris, my water heater is leaking at 4512 maple street kent 98032",
+      "Tom Harris",
+    ],
+    ["yeah this is Dana Whitfield, the kitchen sink is backing up", "Dana Whitfield"],
+    ["hello my name is Jose Hernandez, I have no hot water", "Jose Hernandez"],
+    ["I'm Siobhan, my toilet is overflowing right now", "Siobhan"],
+    ["I am Robert Chen, 1912 9th avenue west, the disposal is jammed", "Robert Chen"],
+    ["hey it's Maria, my shower won't drain", "Maria"],
+    ["Tom Harris here, water heater leaking", "Tom Harris"],
+    ["Dana speaking, my sink is clogged", "Dana"],
+    ["you're speaking with Akash, the drain is slow", "Akash"],
+    ["call me Tom, the pipe burst", "Tom"],
+  ])("takes the name out of %p", (opening, expected) => {
+    expect(buildCallNotes([opening]).statedName).toBe(expected);
+  });
+
+  it("stops at a preposition instead of swallowing it as a surname", () => {
+    // Captured "Tom At" before this.
+    expect(buildCallNotes(["this is Tom at 4512 maple street, burst pipe"]).statedName).toBe("Tom");
+  });
+
+  it("takes the problem, the address and the urgency from that same opening", () => {
+    const notes = buildCallNotes([
+      "hi, I'm Tom Harris, my water heater is leaking at 4512 maple street kent 98032 and I need someone today",
+    ]);
+    expect(notes.statedName).toBe("Tom Harris");
+    expect(notes.street).toBe("4512 maple street");
+    expect(notes.zip).toBe("98032");
+    expect(notes.fixtures).toEqual(["water heater"]);
+    // Recorded, but never in the banned word — see neutralTiming.
+    expect(notes.timing).toBe("today");
+    expect(formatCallNotes(notes)).toContain("as soon as possible");
+  });
+
+  it.each([
+    ["i'm calling about a leak"],
+    ["i'm at 4512 maple street"],
+    ["i'm not sure what happened"],
+    ["i'm having a problem with the sink"],
+    ["i'm trying to get someone out"],
+    ["i'm looking for a quote"],
+    ["i'm wondering if you cover kent"],
+    ["it's leaking really badly"],
+    ["it's the kitchen sink"],
+    ["it's an emergency"],
+    ["it's been going for an hour"],
+    ["i'm good thanks"],
+    ["i'm here"],
+    ["i am done with it"],
+    ["this is really bad"],
+  ])("invents no name out of %p", (said) => {
+    expect(buildCallNotes([said]).statedName).toBeNull();
+  });
+
+  it.each([
+    ["my water heater"],
+    ["the kitchen sink"],
+    ["dishwasher"],
+    ["washer"],
+    ["boiler"],
+    ["septic"],
+    ["sump pump"],
+    ["no hot water"],
+    ["it's the disposal"],
+    ["upstairs bathroom"],
+  ])("does not take %p as a name when it answers the name question", (answer) => {
+    const notes = buildCallNotes(
+      [answer],
+      [
+        { speaker: "agent", text: "Can I get your name?" },
+        { speaker: "caller", text: answer },
+      ],
+    );
+    expect(notes.statedName).toBeNull();
+  });
+});
+
+/**
+ * 2026-10-22, Akash: "when I say a full name to it, it sometimes just take
+ * my first name and say it like twice, so it adds my first name as first
+ * name, and even last name." The notes handed over one string and left the
+ * split to the model. A duplicate was already refused at the save, so the
+ * record stayed clean — but the caller heard the wrong name.
+ */
+describe("a full name is split for the model, not by it", () => {
+  it.each([
+    ["my name is Tom Harris", 'first name "Tom", last name "Harris"'],
+    ["hi I'm Jose Hernandez, the sink is clogged", 'first name "Jose", last name "Hernandez"'],
+    ["this is Dana Whitfield", 'first name "Dana", last name "Whitfield"'],
+  ])("names both halves of %p", (said, expected) => {
+    const text = formatCallNotes(buildCallNotes([said]))!;
+    expect(text).toContain(expected);
+    expect(text).toContain("never the same word as both");
+  });
+
+  it("says plainly when there is only a first name, so it is not duplicated", () => {
+    const text = formatCallNotes(buildCallNotes(["my name is Tom"]))!;
+    expect(text).toContain("that is a FIRST name only");
+    expect(text).toContain("leave the last name empty");
+    expect(text).toContain('never repeat "Tom" as both');
+  });
+
+  it("splits a spelled name the same way", () => {
+    const text = formatCallNotes(buildCallNotes(["s i o b h a n, o k o n k w o"]))!;
+    expect(text).toContain('first name "Siobhan", last name "Okonkwo"');
   });
 });

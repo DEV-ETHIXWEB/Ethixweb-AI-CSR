@@ -533,7 +533,10 @@ describe("HandleTurnUseCase", () => {
       await useCase.execute(baseCommand({ transcript: "hi, my sink is clogged" }));
 
       const sentMessage = aiProvider.requests[0]?.messages[0];
-      expect(sentMessage?.content).toBe("hi, my sink is clogged");
+      // The call notes now carry the problem from the first turn (2026-10-22),
+      // so this asserts what the test is actually about: no lead REMINDER yet.
+      expect(sentMessage?.content).toContain("hi, my sink is clogged");
+      expect(sentMessage?.content).not.toContain("nothing is saved yet this call");
     });
 
     it("does NOT annotate once a lead has already been attempted this conversation", async () => {
