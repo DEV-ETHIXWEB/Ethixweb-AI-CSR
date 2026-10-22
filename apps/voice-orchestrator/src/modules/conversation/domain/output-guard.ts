@@ -72,6 +72,31 @@ const CHANGE_HEDGE = /\b(can'?t|cannot|unable|not able|won'?t)\b/i;
 
 const STREET_READBACK =
   /\b\d{1,6}\s+(?:[A-Za-z0-9'.]+\s+){0,3}(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|place|pl|court|ct|circle|cir|terrace|ter|parkway|pkwy|highway|hwy)\b/i;
+
+/**
+ * 2026-10-22 tester call: "It took the address and it repeated the address
+ * very fastly and again in a garbling manner."
+ *
+ * Both symptoms are one miss. STREET_READBACK needs the street TYPE word in
+ * the same breath as the number, and a readback often does not have it --
+ * "So that's 4512 Maple?", or the sentence arrives split across two speech
+ * segments with the number in one and "Street" in the other. With no match,
+ * the segment loses both of its readback protections at once: the [slowly]
+ * cue (so it is spoken at whatever rate the mood cue set, up to 0.97 against
+ * the readback's 0.84) and hyphenation (so "4512" is read "forty-five
+ * twelve" instead of "4-5-1-2"). Fast, and garbled.
+ *
+ * Guessing harder at the text is the wrong fix: the turn already KNOWS the
+ * house number the caller gave, from the same call notes the model is shown.
+ * Given it, a segment containing those digits is a readback whatever else is
+ * in the segment.
+ */
+function mentionsHouseNumber(sentence: string, houseNumber: string): boolean {
+  if (houseNumber.length < 3) {
+    return false;
+  }
+  return sentence.replace(/[\s-]/g, "").includes(houseNumber);
+}
 const DIGIT_READBACK = /\b(?:\d[\s-]){4,}\d\b|\b\d{5}\b|\b\d{3}[-. ]\d{3}[-. ]\d{4}\b/;
 
 /**
@@ -83,15 +108,25 @@ const DIGIT_READBACK = /\b(?:\d[\s-]){4,}\d\b|\b\d{5}\b|\b\d{3}[-. ]\d{3}[-. ]\d
  * Only applied inside the readback path (STREET_READBACK matched), never to
  * bare numbers in normal speech.
  */
-function hyphenateHouseNumber(sentence: string): string {
-  return sentence.replace(
+const spellDigits = (digits: string): string =>
+  digits
+    .split("")
+    .map((d) => (d === "0" ? "oh" : d))
+    .join("-");
+
+function hyphenateHouseNumber(sentence: string, houseNumber: string | null): string {
+  const bySuffix = sentence.replace(
     /\b(\d{3,6})\b(?=\s+(?:[A-Za-z0-9'.]+\s+){0,3}(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|place|pl|court|ct|circle|cir|terrace|ter|parkway|pkwy|highway|hwy)\b)/gi,
-    (_, digits: string) =>
-      digits
-        .split("")
-        .map((d) => (d === "0" ? "oh" : d))
-        .join("-"),
+    (_, digits: string) => spellDigits(digits),
   );
+  // The street type is often not in the same sentence as the number ("So
+  // that's 4512 Maple?") -- see mentionsHouseNumber. The number the caller
+  // actually gave is spelled out wherever it appears, which is the half of
+  // the garbled-readback fix that the pattern above cannot reach.
+  if (!houseNumber || houseNumber.length < 3) {
+    return bySuffix;
+  }
+  return bySuffix.replace(new RegExp(`\\b${houseNumber}\\b`, "g"), spellDigits(houseNumber));
 }
 
 export type GuardAction =
@@ -255,6 +290,7 @@ export class OutputGuard {
     alreadySpokeThisTurn = false,
     alreadySaidThisTurn = "",
     private readonly callerName: string | null = null,
+    private readonly houseNumber: string | null = null,
   ) {
     this.spokeAlready = alreadySpokeThisTurn;
     this.questionsThisTurn = splitSentences(alreadySaidThisTurn)
@@ -423,7 +459,11 @@ export class OutputGuard {
         }
         continue;
       }
-      if (STREET_READBACK.test(plain) || DIGIT_READBACK.test(plain)) {
+      if (
+        STREET_READBACK.test(plain) ||
+        DIGIT_READBACK.test(plain) ||
+        (this.houseNumber !== null && mentionsHouseNumber(plain, this.houseNumber))
+      ) {
         slow = true;
       }
       if (isQuestion(sentence)) {
@@ -435,7 +475,7 @@ export class OutputGuard {
         : plainSpoken(sentence).replace(OWN_TODAY, "right away");
       kept = this.withoutAStrangersName(kept);
       if (slow) {
-        kept = hyphenateHouseNumber(kept);
+        kept = hyphenateHouseNumber(kept, this.houseNumber);
       }
       out.push(kept);
     }

@@ -380,3 +380,32 @@ describe("a name the caller never gave is not spoken", () => {
     expect(g.actions).toContain("wrong_name");
   });
 });
+
+/**
+ * 2026-10-22 tester call: "It took the address and it repeated the address
+ * very fastly and again in a garbling manner." A readback whose sentence does
+ * not carry the street TYPE word lost both of its protections at once: the
+ * [slowly] cue and the digit-by-digit hyphenation.
+ */
+describe("a readback is recognised from the house number the caller gave", () => {
+  it("slows and spells out a readback with no street type in the sentence", () => {
+    const guard = new OutputGuard([], false, "", null, "4512");
+    expect(guard.apply("So that's 4512 Maple?")).toBe("[slowly] So that's 4-5-1-2 Maple?");
+  });
+
+  it("says a zero as 'oh', which speech synthesis otherwise garbles", () => {
+    const guard = new OutputGuard([], false, "", null, "6204");
+    expect(guard.apply("Got it, 6204.")).toContain("6-2-oh-4");
+  });
+
+  it("still catches a full street readback with no house number known", () => {
+    expect(new OutputGuard().apply("So that's 1200 Pine Street?")).toBe(
+      "[slowly] So that's 1-2-oh-oh Pine Street?",
+    );
+  });
+
+  it("leaves an ordinary sentence alone", () => {
+    const guard = new OutputGuard([], false, "", null, "4512");
+    expect(guard.apply("What's going on with the sink?")).toBe("What's going on with the sink?");
+  });
+});

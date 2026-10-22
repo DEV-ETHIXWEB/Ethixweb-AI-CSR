@@ -277,3 +277,57 @@ describe("silenceBuffer", () => {
     ).toBe("1200 Pine Street, Seattle.");
   });
 });
+
+/**
+ * 2026-10-22 tester call, the third report of the same thing: "It gets
+ * weirdly loud in the address readback part and in the end 'have a great
+ * day' part too, alright take care etc." The cause is the spread of these
+ * numbers, not any one of them: ElevenLabs renders a higher `style` with
+ * wider dynamics, which is heard as volume.
+ */
+describe("delivery stays within one volume", () => {
+  const cues = [
+    "sincere",
+    "warm",
+    "warmly",
+    "gentle",
+    "reassuring",
+    "softly",
+    "serious",
+    "concerned",
+    "calm",
+    "curious",
+    "thoughtful",
+    "building",
+    "confident",
+    "relieved",
+    "frustrated",
+    "tired",
+    "quiet",
+    "sighs",
+    "slower",
+    "slowly",
+  ];
+
+  it.each(cues)("keeps [%s] inside the compressed range", (cue) => {
+    const { voiceSettings } = parseDelivery(`[${cue}] Have a great day.`);
+    expect(voiceSettings.style).toBeLessThanOrEqual(0.18);
+    expect(voiceSettings.stability).toBeGreaterThanOrEqual(0.5);
+    expect(voiceSettings.speed).toBeLessThanOrEqual(1);
+  });
+
+  it("still tells the moods apart, so a cue is not cosmetic", () => {
+    const warm = parseDelivery("[warm] I'm sorry about that.").voiceSettings;
+    const quiet = parseDelivery("[quiet] I'm sorry about that.").voiceSettings;
+    expect(warm.style).toBeGreaterThan(quiet.style);
+  });
+
+  it("keeps a readback the slowest thing Grace says", () => {
+    const readback = parseDelivery("[slowly] 4-5-1-2 Maple Street.").voiceSettings;
+    for (const cue of cues.filter((name) => name !== "slowly" && name !== "tired")) {
+      expect(readback.speed).toBeLessThanOrEqual(
+        parseDelivery(`[${cue}] Have a great day.`).voiceSettings.speed,
+      );
+    }
+  });
+});

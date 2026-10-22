@@ -705,7 +705,12 @@ describe("CallSessionOrchestrator", () => {
       expect(tts.synthesizeCalls.join(" ")).not.toMatch(/[[\]]/);
       const deliveredSettings =
         tts.voiceSettingsCalls[tts.synthesizeCalls.indexOf("I'm sorry you're dealing with that.")]!;
-      expect(deliveredSettings.stability).toBeLessThan(0.5);
+      // A warm cue still reaches TTS as its own profile, not the default.
+      // The exact numbers were compressed on 2026-10-22 (see
+      // emotional-delivery.ts: the spread was heard as the voice getting
+      // louder), so what is asserted is that the cue changed the delivery.
+      expect(deliveredSettings).not.toEqual(DEFAULT_VOICE_DELIVERY_SETTINGS);
+      expect(deliveredSettings.stability).toBeLessThan(DEFAULT_VOICE_DELIVERY_SETTINGS.stability);
     });
 
     it("MISSION EXAMPLE: [pause] splits a response into two spoken segments with an explicit silence gap injected between them", async () => {

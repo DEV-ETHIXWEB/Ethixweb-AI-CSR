@@ -86,12 +86,32 @@ export function silenceBuffer(ms: number): Buffer {
  */
 type DeliveryProfile = Partial<Pick<VoiceDeliverySettings, "stability" | "style" | "speed">>;
 
-const WARM_REASSURING: DeliveryProfile = { stability: 0.35, style: 0.4, speed: 0.97 };
-const CALM_SERIOUS: DeliveryProfile = { stability: 0.65, style: 0.12, speed: 0.92 };
-const THOUGHTFUL_CURIOUS: DeliveryProfile = { stability: 0.5, style: 0.25, speed: 1 };
-const QUIET_SUBDUED: DeliveryProfile = { stability: 0.6, style: 0.08, speed: 0.9 };
-const CONFIDENT_STEADY: DeliveryProfile = { stability: 0.55, style: 0.18, speed: 1 };
-const RELIEVED_UPBEAT: DeliveryProfile = { stability: 0.4, style: 0.35, speed: 1.03 };
+/**
+ * 2026-10-22 tester call: "It gets weirdly loud in the address readback part
+ * and in the end 'have a great day' part too, alright take care etc."
+ *
+ * This is the third report of the same thing (the two before it are recorded
+ * on DEFAULT_VOICE_DELIVERY_SETTINGS and on `slowly` below), and the cause is
+ * the SPREAD of these numbers rather than any one of them. `style` is
+ * expressiveness: ElevenLabs renders a higher value with wider dynamics, so
+ * a jump from the default 0 to 0.4 is heard as the voice getting louder, and
+ * a drop in `stability` widens the same variation again. Every profile that
+ * jumped furthest is one the model reaches for at exactly the moments the
+ * tester named -- a warm reassurance, and a relieved goodbye.
+ *
+ * So the range is compressed rather than the moods removed: style stays at
+ * or under 0.18, stability at or above 0.5. The ORDERING is deliberately
+ * untouched (warm is still the most expressive, quiet the least, serious
+ * still the slowest), so a mood is still audible; it no longer arrives as a
+ * change in volume. Speed is left alone except for the one profile that was
+ * faster than neutral, which had no reason to be.
+ */
+const WARM_REASSURING: DeliveryProfile = { stability: 0.5, style: 0.18, speed: 0.97 };
+const CALM_SERIOUS: DeliveryProfile = { stability: 0.65, style: 0.1, speed: 0.92 };
+const THOUGHTFUL_CURIOUS: DeliveryProfile = { stability: 0.55, style: 0.14, speed: 1 };
+const QUIET_SUBDUED: DeliveryProfile = { stability: 0.6, style: 0.05, speed: 0.9 };
+const CONFIDENT_STEADY: DeliveryProfile = { stability: 0.55, style: 0.12, speed: 1 };
+const RELIEVED_UPBEAT: DeliveryProfile = { stability: 0.5, style: 0.16, speed: 1 };
 
 const EMOTION_PROFILES: Record<string, DeliveryProfile> = {
   sincere: WARM_REASSURING,
@@ -99,13 +119,13 @@ const EMOTION_PROFILES: Record<string, DeliveryProfile> = {
   warm: WARM_REASSURING,
   gentle: WARM_REASSURING,
   reassuring: WARM_REASSURING,
-  softly: { ...QUIET_SUBDUED, style: 0.15 },
+  softly: { ...QUIET_SUBDUED, style: 0.08 },
   serious: CALM_SERIOUS,
   concerned: CALM_SERIOUS,
   calm: CALM_SERIOUS,
   curious: THOUGHTFUL_CURIOUS,
   thoughtful: THOUGHTFUL_CURIOUS,
-  building: { stability: 0.45, style: 0.3, speed: 1.03 },
+  building: { stability: 0.5, style: 0.16, speed: 1 },
   confident: CONFIDENT_STEADY,
   relieved: RELIEVED_UPBEAT,
   frustrated: QUIET_SUBDUED,

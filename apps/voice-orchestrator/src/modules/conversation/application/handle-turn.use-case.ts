@@ -1324,6 +1324,10 @@ export class HandleTurnUseCase {
       // the same call notes the model is shown, so the guard and the model
       // are never working from different names.
       callerFirstName(conversation),
+      // See output-guard.ts's mentionsHouseNumber: the house number the
+      // caller gave, so a readback is recognised as one even when the street
+      // type is not in the same sentence.
+      callerHouseNumber(conversation),
     );
     const emit = (segment: string): void => {
       const guarded = guard.apply(segment);
@@ -1869,6 +1873,16 @@ function callerFirstName(conversation: Conversation): string | null {
     .map((entry) => entry.text);
   const notes = buildCallNotes(callerTexts, conversation.transcript);
   return notes.spelledName?.[0] ?? notes.statedName?.split(/\s+/)[0] ?? null;
+}
+
+/** The house number from the street the caller gave, or null. */
+function callerHouseNumber(conversation: Conversation): string | null {
+  const callerTexts = conversation.transcript
+    .filter((entry) => entry.speaker === "caller")
+    .map((entry) => entry.text);
+  const street = buildCallNotes(callerTexts, conversation.transcript).street;
+  const houseNumber = street?.split(" ")[0] ?? "";
+  return /^\d{3,6}$/.test(houseNumber) ? houseNumber : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
