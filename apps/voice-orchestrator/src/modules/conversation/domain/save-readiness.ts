@@ -262,11 +262,17 @@ export function callbackNumberNote(
       "Ask nothing else.]"
     );
   }
+  // The wording says "here, before you save" and not "at the end", because
+  // this note fires the moment the intake is complete -- which is where the
+  // save happens, and is as late as it can be without the call being over.
+  // Telling the model "not earlier" while firing it mid-call would be its
+  // own contradiction, which is the class of bug this module keeps finding.
   return (
-    "[You have everything you need, so confirm it now, once, at the end — not earlier. " +
-    `Your whole reply confirms exactly two things in one short line: the name, spelled out (${letters}), ` +
-    `and whether ${spoken} is the best number to reach them, read digit by digit, without the +1. ` +
-    "Then save. Do not read the address back again, and ask nothing else.]"
+    "[You now have everything you need, so confirm it once, here, before you save — this is " +
+    `the only time either is confirmed. Your whole reply confirms exactly two things in one ` +
+    `short line: the name, spelled out (${letters}), and whether ${spoken} is the best number ` +
+    "to reach them, read digit by digit, without the +1. Then save. Do not read the address " +
+    "back again, and ask nothing else.]"
   );
 }
 

@@ -344,6 +344,10 @@ describe("the closing confirmation", () => {
     expect(note).toContain("206-555-0147");
     expect(note).toContain("exactly two things in one short line");
     expect(note).toContain("Then save");
+    // Fires the moment the intake is complete, so it must not claim to be
+    // waiting for a later moment that never comes.
+    expect(note).toContain("here, before you save");
+    expect(note).not.toContain("not earlier");
   });
 
   it("uses the spelled letters when the caller spelled their name", () => {

@@ -144,8 +144,10 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
      * guarantee stays covered: a name is never left unconfirmed.
      */
     it("confirms every name's spelling exactly once, at the end, not mid-intake", () => {
-      expect(lower).toContain("do not read its letters back in the middle of the call");
-      expect(lower).toContain("confirmed once, at the end, together with the callback number");
+      expect(lower).toContain("do not read its letters back when you first hear it");
+      expect(lower).toContain(
+        "confirmed once, later, in the same breath as the callback number, right before you save",
+      );
       expect(lower).toContain("never ask for the same name's spelling twice");
       expect(lower).toContain("could you spell that for me?");
     });
@@ -190,7 +192,9 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
      * its own — see the NAMES tests above.
      */
     it("confirms the callback number together with the name, at the end", () => {
-      expect(lower).toContain("the callback number, confirmed together with the name, at the end");
+      expect(lower).toContain(
+        "the callback number, confirmed together with the name, once, right before you save",
+      );
       expect(lower).toContain("in one short line and nothing else");
       expect(lower).toContain("this is the only place either is confirmed");
     });
