@@ -1,5 +1,6 @@
 import { spokenPhoneDigits } from "./save-readiness";
 import { collapseSpokenDigits } from "./service-area";
+import { spelledWordsIn } from "./spelled-letters";
 import { STREET_SUFFIXES } from "./street-name";
 
 /**
@@ -156,13 +157,16 @@ export function buildCallNotes(
   callerTexts: readonly string[],
   turns: ReadonlyArray<{ speaker: string; text: string }> = [],
 ): CallNotes {
+  const spellingAsked = turns.some(
+    (turn) => turn.speaker === "agent" && /\bspell\b/i.test(turn.text),
+  );
   const stated = statedName(callerTexts) ?? answeredName(turns);
-  let spelled = spelledName(callerTexts);
+  let spelled = spelledName(callerTexts, spellingAsked);
   if (spelled && spelled.length === 1 && stated) {
     spelled = splitSpelledByStated(spelled[0]!, stated);
   }
   return {
-    spellingAsked: turns.some((turn) => turn.speaker === "agent" && /\bspell\b/i.test(turn.text)),
+    spellingAsked,
     spelledName: spelled,
     statedName: stated,
     street: lastStreet(callerTexts),
@@ -304,28 +308,10 @@ export function formatCallNotes(notes: CallNotes): string | null {
   );
 }
 
-function spelledName(callerTexts: readonly string[]): string[] | null {
+/** See spelled-letters.ts for the two spelling shapes this used to miss entirely. */
+function spelledName(callerTexts: readonly string[], spellingAsked: boolean): string[] | null {
   for (let i = callerTexts.length - 1; i >= 0; i -= 1) {
-    const tokens = (callerTexts[i] ?? "")
-      .toLowerCase()
-      .replace(/[^a-z\s]/g, " ")
-      .split(/\s+/)
-      .filter(Boolean);
-    const words: string[] = [];
-    let run = "";
-    for (const token of tokens) {
-      if (token.length === 1) {
-        run += token;
-        continue;
-      }
-      if (run.length >= 3) {
-        words.push(run);
-      }
-      run = "";
-    }
-    if (run.length >= 3) {
-      words.push(run);
-    }
+    const words = spelledWordsIn(callerTexts[i] ?? "", spellingAsked);
     if (words.length > 0) {
       return words;
     }

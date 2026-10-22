@@ -7,6 +7,8 @@
  * speech-to-text spelling difference ("Ana" vs "Anna") is not rejected.
  */
 
+import { spelledWordsIn } from "./spelled-letters";
+
 const PLACEHOLDER_NAMES = new Set([
   "unknown",
   "unnamed",
@@ -127,6 +129,15 @@ export function isNameGroundedInCaller(firstName: string, callerTexts: readonly 
       cleaned.replace(/\s+/g, "").includes(name) &&
       tokens.filter((t) => t.length === 1).length >= 2
     ) {
+      return true;
+    }
+    // Spelled with the "S for Sam" convention, or in letter names. Without
+    // this, a hard name the caller spelled out carefully was refused at the
+    // save as one "the caller never said" — found 2026-10-22 alongside the
+    // call-notes half of the same bug. `true` for spellingAsked is safe
+    // here: unlike the notes, this only ever ACCEPTS a name the model
+    // already proposed, so a stray letter-name reading cannot invent one.
+    if (spelledWordsIn(text, true).some((word) => soundsLikeName(word, name))) {
       return true;
     }
   }

@@ -56,3 +56,25 @@ describe("isNameGroundedInCaller", () => {
     });
   });
 });
+
+/**
+ * 2026-10-22: the save-side half of the spelled-name bug. A hard name the
+ * caller spelled out carefully was refused as one "the caller never said".
+ */
+describe("a name the caller only ever spelled", () => {
+  it("accepts a name spelled with the 'S for Sam' convention", () => {
+    expect(
+      isNameGroundedInCaller("Siobhan", [
+        "s for sam, i for india, o for oscar, b for boy, h for harry, a for apple, n for nancy",
+      ]),
+    ).toBe(true);
+  });
+
+  it("accepts a name spelled in letter names", () => {
+    expect(isNameGroundedInCaller("Siobhan", ["ess eye oh bee aitch ay en"])).toBe(true);
+  });
+
+  it("still refuses a name nothing in the call supports", () => {
+    expect(isNameGroundedInCaller("Siobhan", ["my kitchen sink is leaking"])).toBe(false);
+  });
+});

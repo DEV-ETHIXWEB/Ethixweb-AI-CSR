@@ -251,3 +251,29 @@ describe("addressDisputeNote", () => {
     expect(addressDisputeNote([said], [lastReply])).toBeNull();
   });
 });
+
+/**
+ * 2026-10-22 tester call: a hard name, spelled out, still not captured.
+ * See spelled-letters.ts for the two spelling shapes that produced nothing.
+ */
+describe("a hard name spelled out", () => {
+  it("captures a name spelled with the 'S for Sam' convention", () => {
+    const notes = buildCallNotes([
+      "s for sam, i for india, o for oscar, b for boy, h for harry, a for apple, n for nancy",
+    ]);
+    expect(notes.spelledName).toEqual(["siobhan"]);
+    expect(formatCallNotes(notes)).toContain("S-I-O-B-H-A-N");
+  });
+
+  it("captures letter names once Grace has asked for the spelling", () => {
+    const notes = buildCallNotes(["oh kay oh en kay double u oh"], [
+      { speaker: "agent", text: "Could you spell that for me?" },
+      { speaker: "caller", text: "oh kay oh en kay double u oh" },
+    ]);
+    expect(notes.spelledName?.[0]).toContain("okonk");
+  });
+
+  it("does not read letter names as a spelling when nobody asked", () => {
+    expect(buildCallNotes(["oh are you able to come out this week"]).spelledName).toBeNull();
+  });
+});
