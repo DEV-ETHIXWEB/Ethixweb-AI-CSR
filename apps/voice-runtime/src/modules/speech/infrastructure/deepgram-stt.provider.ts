@@ -101,6 +101,89 @@ const ENDPOINTING_MS = 500;
  */
 const SPEECH_FINAL_FALLBACK_MS = 4000;
 
+/**
+ * First names speech recognition tends to bend into a familiar English one.
+ *
+ * 2026-10-23, a tester on a live call: "My name is Yash", transcribed as
+ * "Josh", corrected, and transcribed as "Josh" again. Grace never saw the
+ * real name, so nothing downstream could recover it.
+ *
+ * Deepgram's `keywords` boost was verified against the live API before
+ * shipping, because a rejected parameter fails the whole socket and every
+ * call with it: `keywords` is accepted by nova-2 with language=multi, while
+ * `keyterm` returns HTTP 400 ("only supported for Nova-3 and Flux"). It was
+ * also checked for the obvious danger, boosting "Yash" making Deepgram hear
+ * "yes" as "Yash" and breaking every confirmation: with our own TTS voice as
+ * test audio, "yes", "yes that is right", "yeah yes please" and "my name is
+ * Josh" all came back unchanged with the boost on.
+ *
+ * What that test could NOT show is that it fixes an accented speaker on a
+ * phone line, since the clean test voice was heard correctly either way.
+ * So this is a safe nudge, not the guarantee. The guarantee is on the
+ * orchestrator side: a disputed name makes Grace ask for a spelling.
+ *
+ * Kept to names that are not also everyday words, because a boosted word
+ * that IS an everyday word is exactly how the false-positive risk above
+ * becomes real. `DEEPGRAM_NAME_BOOST` replaces the list (comma separated);
+ * set it to "off" to disable boosting entirely.
+ */
+const DEFAULT_NAME_BOOST = [
+  // South Asian
+  "Yash",
+  "Akash",
+  "Prateek",
+  "Amar",
+  "Rahul",
+  "Priya",
+  "Arjun",
+  "Rohan",
+  "Vikram",
+  "Anjali",
+  "Deepak",
+  "Sanjay",
+  "Neha",
+  "Pooja",
+  "Aditya",
+  "Nikhil",
+  "Sneha",
+  // Hispanic. Not "Jose" or "Harsh": "Jose" sounds like "hose", which
+  // plumbing callers say all the time, and "harsh" is an everyday word, so
+  // boosting either could rewrite a caller's problem description.
+  "Alejandro",
+  "Joaquin",
+  "Ximena",
+  "Guadalupe",
+  "Xochitl",
+  // West African
+  "Kwame",
+  "Okonkwo",
+  "Chidi",
+  "Ngozi",
+  // Irish
+  "Siobhan",
+  "Niamh",
+  "Aoife",
+  "Saoirse",
+];
+const NAME_BOOST_INTENSIFIER = 2;
+
+/** Only nova-2 accepts `keywords`; anything else gets no boost rather than a rejected socket. */
+export function nameBoostParams(model: string): string {
+  const configured = process.env["DEEPGRAM_NAME_BOOST"];
+  if (configured?.trim().toLowerCase() === "off" || !model.startsWith("nova-2")) {
+    return "";
+  }
+  const names = configured
+    ? configured
+        .split(",")
+        .map((name) => name.trim())
+        .filter(Boolean)
+    : DEFAULT_NAME_BOOST;
+  return names
+    .map((name) => `&keywords=${encodeURIComponent(`${name}:${NAME_BOOST_INTENSIFIER}`)}`)
+    .join("");
+}
+
 @Injectable()
 export class DeepgramSttProvider implements SpeechToTextProvider {
   constructor(@Inject(APP_LOGGER) private readonly logger: StructuredLogger) {}
@@ -122,7 +205,8 @@ export class DeepgramSttProvider implements SpeechToTextProvider {
     const url =
       `${DEEPGRAM_LISTEN_URL}?encoding=${encoding}&sample_rate=${options.sampleRateHz}` +
       `&channels=1&interim_results=true&vad_events=true&endpointing=${ENDPOINTING_MS}` +
-      `&model=${model}&language=${language}`;
+      `&model=${model}&language=${language}` +
+      nameBoostParams(model);
 
     const socket = new WebSocket(url, { headers: { Authorization: `token ${apiKey}` } });
 

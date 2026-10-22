@@ -70,7 +70,7 @@ jest.mock("ws", () => {
 });
 
 // Imported after jest.mock so the provider picks up the mocked module.
-import { DeepgramSttProvider } from "./deepgram-stt.provider";
+import { DeepgramSttProvider, nameBoostParams } from "./deepgram-stt.provider";
 import { createNoopLogger } from "./__fakes__/fake-logger";
 
 describe("DeepgramSttProvider", () => {
@@ -101,7 +101,8 @@ describe("DeepgramSttProvider", () => {
 
     expect(lastSocket).toBeDefined();
     expect(lastSocket!.url).toBe(
-      "wss://api.deepgram.com/v1/listen?encoding=mulaw&sample_rate=8000&channels=1&interim_results=true&vad_events=true&endpointing=500&model=nova-2&language=multi",
+      "wss://api.deepgram.com/v1/listen?encoding=mulaw&sample_rate=8000&channels=1&interim_results=true&vad_events=true&endpointing=500&model=nova-2&language=multi" +
+        nameBoostParams("nova-2"),
     );
     expect(lastSocket!.options).toEqual({ headers: { Authorization: "token test-deepgram-key" } });
   });
@@ -563,5 +564,38 @@ describe("DeepgramSttProvider", () => {
     });
 
     expect(finals.map((f) => f.transcript)).toEqual(["first thing", "second thing"]);
+  });
+});
+
+/** 2026-10-23 tester call: "My name is Yash" transcribed as "Josh", twice. */
+describe("nameBoostParams", () => {
+  const saved = process.env["DEEPGRAM_NAME_BOOST"];
+  afterEach(() => {
+    if (saved === undefined) delete process.env["DEEPGRAM_NAME_BOOST"];
+    else process.env["DEEPGRAM_NAME_BOOST"] = saved;
+  });
+
+  it("boosts Yash on nova-2 by default", () => {
+    delete process.env["DEEPGRAM_NAME_BOOST"];
+    expect(nameBoostParams("nova-2")).toContain("&keywords=Yash%3A2");
+  });
+
+  it("never boosts names that sound like everyday plumbing words", () => {
+    delete process.env["DEEPGRAM_NAME_BOOST"];
+    const params = nameBoostParams("nova-2");
+    expect(params).not.toContain("Jose");
+    expect(params).not.toContain("Harsh");
+  });
+
+  it("sends nothing to a model that would reject `keywords` and fail the socket", () => {
+    delete process.env["DEEPGRAM_NAME_BOOST"];
+    expect(nameBoostParams("nova-3")).toBe("");
+  });
+
+  it("can be switched off, or replaced, from the environment", () => {
+    process.env["DEEPGRAM_NAME_BOOST"] = "off";
+    expect(nameBoostParams("nova-2")).toBe("");
+    process.env["DEEPGRAM_NAME_BOOST"] = " Yash , Ravi ";
+    expect(nameBoostParams("nova-2")).toBe("&keywords=Yash%3A2&keywords=Ravi%3A2");
   });
 });
