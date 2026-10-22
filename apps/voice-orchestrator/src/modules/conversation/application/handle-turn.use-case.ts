@@ -442,42 +442,19 @@ export class HandleTurnUseCase {
       command.transcript,
       command.sttConfidence,
     );
-    if (
+    // DEFERRED, not applied here — see its own application site below the
+    // directive-note chain. 2026-10-22, reading a whole simulated call's
+    // injected notes turn by turn: this reminder is prefixed LAST, so it is
+    // the last instruction the model reads, and on the turn where the
+    // address read-back directive said "Ask nothing else" this said "your
+    // next question asks for it" directly after it. Two instructions about
+    // what the next question is, in one message, with the contradicting one
+    // read last -- exactly the shape the one-directive-per-turn rule exists
+    // to prevent, arriving from outside that chain.
+    const leadReminderWanted =
       !conversation.leadEverAttempted &&
       !conversation.crmIntegrationUnavailable &&
-      conversation.transcript.length >= LEAD_REMINDER_AFTER_TURNS
-    ) {
-      // Found live on a real ~21-minute call, then reproduced fresh in a
-      // 3-turn test right after the prompt-only fix (v19) for this SAME
-      // finding proved insufficient on its own: prompt wording alone has
-      // a reliability ceiling, the same lesson already applied to
-      // escalateEmergency/searchCustomer. This never fabricates the tool
-      // call itself (the orchestrator has no safe way to know a real
-      // name from free text) — it only makes sure the model's own
-      // attention doesn't drift away from a pending action it alone has
-      // the real customer data to complete, the longer a call runs
-      // without one.
-      //
-      // `!conversation.crmIntegrationUnavailable`: a SECOND, precisely
-      // root-caused real-call bug this same reminder was found causing —
-      // `createCustomer` (not `createLead`) is what this reminder tells
-      // the model to call, but only `createLead` ever set
-      // `leadEverAttempted`, so on a real call where `createCustomer` was
-      // attempted twice (once rejected for bad arguments, once degraded
-      // because no CRM integration is configured for the business) this
-      // reminder kept re-injecting on every remaining turn — 12+ times —
-      // nagging the model to retry an integration that structurally
-      // cannot succeed this call. `customerCaptureAttempted` deliberately
-      // does NOT gate this on its own (a validation rejection is often
-      // self-correctable, and DID self-correct in that exact real call —
-      // suppressing the reminder for that case would have cost the
-      // eventually-successful retry); only a genuinely PERMANENT failure
-      // does.
-      annotatedTranscript = annotateMissingLead(
-        annotatedTranscript,
-        hasUsableCustomer(conversation),
-      );
-    }
+      conversation.transcript.length >= LEAD_REMINDER_AFTER_TURNS;
     if (conversation.crmIntegrationUnavailable) {
       // Confirmed real-call bug, separate from the reminder above: once
       // createCustomer/createLead has genuinely failed with "no CRM
@@ -626,6 +603,14 @@ export class HandleTurnUseCase {
     // whole point is that the caller has not finished talking yet.
     const owesAnAnswer = !isTrailingOff && callerAskedAQuestion(command.transcript);
     const directive = (note: string): string => (owesAnAnswer ? answerFirst(note) : note);
+    const directiveFired =
+      isTrailingOff ||
+      wantsItAgain ||
+      pendingReadback !== null ||
+      addressDisputed !== null ||
+      needsName ||
+      needsCallbackNumber ||
+      owesAnAnswer;
     if (isTrailingOff) {
       annotatedTranscript = `${TRAILING_FRAGMENT_NOTE} ${annotatedTranscript}`;
     } else if (wantsItAgain) {
@@ -651,6 +636,17 @@ export class HandleTurnUseCase {
       // because being the LAST thing the model reads is what makes a rule
       // hold on this model (the whole reason this module has notes at all).
       annotatedTranscript = `${ANSWER_THE_QUESTION_NOTE} ${annotatedTranscript}`;
+    }
+    // The deferred missing-lead reminder (see `leadReminderWanted` above).
+    // Skipped entirely on a turn that already carries a directive: the
+    // reminder re-injects on every later turn anyway, so one turn's silence
+    // costs nothing, and a turn with two instructions about what to ask next
+    // costs a garbled reply.
+    if (leadReminderWanted && !directiveFired) {
+      annotatedTranscript = annotateMissingLead(
+        annotatedTranscript,
+        hasUsableCustomer(conversation),
+      );
     }
     // See call-notes.ts: what the caller already said, restated every turn so
     // nothing they gave is asked for again or said back under a new name.

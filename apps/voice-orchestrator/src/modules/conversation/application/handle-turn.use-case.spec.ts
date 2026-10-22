@@ -67,6 +67,20 @@ function fillerTranscript(count: number): TranscriptTurn[] {
   }));
 }
 
+/**
+ * Filler turns where the caller has already given a short name, so no
+ * DIRECTIVE note fires on the turn under test. 2026-10-22: the missing-lead
+ * reminder is now suppressed on any turn that already carries a directive,
+ * so a test about the reminder's own wording has to run on a turn where the
+ * name nudge is not also firing. Short on purpose ("Tom", not "Patrick"),
+ * since a long name triggers the spell-it-back nudge instead.
+ */
+function fillerTranscriptWithName(count: number): TranscriptTurn[] {
+  const turns = fillerTranscript(count);
+  turns[0] = { ...turns[0]!, text: "my name is Tom" };
+  return turns;
+}
+
 function buildUseCase(options?: {
   aiProvider?: FakeAiProvider;
   repository?: FakeConversationRepository;
@@ -1196,7 +1210,7 @@ describe("HandleTurnUseCase", () => {
      */
     it("a GENERIC/transient createCustomer failure (not the exact NoCrmIntegrationConfiguredError shape) does NOT set crmIntegrationUnavailable — stays retryable", async () => {
       const repository = new FakeConversationRepository();
-      const priorTranscript = fillerTranscript(6);
+      const priorTranscript = fillerTranscriptWithName(6);
       repository.seed(baseConversation({ transcript: priorTranscript }));
       const aiProvider = new FakeAiProvider();
       aiProvider.responses = [
@@ -1216,7 +1230,11 @@ describe("HandleTurnUseCase", () => {
           { type: "done", stopReason: "tool_use" },
         ],
         [
-          { type: "text_delta", text: "Let me try that again." },
+          // Reads the house number back, so the address read-back directive
+          // is satisfied and the turn under test below carries no directive
+          // of its own — the missing-lead reminder is suppressed on a turn
+          // that already has one (2026-10-22).
+          { type: "text_delta", text: "So that's 1-2-oh-oh Pine Street. Let me try that again." },
           { type: "done", stopReason: "end_turn" },
         ],
       ];
@@ -1257,7 +1275,9 @@ describe("HandleTurnUseCase", () => {
         ],
       ];
       const { useCase: useCase2 } = buildUseCase({ aiProvider: aiProvider2, repository: repo });
-      await useCase2.execute(baseCommand({ transcript: "still there?" }));
+      // Not a question: a question of the caller's own is itself a directive
+      // now ("answer that first"), which would suppress the reminder.
+      await useCase2.execute(baseCommand({ transcript: "okay" }));
       const sentMessage = aiProvider2.requests[0]?.messages.filter((m) => m.role === "user").pop();
       expect(sentMessage?.content).toContain("call createCustomer and then createLead");
       expect(sentMessage?.content).not.toContain("CRM/lead system is not available");
@@ -3741,7 +3761,7 @@ describe("HandleTurnUseCase with a matched record that has no name or address", 
       baseConversation({
         customerId: "cust-7",
         customerDetailsOnFile: false,
-        transcript: fillerTranscript(8),
+        transcript: fillerTranscriptWithName(8),
       }),
     );
     const aiProvider = new FakeAiProvider();

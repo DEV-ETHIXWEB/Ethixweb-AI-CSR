@@ -283,7 +283,7 @@ export function formatCallNotes(notes: CallNotes): string | null {
     facts.push(`property: ${notes.property}`);
   }
   if (notes.timing) {
-    facts.push(`when they want help: "${notes.timing}"`);
+    facts.push(`when they want help: "${neutralTiming(notes.timing)}"`);
   }
   // Kept OUT of `facts` on purpose. Everything in that list is covered by
   // "Never ask again for anything listed here", which is right for a name,
@@ -332,6 +332,18 @@ export function formatCallNotes(notes: CallNotes): string | null {
     "Never ask again for anything listed here. If one item looks wrong, confirm that one item once; " +
     `never restart the intake.${spelling}${problems}]`
   );
+}
+
+/**
+ * The client asked that Grace never say "today" or "tonight" (prompt v49,
+ * and OWN_TODAY in output-guard.ts rewrites it in speech). These notes were
+ * handing the word straight back as a fact to use -- found 2026-10-22 by
+ * reading a whole simulated call's notes turn by turn, where "when they want
+ * help: today" sat in every later turn's message. The caller's urgency is
+ * what matters and survives; the banned word does not.
+ */
+function neutralTiming(timing: string): string {
+  return /\b(today|tonight)\b/i.test(timing) ? "as soon as possible" : timing;
 }
 
 /** A name long enough that getting it wrong is a real cost -- see `spelling` in formatCallNotes. */
@@ -457,11 +469,59 @@ function streetIn(text: string): string | null {
       while (end + 1 < tokens.length && DIRECTIONS.has(tokens[end + 1] ?? "")) {
         end += 1;
       }
+      // 2026-10-22, reading a whole simulated call's notes: "actually it's
+      // 4512 maple street apartment b" parsed as "4512 maple street" and the
+      // apartment was dropped -- from the notes, and so from the address the
+      // model saves. A unit is not a decoration on an address; for half the
+      // callers in a city it IS the address. Absorbed here, after the street
+      // type and any direction, so the one place that reads addresses keeps
+      // it for every caller of this module.
+      end = absorbUnit(tokens, end);
       found = tokens.slice(house, end + 1).join(" ");
       break;
     }
   }
   return found;
+}
+
+const UNIT_WORDS = new Set([
+  "apartment",
+  "apt",
+  "unit",
+  "suite",
+  "ste",
+  "floor",
+  "fl",
+  "building",
+  "bldg",
+  "lot",
+  "space",
+  "room",
+  "rm",
+  "trailer",
+]);
+
+/** The "apartment b" / "unit 304" tail of a parsed street, or null when it has none. */
+function unitIn(street: string): string | null {
+  const tokens = street.split(" ");
+  for (let index = 0; index < tokens.length - 1; index += 1) {
+    if (UNIT_WORDS.has(tokens[index] ?? "")) {
+      return `${tokens[index]} ${tokens[index + 1]}`;
+    }
+  }
+  return null;
+}
+
+/** Extends the end index over a trailing "apartment b" / "unit 304" / "suite 12a", or leaves it alone. */
+function absorbUnit(tokens: readonly string[], end: number): number {
+  const word = tokens[end + 1] ?? "";
+  const value = tokens[end + 2] ?? "";
+  if (!UNIT_WORDS.has(word)) {
+    return end;
+  }
+  // A unit designator with nothing after it ("...street apartment") is the
+  // caller mid-sentence, not a unit; keep the street as it stands.
+  return /^[a-z0-9]{1,5}$/.test(value) ? end + 2 : end;
 }
 
 function lastZip(callerTexts: readonly string[]): string | null {
@@ -599,6 +659,24 @@ export function addressReadbackNote(
     collapseSpokenDigits(text).replace(/[\s-]/g, "").includes(houseNumber),
   );
   if (alreadyReadBack) {
+    // 2026-10-22, reading a whole simulated call's notes turn by turn: the
+    // caller said "actually it's 4512 maple street apartment b" AFTER the
+    // read-back, so this returned null (the house number had been said) and
+    // the dispute note did not fire either (nothing about it is a negation).
+    // The turn produced no instruction at all about the apartment — the one
+    // thing the caller had just taken the trouble to add. It reaches the
+    // saved address now via the notes, but a caller who adds a unit and
+    // hears nothing back is the "it didn't pay attention" complaint again.
+    const unit = unitIn(street);
+    const unitSaid =
+      unit !== null && agentTexts.some((text) => text.toLowerCase().includes(unit.toLowerCase()));
+    if (unit !== null && !unitSaid) {
+      return (
+        `[The caller added a unit to their address: "${unit}". Say only "Got it, ${unit}." and ` +
+        "carry on with what you were doing. Do not read the whole address back again, and " +
+        "include the unit when you save the address.]"
+      );
+    }
     return null;
   }
   const zip = lastZip(callerTexts);
