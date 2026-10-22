@@ -4311,3 +4311,38 @@ describe("a caller who did not hear gets it again", () => {
     expect(sent).not.toContain("did not hear you");
   });
 });
+
+/**
+ * 2026-10-22 tester call, the second half of the two-problems finding: asked
+ * whether both problems were booked, Grace replied "you are all set,
+ * anything else" and only then answered. No deterministic note fires on a
+ * turn like that, so there was nothing for the answer-first clause to attach
+ * to.
+ */
+describe("a question on a turn with no other note still comes first", () => {
+  async function sentFor(transcript: string): Promise<string> {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation({ customerId: "c-1", customerDetailsOnFile: true }));
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "Both are on the request. Anything else?" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+    await useCase.execute(baseCommand({ transcript }));
+    const sent = aiProvider.requests[0]!.messages.find((m) => m.role === "user")!.content;
+    return typeof sent === "string" ? sent : "";
+  }
+
+  it("tells the model its first sentence answers the question", async () => {
+    const sent = await sentFor("the kitchen sink and the toilet, both are booked not one right");
+    expect(sent).toContain("Your FIRST sentence answers it");
+  });
+
+  it("stays quiet on a turn where the caller asked nothing", async () => {
+    const sent = await sentFor("yes that's right");
+    expect(sent).not.toContain("Your FIRST sentence answers it");
+  });
+});

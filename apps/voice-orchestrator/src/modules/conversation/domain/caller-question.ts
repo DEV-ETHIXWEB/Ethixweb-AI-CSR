@@ -48,6 +48,20 @@ const QUESTION_PHRASES =
  */
 const PLAIN_ANSWER = /^\s*(yes|yeah|yep|no|nope|nah|correct|right|that'?s right|sure|okay|ok)\b/i;
 
+/**
+ * A tag question: a statement handed back for confirmation. The tester's own
+ * words were "the kitchen sink and the toilet both are booked, not one
+ * right?" -- no interrogative anywhere, and this module missed it on the
+ * first pass. Everything above looks at how an utterance STARTS, and a tag
+ * question is identified by how it ENDS.
+ *
+ * Requires some statement in front of the tag, so a bare "right" or "okay"
+ * stays what it is: an acknowledgment. PLAIN_ANSWER is checked first for the
+ * same reason -- "yes that's right" ends in "right" and is an answer.
+ */
+const TAG_QUESTION = /\b(right|correct|isn'?t it|aren'?t they|don'?t you|didn'?t i)\s*\??\s*$/i;
+const TAG_MIN_WORDS = 4;
+
 /** True when the caller's utterance contains a direct question that owes them an answer. */
 export function callerAskedAQuestion(transcript: string): boolean {
   const text = transcript.trim();
@@ -62,6 +76,9 @@ export function callerAskedAQuestion(transcript: string): boolean {
   }
   if (PLAIN_ANSWER.test(text)) {
     return false;
+  }
+  if (text.split(/\s+/).length >= TAG_MIN_WORDS && TAG_QUESTION.test(text)) {
+    return true;
   }
   return AUXILIARY_QUESTION.test(text) || WH_QUESTION.test(text);
 }
@@ -84,3 +101,14 @@ export function answerFirst(note: string): string {
       " The caller also just asked you something: answer that in one short sentence first, in this same reply, then do the above and nothing more.]",
     );
 }
+
+/**
+ * The turn's one directive note when the caller asked something and nothing
+ * else needed saying. 2026-10-22 tester call: asked whether both problems
+ * were booked, Grace replied "you are all set, anything else" and only then
+ * answered. Kept to one sentence: it is reinforcing a rule the prompt
+ * already states, not introducing a new one.
+ */
+export const ANSWER_THE_QUESTION_NOTE =
+  "[The caller just asked you something. Your FIRST sentence answers it, in their terms, " +
+  "before anything else -- never a wrap-up, a read-back or the next question first.]";

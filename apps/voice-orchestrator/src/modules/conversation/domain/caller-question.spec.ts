@@ -20,6 +20,10 @@ describe("callerAskedAQuestion", () => {
     "it's 4512 maple street, and can someone come out today",
     "am I speaking to a real person",
     "my sink is leaking, do you do that kind of work",
+    // The tester's own words, 2026-10-22: a tag question, with no
+    // interrogative anywhere in it.
+    "the kitchen sink and the toilet both are booked, not one right",
+    "so someone's coming out tomorrow, correct",
   ])("hears the question in %p", (said) => {
     expect(callerAskedAQuestion(said)).toBe(true);
   });
@@ -33,6 +37,10 @@ describe("callerAskedAQuestion", () => {
     "that's where it's leaking from",
     "my name is akash",
     "as soon as possible",
+    "yes that's right",
+    "right",
+    "correct",
+    "it's leaking right now",
     "",
   ])("does not hear a question in %p", (said) => {
     expect(callerAskedAQuestion(said)).toBe(false);

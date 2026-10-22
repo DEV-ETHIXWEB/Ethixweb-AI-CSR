@@ -42,7 +42,11 @@ import {
   buildCallNotes,
   formatCallNotes,
 } from "../domain/call-notes";
-import { answerFirst, callerAskedAQuestion } from "../domain/caller-question";
+import {
+  ANSWER_THE_QUESTION_NOTE,
+  answerFirst,
+  callerAskedAQuestion,
+} from "../domain/caller-question";
 import { compressMessages } from "../domain/context-window";
 import {
   isHoldRequest,
@@ -616,12 +620,36 @@ export class HandleTurnUseCase {
       annotatedTranscript = `${directive(NAME_MISSING_NOTE)} ${annotatedTranscript}`;
     } else if (needsCallbackNumber) {
       annotatedTranscript = `${directive(callbackNumberNote(conversation.callerAni))} ${annotatedTranscript}`;
+    } else if (owesAnAnswer) {
+      // 2026-10-22 tester call: asked whether both problems were booked, the
+      // reply was "you are all set, anything else" and the answer came after
+      // it. No note fires on a turn like that, so the answer-first clause
+      // above had nothing to attach to -- it becomes the turn's one directive
+      // note instead. Same instruction the prompt already carries; it is here
+      // because being the LAST thing the model reads is what makes a rule
+      // hold on this model (the whole reason this module has notes at all).
+      annotatedTranscript = `${ANSWER_THE_QUESTION_NOTE} ${annotatedTranscript}`;
     }
     // See call-notes.ts: what the caller already said, restated every turn so
     // nothing they gave is asked for again or said back under a new name.
     // Skipped while trailing off — see the priority comment above.
+    // ONE buildCallNotes per turn. It used to be called again for each of
+    // the two guard facts below, inside a method the tool loop can run five
+    // times -- fifteen scans of the whole call where one does, on the path a
+    // caller is waiting on.
+    const notes = buildCallNotes(callerTextsSoFar, conversation.transcript);
+    const houseNumber = notes.street?.split(" ")[0] ?? "";
+    const guardFacts = {
+      // The name the CALLER gave this call, never a matched record's: several
+      // people share a phone number. See output-guard.ts VOCATIVE_TRAILING.
+      callerName: notes.spelledName?.[0] ?? notes.statedName?.split(/\s+/)[0] ?? null,
+      // See output-guard.ts mentionsHouseNumber: lets a readback be
+      // recognised when the street type is not in the same sentence.
+      houseNumber: /^\d{3,6}$/.test(houseNumber) ? houseNumber : null,
+      repeatRequested: wantsItAgain,
+    };
     if (!isTrailingOff) {
-      const callNotes = formatCallNotes(buildCallNotes(callerTextsSoFar, conversation.transcript));
+      const callNotes = formatCallNotes(notes);
       if (callNotes) {
         annotatedTranscript = `${callNotes} ${annotatedTranscript}`;
       }
@@ -694,6 +722,7 @@ export class HandleTurnUseCase {
           tools,
           command.signal,
           iteration,
+          guardFacts,
           onChunk,
           responseText,
         );
@@ -1312,6 +1341,8 @@ export class HandleTurnUseCase {
     tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>,
     signal: AbortSignal | undefined,
     iteration: number,
+    /** Facts the output guard needs about THIS call, built once per turn. */
+    guardFacts: { callerName: string | null; houseNumber: string | null; repeatRequested: boolean },
     onChunk?: (text: string) => void,
     /** What earlier passes of this same turn already said, so a later pass cannot say it again. */
     alreadySaidThisTurn = "",
@@ -1336,14 +1367,9 @@ export class HandleTurnUseCase {
       // this call, so a different one cannot be spoken at them. Taken from
       // the same call notes the model is shown, so the guard and the model
       // are never working from different names.
-      callerFirstName(conversation),
-      // See output-guard.ts's mentionsHouseNumber: the house number the
-      // caller gave, so a readback is recognised as one even when the street
-      // type is not in the same sentence.
-      callerHouseNumber(conversation),
-      // See OutputGuard's own `repeatRequested`: the repeat suppression must
-      // not swallow a repeat the caller asked for.
-      isRepeatRequest(lastCallerText(conversation)),
+      guardFacts.callerName,
+      guardFacts.houseNumber,
+      guardFacts.repeatRequested,
     );
     const emit = (segment: string): void => {
       const guarded = guard.apply(segment);
@@ -1875,37 +1901,6 @@ export class HandleTurnUseCase {
   private appendTranscript(conversation: Conversation, turn: TranscriptTurn): void {
     conversation.transcript.push(turn);
   }
-}
-
-/**
- * The first name the CALLER gave this call, spelled version preferred, or
- * null. Deliberately not the name on any matched record: several people
- * share a phone number, which is why the prompt forbids ever saying a stored
- * name at all.
- */
-function callerFirstName(conversation: Conversation): string | null {
-  const callerTexts = conversation.transcript
-    .filter((entry) => entry.speaker === "caller")
-    .map((entry) => entry.text);
-  const notes = buildCallNotes(callerTexts, conversation.transcript);
-  return notes.spelledName?.[0] ?? notes.statedName?.split(/\s+/)[0] ?? null;
-}
-
-/** The caller's most recent utterance, or an empty string. */
-function lastCallerText(conversation: Conversation): string {
-  return (
-    conversation.transcript.filter((entry) => entry.speaker === "caller").at(-1)?.text ?? ""
-  );
-}
-
-/** The house number from the street the caller gave, or null. */
-function callerHouseNumber(conversation: Conversation): string | null {
-  const callerTexts = conversation.transcript
-    .filter((entry) => entry.speaker === "caller")
-    .map((entry) => entry.text);
-  const street = buildCallNotes(callerTexts, conversation.transcript).street;
-  const houseNumber = street?.split(" ")[0] ?? "";
-  return /^\d{3,6}$/.test(houseNumber) ? houseNumber : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
