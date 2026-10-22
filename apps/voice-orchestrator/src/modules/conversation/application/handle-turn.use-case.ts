@@ -36,7 +36,12 @@ import { ProviderCompletionError } from "../../ai-provider/domain/errors";
 import { EVENT_BUS, type EventBusPort } from "../../events/domain/orchestrator-event";
 import { ExecuteToolUseCase } from "../../tool-broker/application/execute-tool.use-case";
 import { ToolRegistry } from "../../tool-broker/application/tool-registry";
-import { addressReadbackNote, buildCallNotes, formatCallNotes } from "../domain/call-notes";
+import {
+  addressDisputeNote,
+  addressReadbackNote,
+  buildCallNotes,
+  formatCallNotes,
+} from "../domain/call-notes";
 import { compressMessages } from "../domain/context-window";
 import {
   isHoldRequest,
@@ -555,10 +560,20 @@ export class HandleTurnUseCase {
     const pendingReadback = isTrailingOff
       ? null
       : addressReadbackNote(callerTextsSoFar, agentTextsSoFar);
-    const needsName = !isTrailingOff && !pendingReadback && shouldNudgeForName(conversation);
+    // Ranked below pendingReadback deliberately: a correction that arrives as
+    // a whole parseable address is already handled there, and better (it says
+    // the new address back). This covers the corrections that do not parse,
+    // which used to produce no note at all. See addressDisputeNote.
+    const addressDisputed =
+      !isTrailingOff && !pendingReadback
+        ? addressDisputeNote(callerTextsSoFar, agentTextsSoFar)
+        : null;
+    const needsName =
+      !isTrailingOff && !pendingReadback && !addressDisputed && shouldNudgeForName(conversation);
     const needsCallbackNumber =
       !isTrailingOff &&
       !pendingReadback &&
+      !addressDisputed &&
       !needsName &&
       shouldNudgeForCallbackNumber({
         callerTexts: callerTextsSoFar,
@@ -570,6 +585,8 @@ export class HandleTurnUseCase {
       annotatedTranscript = `${TRAILING_FRAGMENT_NOTE} ${annotatedTranscript}`;
     } else if (pendingReadback) {
       annotatedTranscript = `${pendingReadback} ${annotatedTranscript}`;
+    } else if (addressDisputed) {
+      annotatedTranscript = `${addressDisputed} ${annotatedTranscript}`;
     } else if (needsName) {
       // Client feedback: a call could run several turns of triage without
       // ever asking for the caller's name, and prompt wording alone did not

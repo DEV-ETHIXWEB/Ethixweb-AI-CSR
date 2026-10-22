@@ -489,6 +489,73 @@ function capitalize(word: string): string {
   return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
+/** Our own readback output: hyphenated digits beside a street word. Nothing a caller says looks like this. */
+function readBackAnAddress(agentText: string): boolean {
+  return (
+    /\d-\d/.test(agentText) &&
+    /\b(street|st|avenue|ave|road|rd|drive|dr|lane|ln|way|place|pl|court|ct|boulevard|blvd|circle|cir|terrace|ter|parkway|pkwy|highway|hwy)\b/i.test(
+      agentText,
+    )
+  );
+}
+
+/** "my address is wrong", "that's not the street" — a dispute stated in words, at any point in the call. */
+const ADDRESS_DISPUTED =
+  /\b(wrong|not|isn'?t|aren'?t|different|incorrect|changed)\b[^.?!]{0,30}\b(address|street|house number|zip|zipcode)\b|\b(address|street|house number|zip|zipcode)\b[^.?!]{0,30}\b(is|was|isn'?t|not)\b[^.?!]{0,20}\b(wrong|right|correct|different|incorrect|changed|that)\b/i;
+
+/** A bare "no" opening the reply to a readback. */
+const OPENING_NEGATION = /^\s*(no|nope|nah|wrong|that'?s not|thats not|i said|i didn'?t say)\b/i;
+
+/** "No hot water", "no rush", "no idea" — a negation that starts a fact, not a correction. */
+const NEGATION_OF_SOMETHING_ELSE =
+  /^\s*(no|nope|nah)\b[\s,]*(hot|cold|warm|water|heat|pressure|rush|hurry|problem|worries|one|body|idea|clue|leak|damage)\b/i;
+
+const DISPUTE_MAX_WORDS = 10;
+
+/**
+ * 2026-10-22 tester call: "I kept saying that address is something else but
+ * it didn't pay attention to it and kept on moving like you are all set."
+ *
+ * `addressReadbackNote` below already handles a correction, but only one
+ * that arrives as a WHOLE parseable address (house number, name and street
+ * type). Real corrections rarely do: "no, it's Maple, not Main", "I said
+ * four five one two", "that's not my address". None of those parse, so no
+ * note fired at all — and the call notes still carried the OLD street under
+ * "never ask again for anything listed here", which is an instruction to do
+ * exactly what the caller was complaining about.
+ *
+ * Two shapes count, both narrow on purpose. A dispute said in words
+ * ("my address is wrong") at any point; or a short reply opening with a
+ * plain negation immediately after Grace read an address back, where there
+ * is nothing else it could be about. Negations that open an ordinary fact
+ * ("no hot water") are excluded by name, since that is the false positive
+ * that would cost a caller a re-asked address they had already given.
+ */
+export function addressDisputeNote(
+  callerTexts: readonly string[],
+  agentTexts: readonly string[],
+): string | null {
+  const latest = (callerTexts.at(-1) ?? "").trim();
+  if (!latest) {
+    return null;
+  }
+  const disputedInWords = ADDRESS_DISPUTED.test(latest);
+  const negatedAReadback =
+    OPENING_NEGATION.test(latest) &&
+    !NEGATION_OF_SOMETHING_ELSE.test(latest) &&
+    latest.split(/\s+/).length <= DISPUTE_MAX_WORDS &&
+    readBackAnAddress(agentTexts.at(-1) ?? "");
+  if (!disputedInWords && !negatedAReadback) {
+    return null;
+  }
+  return (
+    "[The caller is telling you the service address is wrong. The street in the call notes above " +
+    "is NOT confirmed: ignore it. Your whole reply: ask for the one part they are correcting " +
+    "(house number, or street name, or ZIP) in one short question. Do not move on, do not close " +
+    "the call, and do not say they are all set until they have confirmed the corrected address.]"
+  );
+}
+
 /**
  * QA 2026-10-13: a caller who volunteered the address while Grace was waiting
  * on a different question ("is it leaking right now?") was ignored, and she
@@ -526,15 +593,8 @@ export function addressReadbackNote(
         ].join(" ")
       : street;
   // Has the agent already read back a different address? If so, this is a
-  // correction -- not a first-time readback. Detected by hyphenated digits
-  // near a street suffix, which only appear in our own readback output.
-  const everReadBackAddress = agentTexts.some(
-    (text) =>
-      /\d-\d/.test(text) &&
-      /\b(street|st|avenue|ave|road|rd|drive|dr|lane|ln|way|place|pl|court|ct|boulevard|blvd|circle|cir|terrace|ter|parkway|pkwy|highway|hwy)\b/i.test(
-        text,
-      ),
-  );
+  // correction -- not a first-time readback.
+  const everReadBackAddress = agentTexts.some(readBackAnAddress);
   if (everReadBackAddress) {
     return `[The caller corrected their address to "${spokenStreet}". Say ONLY "Got it, ${spokenStreet}." and continue to the next question. Do NOT read the full address again or ask them to confirm it a second time.]`;
   }

@@ -1,4 +1,9 @@
-import { addressReadbackNote, buildCallNotes, formatCallNotes } from "./call-notes";
+import {
+  addressDisputeNote,
+  addressReadbackNote,
+  buildCallNotes,
+  formatCallNotes,
+} from "./call-notes";
 
 /**
  * Shapes taken from real calls (the previous vendor's October calls and our
@@ -201,5 +206,48 @@ describe("several problems in one call", () => {
       buildCallNotes(["the toilet, the sink, the shower and the dishwasher are all backed up"])
         .fixtures,
     ).toHaveLength(3);
+  });
+});
+
+/**
+ * 2026-10-22 tester call: "I kept saying that address is something else but
+ * it didn't pay attention to it and kept on moving like you are all set."
+ * addressReadbackNote only ever handled a correction that arrived as a whole
+ * parseable address; real corrections rarely do.
+ */
+describe("addressDisputeNote", () => {
+  const readback = "So that's 4-5-1-2 Maple Street, 9-8-0-3-2?";
+
+  it.each([
+    "no, that's not my address",
+    "that's the wrong address",
+    "my address is different",
+    "I said four five one two",
+    "no, it's Maple, not Main",
+  ])("catches the correction %p", (said) => {
+    expect(addressDisputeNote([said], [readback])).toContain("service address is wrong");
+  });
+
+  it("catches a dispute stated in words even with no readback before it", () => {
+    expect(addressDisputeNote(["you've got the wrong street"], ["Can I get your name?"])).toContain(
+      "service address is wrong",
+    );
+  });
+
+  it("tells the model to stop treating the street in the notes as confirmed", () => {
+    const note = addressDisputeNote(["no that's wrong"], [readback])!;
+    expect(note).toContain("ignore it");
+    expect(note).toContain("do not say they are all set");
+  });
+
+  it.each([
+    ["no hot water", readback],
+    ["no rush", readback],
+    ["no idea", readback],
+    ["no", "Is it leaking right now?"],
+    ["no, it's my home", "Is this for a home or a business?"],
+    ["yes that's right", readback],
+  ])("does not fire on %p, which is not a correction", (said, lastReply) => {
+    expect(addressDisputeNote([said], [lastReply])).toBeNull();
   });
 });
