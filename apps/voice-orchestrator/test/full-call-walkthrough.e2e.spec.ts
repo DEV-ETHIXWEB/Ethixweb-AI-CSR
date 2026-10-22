@@ -263,4 +263,119 @@ describe("a whole call, and whether every injected instruction still agrees", ()
       expect(sent.length).toBeLessThan(2600);
     }
   }, 30_000);
+
+  /**
+   * The second tester's finding, end to end: "after the conversation reaches
+   * the end and if the client asks for the information to be repeated the
+   * csr starts taking extremely long pauses... sometimes the same line
+   * arises that is im here speak up."
+   *
+   * Three separate fixes have to work TOGETHER for this to come out right —
+   * the asking has to be recognised, the output guard's repeat suppression
+   * has to stand down for it, and the turn must not come back empty. Any one
+   * of them failing alone reproduces the finding, which is why this is
+   * checked on a real call rather than three times in isolation.
+   */
+  it("repeats the details at the end of a call instead of going silent", async () => {
+    sim.coreApiClient.postResponses.set("/internal/customers", { id: CUSTOMER_ID });
+    sim.coreApiClient.postResponses.set("/internal/leads", { id: randomUUID() });
+    const conversation = await startConversation();
+
+    const setUp = [
+      { caller: "my water heater is leaking", model: says("Sorry about that. Can I get your name?") },
+      { caller: "it's Tom", model: says("Thanks Tom. What's the address?") },
+      {
+        caller: "1200 pine street, 98101",
+        model: says("So that's 1-2-oh-oh Pine Street, 9-8-1-oh-1. Is that right?"),
+      },
+      { caller: "yes", model: says("Is 206-555-0147 the best number for you?") },
+      { caller: "yes that's fine", model: says("You're all set. The team will call you.") },
+    ];
+    for (const step of setUp) {
+      sim.aiProvider.responses = [step.model];
+      sim.aiProvider.reset();
+      await sim.inject({
+        method: "POST",
+        url: `/v1/conversations/${conversation.id}/turns`,
+        headers: authHeader(sim.serviceToken),
+        payload: {
+          tenantId: conversation.tenantId,
+          idempotencyKey: randomUUID(),
+          transcript: step.caller,
+          allowedTools: ALL_TOOLS,
+        },
+      });
+    }
+
+    // The caller asks for the details back — and the model answers with text
+    // that REPEATS what it already said, which is exactly what was being
+    // dropped as a repeated statement before.
+    sim.aiProvider.responses = [
+      says("Sure — Tom, 1-2-oh-oh Pine Street, 9-8-1-oh-1, and 206-555-0147."),
+    ];
+    sim.aiProvider.reset();
+    const res = await sim.inject({
+      method: "POST",
+      url: `/v1/conversations/${conversation.id}/turns`,
+      headers: authHeader(sim.serviceToken),
+      payload: {
+        tenantId: conversation.tenantId,
+        idempotencyKey: randomUUID(),
+        transcript: "can you repeat the information you have",
+        allowedTools: ALL_TOOLS,
+      },
+    });
+
+    const sent = sim.aiProvider.requests.at(-1)?.messages.filter((m) => m.role === "user").at(-1)
+      ?.content;
+    expect(String(sent)).toContain("did not hear you, or asked you to say it again");
+    const spoken = String(parseTurnResult(res)["responseText"]);
+    // Spoken, not dropped, and it is the details — not the fallback line.
+    expect(spoken).toContain("Pine Street");
+    expect(spoken).not.toContain("Sorry about the pause there");
+  }, 30_000);
+
+  /**
+   * An emergency, which is the one path where the save gates must get OUT of
+   * the way: speed beats a complete record. Checks that the whole chain
+   * still agrees about that — the gates, the backstop and the transfer
+   * signal the runtime acts on.
+   */
+  it("gets an emergency to the team without a gate blocking it", async () => {
+    sim.coreApiClient.postResponses.set("/internal/customers", { id: CUSTOMER_ID });
+    sim.coreApiClient.postResponses.set("/internal/leads", { id: randomUUID() });
+    sim.coreApiClient.postResponses.set("/internal/emergency-rules/escalate", {
+      isEmergency: true,
+      severity: "critical",
+      action: "forward_call",
+      transferDestination: "+12065559999",
+    });
+    const conversation = await startConversation();
+
+    sim.aiProvider.responses = [
+      callsTool("escalateEmergency", {
+        description: "burst pipe, water everywhere in the basement",
+      }),
+      says("That sounds urgent — shut off the main water valve if you can. Connecting you now."),
+    ];
+    sim.aiProvider.reset();
+
+    const res = await sim.inject({
+      method: "POST",
+      url: `/v1/conversations/${conversation.id}/turns`,
+      headers: authHeader(sim.serviceToken),
+      payload: {
+        tenantId: conversation.tenantId,
+        idempotencyKey: randomUUID(),
+        transcript: "a pipe burst, there's water everywhere in my basement",
+        allowedTools: ALL_TOOLS,
+      },
+    });
+
+    const result = parseTurnResult(res);
+    expect(result["escalation"]).toMatchObject({ action: "forward_call" });
+    expect(String(result["responseText"]).length).toBeGreaterThan(0);
+    // The caller hears the safety line before anything hands the call off.
+    expect(String(result["responseText"])).toContain("valve");
+  }, 30_000);
 });
