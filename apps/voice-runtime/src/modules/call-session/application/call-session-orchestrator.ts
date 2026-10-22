@@ -423,6 +423,21 @@ export class CallSessionOrchestrator {
   /** See `buildSilentTurnFallback`'s own comment — round-robins so a call that happens to hit this fallback more than once doesn't repeat the exact same line. */
   private silentTurnFallbackIndex = 0;
   /** See `handleFinalTranscriptCandidate`'s own comment — a finalized transcript flagged as a likely fragment, accumulated here while waiting to see if more follows, instead of starting a turn immediately. */
+  /**
+   * Inbound audio frames this call has received, reported on every silence
+   * check-in. 2026-10-22, after a client reported the line "not listening":
+   * two real calls received ZERO frames and nothing in the logs said so, so
+   * "the caller went quiet" and "we never heard a thing" were
+   * indistinguishable after the fact.
+   *
+   * Only reported, not acted on. Using it to bring the "I might not be
+   * hearing you" line forward to the first check-in was tried and backed
+   * out: it is worth about fifteen seconds in a rare failure, and it would
+   * have rewritten twelve passing tests in the most carefully covered part
+   * of this class, because a test emits transcripts without sending frames
+   * while a real call sends frames even through silence.
+   */
+  private audioFramesReceived = 0;
   /** True once any turn has reported a saved lead — see SILENCE_WRAP_UP_PHRASE. Never goes back to false: a lead cannot be un-created. */
   private requestSaved = false;
   private pendingFragment: { transcript: string; confidence: number } | null = null;
@@ -617,6 +632,7 @@ export class CallSessionOrchestrator {
 
   /** Forwards one inbound Twilio Media Stream audio frame into the live STT session. No-op if the session never opened (start already failed and the call is being torn down). */
   onAudioFrame(frame: Buffer): void {
+    this.audioFramesReceived += 1;
     this.sttSession?.sendAudio(frame);
   }
 
@@ -1293,6 +1309,7 @@ export class CallSessionOrchestrator {
           ? SILENCE_WRAP_UP_PHRASE
           : SILENCE_TROUBLE_HEARING_PHRASE;
     this.logger.info("silence check-in: no caller activity detected for the full timeout", {
+      audioFramesReceived: this.audioFramesReceived,
       conversationId: this.conversationId,
       timeoutMs: silenceCheckInTimeoutMs(),
       checkInNumber: this.silenceCheckInCount,

@@ -208,6 +208,15 @@ export class MediaStreamGateway implements BeforeApplicationShutdown {
       close: () => socket.close(),
     };
 
+    // 2026-10-22, after a client reported the line "not listening": two
+    // consecutive real calls produced ZERO audio frames (Deepgram closed
+    // with 1011 "did not receive audio data"), and the logs could not say
+    // WHY. Twilio sending no media, and Twilio sending media that the
+    // `track === "inbound"` filter below discards, look identical from the
+    // outside: both end as silence with no error anywhere. These counters
+    // make the two distinguishable in one grep.
+    const media = { events: 0, inbound: 0, otherTrack: new Map<string, number>() };
+
     socket.on("message", (raw: Buffer) => {
       const message = parseTwilioMessage(raw.toString());
       if (!message) {
@@ -309,8 +318,19 @@ export class MediaStreamGateway implements BeforeApplicationShutdown {
         // "no response for 30-40 seconds" — not a timeout or retry
         // issue, a self-poisoned transcript that could only occasionally
         // resolve to real text by chance.
+        media.events += 1;
         if (message.media.track === "inbound") {
+          media.inbound += 1;
           orchestrator.onAudioFrame(Buffer.from(message.media.payload, "base64"));
+        } else {
+          const track = String(message.media.track ?? "(absent)");
+          media.otherTrack.set(track, (media.otherTrack.get(track) ?? 0) + 1);
+          // Loud, once, the first time a frame is dropped for a reason
+          // other than being our own echo: an unexpected or missing track
+          // label means the caller's audio is being discarded wholesale.
+          if (track !== "outbound" && media.otherTrack.get(track) === 1) {
+            log.error("dropping caller audio: unexpected media track label", { track });
+          }
         }
         return;
       }
@@ -327,6 +347,16 @@ export class MediaStreamGateway implements BeforeApplicationShutdown {
     });
 
     socket.on("close", () => {
+      // One line per call saying what audio actually arrived. A call that
+      // ends with inbound 0 is the "not listening" failure, and `events`
+      // says immediately whether Twilio sent nothing at all or we dropped
+      // what it sent.
+      const level = media.inbound === 0 ? "warn" : "info";
+      log[level]("media stream audio summary", {
+        mediaEvents: media.events,
+        inboundFrames: media.inbound,
+        droppedByTrack: Object.fromEntries(media.otherTrack),
+      });
       // Untrack on close rather than on the `stop` event: `stop` doesn't
       // arrive on a raw network drop, and a call that never releases its
       // slot would hold shutdown open for the full drain timeout.

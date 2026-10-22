@@ -50,6 +50,45 @@ async function connect(
   return socket;
 }
 
+interface Recorded {
+  level: "info" | "warn" | "error";
+  msg: string;
+  context: Record<string, unknown>;
+}
+
+/** Records what was logged, for the audio-accounting tests below. */
+function createRecordingLogger(entries: Recorded[]) {
+  const make = (level: Recorded["level"]) => (msg: string, context?: Record<string, unknown>) => {
+    entries.push({ level, msg, context: context ?? {} });
+  };
+  const logger = {
+    child: () => logger,
+    debug: () => undefined,
+    info: make("info"),
+    warn: make("warn"),
+    error: make("error"),
+  };
+  return logger as unknown as ReturnType<typeof createNoopLogger>;
+}
+
+/** `connect()`, but with a logger whose output the test can read. */
+async function connectWithLog(
+  orchestrator: ReturnType<typeof buildFakeOrchestrator>,
+  entries: Recorded[],
+): Promise<FakeSocket> {
+  const moduleRef = { resolve: async () => orchestrator } as unknown as ModuleRef;
+  const gateway = new MediaStreamGateway(moduleRef, createRecordingLogger(entries));
+  const socket = new FakeSocket();
+  let connected: Promise<void> = Promise.resolve();
+  gateway.register({
+    get: (_path: string, _opts: unknown, handler: (conn: unknown) => Promise<void>) => {
+      connected = handler({ socket });
+    },
+  } as never);
+  await connected;
+  return socket;
+}
+
 /**
  * Twilio's documented `start` event shape — same customParameters this
  * gateway's own `register()` reads. Includes a genuinely valid
@@ -416,5 +455,72 @@ describe("MediaStreamGateway — concurrency log", () => {
     socket.close();
 
     expect(lines.filter((line) => line.msg === "call concurrency")).toEqual([]);
+  });
+});
+
+/**
+ * 2026-10-22, after a client reported the line "not listening": two real
+ * consecutive calls received ZERO audio frames. Deepgram closed with 1011
+ * ("did not receive audio data") twelve seconds in, and nothing anywhere
+ * could say whether Twilio had sent no media at all or had sent media this
+ * gateway's own inbound-track filter discarded. From outside, both are just
+ * silence, which is why a client-visible failure could not be explained.
+ */
+describe("MediaStreamGateway — audio accounting", () => {
+  beforeEach(() => {
+    process.env["TWILIO_AUTH_TOKEN"] = TEST_AUTH_TOKEN;
+  });
+
+  it("warns on close when not one inbound frame arrived, and says none was sent", async () => {
+    const entries: Recorded[] = [];
+    const socket = await connectWithLog(buildFakeOrchestrator(), entries);
+    socket.emit("message", Buffer.from(startMessage()));
+    socket.close();
+
+    const summary = entries.find((e) => e.msg === "media stream audio summary");
+    expect(summary?.level).toBe("warn");
+    expect(summary?.context["mediaEvents"]).toBe(0);
+    expect(summary?.context["inboundFrames"]).toBe(0);
+  });
+
+  it("counts the frames it forwarded, at info, on a healthy call", async () => {
+    const entries: Recorded[] = [];
+    const socket = await connectWithLog(buildFakeOrchestrator(), entries);
+    socket.emit("message", Buffer.from(startMessage()));
+    socket.emit("message", Buffer.from(mediaMessage("inbound")));
+    socket.emit("message", Buffer.from(mediaMessage("inbound")));
+    socket.emit("message", Buffer.from(mediaMessage("outbound")));
+    socket.close();
+
+    const summary = entries.find((e) => e.msg === "media stream audio summary");
+    expect(summary?.level).toBe("info");
+    expect(summary?.context["mediaEvents"]).toBe(3);
+    expect(summary?.context["inboundFrames"]).toBe(2);
+    expect(summary?.context["droppedByTrack"]).toEqual({ outbound: 1 });
+  });
+
+  /**
+   * The case that would otherwise be invisible: media IS arriving, and
+   * every frame of it is being thrown away because the track label is not
+   * the one expected. Silence to the caller, and a healthy-looking socket.
+   */
+  it("shouts once when caller audio is dropped for an unexpected track label", async () => {
+    const entries: Recorded[] = [];
+    const socket = await connectWithLog(buildFakeOrchestrator(), entries);
+    socket.emit("message", Buffer.from(startMessage()));
+    socket.emit("message", Buffer.from(mediaMessage(undefined)));
+    socket.emit("message", Buffer.from(mediaMessage(undefined)));
+    socket.close();
+
+    const shouts = entries.filter(
+      (e) => e.msg === "dropping caller audio: unexpected media track label",
+    );
+    expect(shouts).toHaveLength(1);
+    expect(shouts[0]?.level).toBe("error");
+    expect(shouts[0]?.context["track"]).toBe("(absent)");
+    const summary = entries.find((e) => e.msg === "media stream audio summary");
+    expect(summary?.context["mediaEvents"]).toBe(2);
+    expect(summary?.context["inboundFrames"]).toBe(0);
+    expect(summary?.context["droppedByTrack"]).toEqual({ "(absent)": 2 });
   });
 });
