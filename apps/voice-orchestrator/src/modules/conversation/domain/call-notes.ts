@@ -304,7 +304,7 @@ export function formatCallNotes(notes: CallNotes): string | null {
   // SEVERAL, too -- one problem has never been seen getting lost, and adding
   // a line to every turn of every call to fix a two-problem bug would change
   // calls that are working.
-    const problems =
+  const problems =
     notes.fixtures.length > 1
       ? ` The caller has raised more than one separate problem: ${notes.fixtures.join("; ")}.` +
         " Keep them separate, name each one as the caller did, and never let one stand for the" +
@@ -328,7 +328,13 @@ export function formatCallNotes(notes: CallNotes): string | null {
 export function spellOut(name: string): string {
   return name
     .split(/\s+/)
-    .map((word) => word.replace(/[^a-z]/gi, "").toUpperCase().split("").join("-"))
+    .map((word) =>
+      word
+        .replace(/[^a-z]/gi, "")
+        .toUpperCase()
+        .split("")
+        .join("-"),
+    )
     .filter((word) => word.length > 0)
     .join(", ");
 }

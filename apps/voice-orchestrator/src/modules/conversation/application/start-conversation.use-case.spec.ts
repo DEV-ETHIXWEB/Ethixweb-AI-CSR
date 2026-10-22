@@ -367,7 +367,9 @@ describe("StartConversationUseCase", () => {
       expect(lookups[0]?.body).toEqual({ businessId: "business-1", phoneE164: "+15551234567" });
       expect(conversation.searchCustomerEverChecked).toBe(true);
       expect(conversation.customerId).toBe("cust-9");
-      expect(conversation.systemPrompt).toContain("a previous customer record exists for this phone number");
+      expect(conversation.systemPrompt).toContain(
+        "a previous customer record exists for this phone number",
+      );
       expect(conversation.systemPrompt).not.toContain("Larry");
       expect(conversation.customerDetailsOnFile).toBe(false);
       expect(conversation.systemPrompt).toContain("cust-9");

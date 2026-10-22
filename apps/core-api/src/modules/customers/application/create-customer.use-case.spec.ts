@@ -142,4 +142,3 @@ describe("CreateCustomerUseCase", () => {
     expect(later.address).toEqual({ street: "1912 9th Ave W" });
   });
 });
-

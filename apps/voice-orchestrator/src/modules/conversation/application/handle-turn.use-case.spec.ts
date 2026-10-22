@@ -808,8 +808,22 @@ describe("HandleTurnUseCase", () => {
       const at = new Date().toISOString();
       const priorTranscript = [
         ...fillerTranscript(4),
-        { turnIndex: 4, speaker: "caller" as const, text: "it's 1200 Pine Street", confidence: null, offsetMs: 0, at },
-        { turnIndex: 5, speaker: "agent" as const, text: "So that's 1200 Pine Street?", confidence: null, offsetMs: 0, at },
+        {
+          turnIndex: 4,
+          speaker: "caller" as const,
+          text: "it's 1200 Pine Street",
+          confidence: null,
+          offsetMs: 0,
+          at,
+        },
+        {
+          turnIndex: 5,
+          speaker: "agent" as const,
+          text: "So that's 1200 Pine Street?",
+          confidence: null,
+          offsetMs: 0,
+          at,
+        },
       ];
       repository.seed(baseConversation({ transcript: priorTranscript }));
       const aiProvider = new FakeAiProvider();
@@ -942,12 +956,28 @@ describe("HandleTurnUseCase", () => {
     it("createCustomer failing with 'no CRM configured' for the FIRST time THIS TURN still protects THIS turn's own response, not just later ones", async () => {
       const repository = new FakeConversationRepository();
       const at = new Date().toISOString();
-      repository.seed(baseConversation({
-        transcript: [
-          { turnIndex: 0, speaker: "caller", text: "it's 1200 Pine Street", confidence: null, offsetMs: 0, at },
-          { turnIndex: 1, speaker: "agent", text: "So that's 1200 Pine Street?", confidence: null, offsetMs: 0, at },
-        ],
-      }));
+      repository.seed(
+        baseConversation({
+          transcript: [
+            {
+              turnIndex: 0,
+              speaker: "caller",
+              text: "it's 1200 Pine Street",
+              confidence: null,
+              offsetMs: 0,
+              at,
+            },
+            {
+              turnIndex: 1,
+              speaker: "agent",
+              text: "So that's 1200 Pine Street?",
+              confidence: null,
+              offsetMs: 0,
+              at,
+            },
+          ],
+        }),
+      );
       const aiProvider = new FakeAiProvider();
       aiProvider.responses = [
         [
@@ -1021,8 +1051,22 @@ describe("HandleTurnUseCase", () => {
       const at = new Date().toISOString();
       const priorTranscript = [
         ...fillerTranscript(4),
-        { turnIndex: 4, speaker: "caller" as const, text: "it's 1200 Pine Street", confidence: null, offsetMs: 0, at },
-        { turnIndex: 5, speaker: "agent" as const, text: "So that's 1200 Pine Street?", confidence: null, offsetMs: 0, at },
+        {
+          turnIndex: 4,
+          speaker: "caller" as const,
+          text: "it's 1200 Pine Street",
+          confidence: null,
+          offsetMs: 0,
+          at,
+        },
+        {
+          turnIndex: 5,
+          speaker: "agent" as const,
+          text: "So that's 1200 Pine Street?",
+          confidence: null,
+          offsetMs: 0,
+          at,
+        },
       ];
       repository.seed(baseConversation({ transcript: priorTranscript }));
       const aiProvider = new FakeAiProvider();
@@ -4014,8 +4058,14 @@ describe("a turn can never run long and silent (2026-10-22 'I'm having trouble')
     const aiProvider = new FakeAiProvider();
     aiProvider.responses = [
       [saveCall, { type: "done", stopReason: "tool_use" }],
-      [{ ...saveCall, toolCall: { ...saveCall.toolCall, id: "call-2" } }, { type: "done", stopReason: "tool_use" }],
-      [{ type: "text_delta", text: "You're all set." }, { type: "done", stopReason: "end_turn" }],
+      [
+        { ...saveCall, toolCall: { ...saveCall.toolCall, id: "call-2" } },
+        { type: "done", stopReason: "tool_use" },
+      ],
+      [
+        { type: "text_delta", text: "You're all set." },
+        { type: "done", stopReason: "end_turn" },
+      ],
     ];
     const createCustomerHandler = {
       execute: jest.fn().mockResolvedValue({ customer_id: "c1", created: true }),
@@ -4126,7 +4176,14 @@ describe("a lead is never saved without the caller's own reason for calling", ()
         customerId: "cust-9",
         customerDetailsOnFile: true,
         transcript: [
-          { turnIndex: 0, speaker: "caller", text: firstCallerLine, confidence: null, offsetMs: 0, at },
+          {
+            turnIndex: 0,
+            speaker: "caller",
+            text: firstCallerLine,
+            confidence: null,
+            offsetMs: 0,
+            at,
+          },
           {
             turnIndex: 1,
             speaker: "agent",
@@ -4207,7 +4264,10 @@ describe("a caller's own question survives a directive note", () => {
     const aiProvider = new FakeAiProvider();
     aiProvider.responses = [
       [
-        { type: "text_delta", text: "The team confirms timing when they call. Is that address right?" },
+        {
+          type: "text_delta",
+          text: "The team confirms timing when they call. Is that address right?",
+        },
         { type: "done", stopReason: "end_turn" },
       ],
     ];

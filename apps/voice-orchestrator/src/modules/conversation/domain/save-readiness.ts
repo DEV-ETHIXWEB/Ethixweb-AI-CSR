@@ -277,13 +277,22 @@ export function callbackNumberNote(
 }
 
 /** The caller's name as spoken letters for the closing confirmation, or null when there is no name to confirm. */
-function nameLetters(name?: { spelled: readonly string[] | null; stated: string | null }): string | null {
+function nameLetters(name?: {
+  spelled: readonly string[] | null;
+  stated: string | null;
+}): string | null {
   const words = name?.spelled ?? name?.stated?.split(/\s+/).filter(Boolean) ?? null;
   if (!words || words.length === 0) {
     return null;
   }
   return words
-    .map((word) => word.replace(/[^a-z]/gi, "").toUpperCase().split("").join("-"))
+    .map((word) =>
+      word
+        .replace(/[^a-z]/gi, "")
+        .toUpperCase()
+        .split("")
+        .join("-"),
+    )
     .filter((word) => word.length > 0)
     .join(", ");
 }

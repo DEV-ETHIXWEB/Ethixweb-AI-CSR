@@ -106,7 +106,10 @@ describe("saveBlockedReason (client feedback: no submitting before name and addr
     };
 
     it("blocks a save when the callback number was never asked about", () => {
-      const result = saveBlockedReason({ ...withAddress, agentTexts: ["What's your address?", "So that's 1200 Pine Street?"] });
+      const result = saveBlockedReason({
+        ...withAddress,
+        agentTexts: ["What's your address?", "So that's 1200 Pine Street?"],
+      });
       expect(result?.error).toBe("callback_number_not_confirmed");
     });
 

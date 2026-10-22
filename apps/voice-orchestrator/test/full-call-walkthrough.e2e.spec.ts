@@ -282,7 +282,10 @@ describe("a whole call, and whether every injected instruction still agrees", ()
     const conversation = await startConversation();
 
     const setUp = [
-      { caller: "my water heater is leaking", model: says("Sorry about that. Can I get your name?") },
+      {
+        caller: "my water heater is leaking",
+        model: says("Sorry about that. Can I get your name?"),
+      },
       { caller: "it's Tom", model: says("Thanks Tom. What's the address?") },
       {
         caller: "1200 pine street, 98101",
@@ -326,8 +329,10 @@ describe("a whole call, and whether every injected instruction still agrees", ()
       },
     });
 
-    const sent = sim.aiProvider.requests.at(-1)?.messages.filter((m) => m.role === "user").at(-1)
-      ?.content;
+    const sent = sim.aiProvider.requests
+      .at(-1)
+      ?.messages.filter((m) => m.role === "user")
+      .at(-1)?.content;
     expect(String(sent)).toContain("did not hear you, or asked you to say it again");
     const spoken = String(parseTurnResult(res)["responseText"]);
     // Spoken, not dropped, and it is the details — not the fallback line.

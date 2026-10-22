@@ -188,7 +188,10 @@ export function collapseSpokenDigits(text: string): string {
   // looking for its digits in that output — found 2026-10-22 when the first
   // version of this rewrite stopped recognising it and the address
   // read-back fired a second time as a "correction".
-  const words = text.toLowerCase().split(/[\s-]+/).filter(Boolean);
+  const words = text
+    .toLowerCase()
+    .split(/[\s-]+/)
+    .filter(Boolean);
   const cores = words.map(stripEdges);
   const out: string[] = [];
   let index = 0;

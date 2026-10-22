@@ -182,7 +182,7 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
       expect(lower).toContain("read the whole address back once");
       expect(lower).toContain("say back only that corrected part");
       expect(lower).toContain("never read the whole address again");
-      expect(lower).toContain("a yes or \"that's right\" is final");
+      expect(lower).toContain('a yes or "that\'s right" is final');
       expect(lower).toContain("the house number and a numbered street ran together");
     });
 

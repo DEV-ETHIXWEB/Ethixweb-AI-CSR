@@ -508,9 +508,11 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       const paths = sim.coreApiClient.postCalls.map((call) => call.path);
       expect(paths[0]).toBe("/internal/calls");
       expect(paths).not.toContain("/internal/leads");
-      expect(paths.filter((path) => path !== "/internal/calls" && path !== "/internal/customers/resolve")).toEqual(
-        [],
-      );
+      expect(
+        paths.filter(
+          (path) => path !== "/internal/calls" && path !== "/internal/customers/resolve",
+        ),
+      ).toEqual([]);
       expect(parseTurnResult(res)["responseText"]).toContain("recovered gracefully");
     });
 
@@ -832,9 +834,11 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       // customer, so a count broke whenever a backstop was added.
       const paths = sim.coreApiClient.postCalls.map((call) => call.path);
       expect(paths[0]).toBe("/internal/calls");
-      expect(paths.filter((path) => path !== "/internal/calls" && path !== "/internal/customers/resolve")).toEqual(
-        [],
-      );
+      expect(
+        paths.filter(
+          (path) => path !== "/internal/calls" && path !== "/internal/customers/resolve",
+        ),
+      ).toEqual([]);
     });
   });
 

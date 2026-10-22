@@ -13,7 +13,11 @@ import {
   saveBlockedReason,
   shouldNudgeForCallbackNumber,
 } from "../domain/save-readiness";
-import { isNameGroundedInCaller, NAME_NOT_GIVEN_ERROR, DUPLICATE_NAME_ERROR } from "../domain/name-grounding";
+import {
+  isNameGroundedInCaller,
+  NAME_NOT_GIVEN_ERROR,
+  DUPLICATE_NAME_ERROR,
+} from "../domain/name-grounding";
 import { randomUUID } from "node:crypto";
 import {
   classifyZip,
@@ -574,9 +578,8 @@ export class HandleTurnUseCase {
     // everything else: a caller who did not hear has nothing to answer yet,
     // so no other note on this turn is relevant. See isRepeatRequest.
     const wantsItAgain = !isTrailingOff && isRepeatRequest(command.transcript);
-    const pendingReadback = isTrailingOff || wantsItAgain
-      ? null
-      : addressReadbackNote(callerTextsSoFar, agentTextsSoFar);
+    const pendingReadback =
+      isTrailingOff || wantsItAgain ? null : addressReadbackNote(callerTextsSoFar, agentTextsSoFar);
     // Ranked below pendingReadback deliberately: a correction that arrives as
     // a whole parseable address is already handled there, and better (it says
     // the new address back). This covers the corrections that do not parse,
@@ -2029,7 +2032,10 @@ const MAX_SPEECH_SEGMENT_CHARS = 220;
  * itself if there isn't even one of those — better to speak an
  * unpunctuated run than let latency grow unbounded.
  */
-function findSpeechSegmentBoundary(buffer: string, minChars = MIN_SPEECH_SEGMENT_CHARS): number | null {
+function findSpeechSegmentBoundary(
+  buffer: string,
+  minChars = MIN_SPEECH_SEGMENT_CHARS,
+): number | null {
   if (buffer.length >= MAX_SPEECH_SEGMENT_CHARS) {
     const window = buffer.slice(0, MAX_SPEECH_SEGMENT_CHARS);
     const lastClause = Math.max(window.lastIndexOf(", "), window.lastIndexOf("; "));

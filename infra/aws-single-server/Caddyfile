@@ -3,10 +3,43 @@
 #   voice.15-134-237-50.sslip.io   (Twilio webhooks + media WebSocket)
 #   app.15-134-237-50.sslip.io     (operations dashboard)
 
+# Response headers both public hosts get. Added 2026-10-22 during a
+# production-readiness audit, which found no security headers anywhere —
+# not in Caddy, not in next.config.mjs, not in the dashboard middleware —
+# on a host that serves customer names, addresses and phone numbers.
+#
+# Set here rather than per app because Caddy is the single thing both
+# hostnames pass through, so neither service can be redeployed without it.
+#
+# What is deliberately NOT here: a full Content-Security-Policy. Next.js
+# serves inline bootstrap scripts and styles, so a real script-src policy
+# needs nonces wired through the app and has to be tested against every
+# page — a blind one breaks the dashboard. `frame-ancestors` is the half
+# that is safe to set without that work, and it is the half that stops
+# clickjacking. A full CSP is a tracked follow-up, not a silent omission.
+(security_headers) {
+	header {
+		# One year, no preload: these are sslip.io hostnames for the test
+		# deployment, and preloading a host this platform does not own
+		# would outlive the deployment itself.
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Content-Security-Policy "frame-ancestors 'none'"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Cross-Origin-Opener-Policy "same-origin"
+		# Caddy advertises itself by default; version banners only help
+		# someone fingerprinting the host.
+		-Server
+	}
+}
+
 {$VOICE_HOST} {
+	import security_headers
 	reverse_proxy voice-runtime:3200
 }
 
 {$APP_HOST} {
+	import security_headers
 	reverse_proxy dashboard:3001
 }

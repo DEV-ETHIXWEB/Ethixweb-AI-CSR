@@ -1,9 +1,4 @@
-import {
-  isPureBackchannel,
-  isRepeatRequest,
-  isStalledReply,
-  trailsOff,
-} from "./stalled-reply";
+import { isPureBackchannel, isRepeatRequest, isStalledReply, trailsOff } from "./stalled-reply";
 
 describe("isStalledReply", () => {
   it.each([

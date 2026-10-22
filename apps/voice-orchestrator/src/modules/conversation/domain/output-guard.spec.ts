@@ -291,14 +291,16 @@ describe("OutputGuard 2026-10-15: [slowly] consolidation", () => {
 
 describe("OutputGuard 2026-10-15: word limit", () => {
   it("drops sentences past the soft word limit", () => {
-    const long = "Got it, no hot water. Is there any water leaking or flooding anywhere right now? Thanks for telling me. Since you have no hot water, the team needs to see this. What is the service address?";
+    const long =
+      "Got it, no hot water. Is there any water leaking or flooding anywhere right now? Thanks for telling me. Since you have no hot water, the team needs to see this. What is the service address?";
     const out = new OutputGuard().apply(long);
     const wordCount = out.split(/\s+/).filter(Boolean).length;
     expect(wordCount).toBeLessThan(40);
   });
 
   it("always keeps the first sentence even if it is long", () => {
-    const single = "Got it, the team will look at your water heater issue and the technician will give you a flat rate quote before any work begins.";
+    const single =
+      "Got it, the team will look at your water heater issue and the technician will give you a flat rate quote before any work begins.";
     const out = new OutputGuard().apply(single);
     expect(out).toContain("flat rate quote");
   });
@@ -449,13 +451,14 @@ describe("a spelling that is not the caller's own", () => {
     expect(out).toContain("O-K-O-N-K-W-O");
   });
 
-  it.each([["Jose", "jose", "J-O-S-E"], ["Luz", "luz", "L-U-Z"], ["Kwame", "kwame", "K-W-A-M-E"]])(
-    "works for %p regardless of length or origin",
-    (_name, word, letters) => {
-      const guard = new OutputGuard([], false, "", _name, null, false, [word]);
-      expect(guard.apply("So that's J-O-S-E-P-H, right?")).toContain(letters);
-    },
-  );
+  it.each([
+    ["Jose", "jose", "J-O-S-E"],
+    ["Luz", "luz", "L-U-Z"],
+    ["Kwame", "kwame", "K-W-A-M-E"],
+  ])("works for %p regardless of length or origin", (_name, word, letters) => {
+    const guard = new OutputGuard([], false, "", _name, null, false, [word]);
+    expect(guard.apply("So that's J-O-S-E-P-H, right?")).toContain(letters);
+  });
 
   it("leaves a correct spelling exactly as it was", () => {
     const guard = new OutputGuard([], false, "", "Siobhan", null, false, ["siobhan"]);

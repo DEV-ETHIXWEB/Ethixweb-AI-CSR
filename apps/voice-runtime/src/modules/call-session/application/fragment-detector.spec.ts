@@ -205,4 +205,3 @@ describe("fragmentStrength (client feedback: silent hold for a caller who is sti
     expect(fragmentStrength("that's who it's from")).toBe("none");
   });
 });
-

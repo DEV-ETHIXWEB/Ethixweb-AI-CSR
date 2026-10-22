@@ -25,7 +25,18 @@ services:
     restart: unless-stopped
     # Live call state, idempotency keys and capacity slots only, all with TTLs
     # of a few hours. Nothing here needs to survive a restart.
-    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "192mb", "--maxmemory-policy", "volatile-lru"]
+    command:
+      [
+        "redis-server",
+        "--save",
+        "",
+        "--appendonly",
+        "no",
+        "--maxmemory",
+        "192mb",
+        "--maxmemory-policy",
+        "volatile-lru",
+      ]
 
   core-api:
     image: ethixweb/core-api:current

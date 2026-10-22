@@ -13,12 +13,12 @@ local `.env` files.
 All four are Node apps in this monorepo with their own Dockerfile
 (`apps/<name>/Dockerfile`, built from the repo root). Fly region was `sjc`.
 
-| Service | Port | Health check | Fly size | Always on | Notes |
-|---|---|---|---|---|---|
-| core-api | 3000 | `GET /healthz` | shared-cpu-1x, 1 GB | yes, 1 machine | Only service that talks to Postgres |
-| voice-orchestrator | 3100 | `GET /healthz` | shared-cpu-1x, 1 GB | yes, min 1 | Calls Anthropic, keeps conversations in Redis |
-| voice-runtime | 3200 | `GET /healthz` | performance-1x, 2 GB | yes, 2 machines | Twilio media WebSocket. Needs dedicated CPU (shared CPU made audio stutter) and long-lived WebSocket support on the load balancer |
-| dashboard | 3001 | none | shared-cpu-1x, 1 GB | min 1 | Next.js, `HOSTNAME=0.0.0.0` |
+| Service            | Port | Health check   | Fly size             | Always on       | Notes                                                                                                                             |
+| ------------------ | ---- | -------------- | -------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| core-api           | 3000 | `GET /healthz` | shared-cpu-1x, 1 GB  | yes, 1 machine  | Only service that talks to Postgres                                                                                               |
+| voice-orchestrator | 3100 | `GET /healthz` | shared-cpu-1x, 1 GB  | yes, min 1      | Calls Anthropic, keeps conversations in Redis                                                                                     |
+| voice-runtime      | 3200 | `GET /healthz` | performance-1x, 2 GB | yes, 2 machines | Twilio media WebSocket. Needs dedicated CPU (shared CPU made audio stutter) and long-lived WebSocket support on the load balancer |
+| dashboard          | 3001 | none           | shared-cpu-1x, 1 GB  | min 1           | Next.js, `HOSTNAME=0.0.0.0`                                                                                                       |
 
 Non-secret env set in `fly.toml`: `NODE_ENV=production` and `PORT` as above for
 all four; `SHUTDOWN_DRAIN_TIMEOUT_MS=30000` on voice-runtime, with a 35 s kill
@@ -27,17 +27,18 @@ HTTPS).
 
 ## 2. Environment variables (names only)
 
-| Service | Variables |
-|---|---|
-| core-api | `DATABASE_URL`, `MIGRATION_DATABASE_URL`, `REDIS_URL`, `CORE_API_SERVICE_API_KEY`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `INTEGRATION_CREDENTIALS_MASTER_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` |
-| voice-orchestrator | `ANTHROPIC_API_KEY`, `CORE_API_BASE_URL`, `CORE_API_SERVICE_API_KEY`, `ORCHESTRATOR_SERVICE_TOKEN`, `REDIS_URL`, `AI_PROVIDER_FALLBACK_ORDER`, `DEFAULT_LLM_MODEL` |
-| voice-runtime | `DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL_ID`, `EMERGENCY_TRANSFER_NUMBER`, `ORCHESTRATOR_SERVICE_TOKEN`, `PUBLIC_BASE_URL`, `VOICE_ORCHESTRATOR_BASE_URL`, `TENANT_ROUTING_DEFAULT_BUSINESS_ID`, `TENANT_ROUTING_DEFAULT_TENANT_ID`, `TENANT_ROUTING_DEFAULT_TIMEZONE`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` |
-| dashboard | `CORE_API_BASE_URL` |
+| Service            | Variables                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| core-api           | `DATABASE_URL`, `MIGRATION_DATABASE_URL`, `REDIS_URL`, `CORE_API_SERVICE_API_KEY`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `INTEGRATION_CREDENTIALS_MASTER_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`                                                                                                                                                |
+| voice-orchestrator | `ANTHROPIC_API_KEY`, `CORE_API_BASE_URL`, `CORE_API_SERVICE_API_KEY`, `ORCHESTRATOR_SERVICE_TOKEN`, `REDIS_URL`, `AI_PROVIDER_FALLBACK_ORDER`, `DEFAULT_LLM_MODEL`                                                                                                                                                                                                                 |
+| voice-runtime      | `DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL_ID`, `EMERGENCY_TRANSFER_NUMBER`, `ORCHESTRATOR_SERVICE_TOKEN`, `PUBLIC_BASE_URL`, `VOICE_ORCHESTRATOR_BASE_URL`, `TENANT_ROUTING_DEFAULT_BUSINESS_ID`, `TENANT_ROUTING_DEFAULT_TENANT_ID`, `TENANT_ROUTING_DEFAULT_TIMEZONE`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` |
+| dashboard          | `CORE_API_BASE_URL`                                                                                                                                                                                                                                                                                                                                                                |
 
 Pairs that must match: `CORE_API_SERVICE_API_KEY` (core-api and
 orchestrator) and `ORCHESTRATOR_SERVICE_TOKEN` (orchestrator and runtime).
 
 Not in the local `.env` files, so they have to be recreated:
+
 - `CORE_API_SERVICE_API_KEY` for core-api: generate a new one and set it on both services.
 - `ELEVENLABS_MODEL_ID`: optional, a model name rather than a secret; check the ElevenLabs console.
 - The production `JWT_*` secrets: new ones only mean dashboard users sign in again.

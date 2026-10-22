@@ -11,7 +11,9 @@ describe("spelledWordsIn", () => {
 
   it("reads the 'S for Sam' convention, which used to yield nothing at all", () => {
     expect(
-      spelledWordsIn("s for sam, i for india, o for oscar, b for boy, h for harry, a for apple, n for nancy"),
+      spelledWordsIn(
+        "s for sam, i for india, o for oscar, b for boy, h for harry, a for apple, n for nancy",
+      ),
     ).toEqual(["siobhan"]);
   });
 

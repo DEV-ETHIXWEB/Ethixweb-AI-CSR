@@ -5,10 +5,7 @@ import { APP_LOGGER } from "../../../shared/observability/app-logger.module";
 import { setSpanAttributes } from "../../../shared/observability/tracing";
 import { AssembleSystemPromptUseCase } from "../../prompt/application/assemble-system-prompt.use-case";
 import { DEFAULT_GRACE_PERSONA } from "../../prompt/domain/grace-persona";
-import {
-  formatStoredAddress,
-  type RuntimeContext,
-} from "../../prompt/domain/runtime-context";
+import { formatStoredAddress, type RuntimeContext } from "../../prompt/domain/runtime-context";
 import { EVENT_BUS, type EventBusPort } from "../../events/domain/orchestrator-event";
 import {
   CORE_API_CLIENT,

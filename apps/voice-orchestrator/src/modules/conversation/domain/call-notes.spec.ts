@@ -100,26 +100,17 @@ describe("buildCallNotes", () => {
 
 describe("2026-10-15: spelled name split when stated name has multiple words", () => {
   it("splits 'kentjohn' into 'kent' and 'john' when stated name was 'Kings John'", () => {
-    const notes = buildCallNotes([
-      "yes my name is kings john",
-      "k e n t j o h n",
-    ]);
+    const notes = buildCallNotes(["yes my name is kings john", "k e n t j o h n"]);
     expect(notes.spelledName).toEqual(["kent", "john"]);
   });
 
   it("does not split when stated name has one word", () => {
-    const notes = buildCallNotes([
-      "my name is peterson",
-      "p e t e r s o n",
-    ]);
+    const notes = buildCallNotes(["my name is peterson", "p e t e r s o n"]);
     expect(notes.spelledName).toEqual(["peterson"]);
   });
 
   it("does not split when lengths diverge too much", () => {
-    const notes = buildCallNotes([
-      "my name is al jones",
-      "a l e x a n d e r",
-    ]);
+    const notes = buildCallNotes(["my name is al jones", "a l e x a n d e r"]);
     expect(notes.spelledName).toEqual(["alexander"]);
   });
 });
@@ -135,10 +126,7 @@ describe("addressReadbackNote (QA 2026-10-13: a volunteered address was ignored)
   });
 
   it("uses oh for zeros in the ZIP readback", () => {
-    const note = addressReadbackNote(
-      ["It's 3810 248th Place South, Seattle, 98101."],
-      [],
-    );
+    const note = addressReadbackNote(["It's 3810 248th Place South, Seattle, 98101."], []);
     expect(note).toContain("9-8-1-oh-1");
   });
 
@@ -281,10 +269,13 @@ describe("a hard name spelled out", () => {
   });
 
   it("captures letter names once Grace has asked for the spelling", () => {
-    const notes = buildCallNotes(["oh kay oh en kay double u oh"], [
-      { speaker: "agent", text: "Could you spell that for me?" },
-      { speaker: "caller", text: "oh kay oh en kay double u oh" },
-    ]);
+    const notes = buildCallNotes(
+      ["oh kay oh en kay double u oh"],
+      [
+        { speaker: "agent", text: "Could you spell that for me?" },
+        { speaker: "caller", text: "oh kay oh en kay double u oh" },
+      ],
+    );
     expect(notes.spelledName?.[0]).toContain("okonk");
   });
 

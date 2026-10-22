@@ -30,7 +30,9 @@ export interface RuntimeContext {
 }
 
 /** A stored address JSON ({street, city, state, zip}) as one line, or null when there is no street. */
-export function formatStoredAddress(address: Record<string, unknown> | null | undefined): string | null {
+export function formatStoredAddress(
+  address: Record<string, unknown> | null | undefined,
+): string | null {
   if (!address) {
     return null;
   }
@@ -76,9 +78,9 @@ function formatBusinessHours(businessHours: RuntimeContext["businessHours"]): st
 export function customerMatchIsComplete(match: RuntimeContext["existingCustomerMatch"]): boolean {
   return Boolean(
     match?.found &&
-      match.name &&
-      !PLACEHOLDER_NAMES.has(match.name.trim().toLowerCase()) &&
-      match.address,
+    match.name &&
+    !PLACEHOLDER_NAMES.has(match.name.trim().toLowerCase()) &&
+    match.address,
   );
 }
 
@@ -97,7 +99,7 @@ function formatCustomerMatch(match: RuntimeContext["existingCustomerMatch"]): st
   const id = match.customerId ? ` (customer_id ${match.customerId})` : "";
   return (
     `a previous customer record exists for this phone number${id}. Several people can share a phone, ` +
-    "so never say a stored name or address, never ask \"Am I speaking with...\" and never say you already have their information. " +
+    'so never say a stored name or address, never ask "Am I speaking with..." and never say you already have their information. ' +
     "Collect the caller's name and service address exactly as for a new caller, then call createCustomer, which updates this record, then createLead"
   );
 }

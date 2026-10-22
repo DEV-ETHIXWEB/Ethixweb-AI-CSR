@@ -5,15 +5,15 @@ Everything runs on one EC2 machine with Docker Compose. It is for testing, not
 for US production: Sydney adds call latency, and one machine has no failover.
 The move to a US region is planned once the account is upgraded.
 
-| Item | Value |
-|---|---|
-| AWS account | 493116365060 ("Blank Canvas" project), region `ap-southeast-2` |
-| Machine | EC2 `c7i-flex.large` (2 vCPU, 4 GB), Amazon Linux 2023, 30 GB gp3, 2 GB swap |
-| Name tag | `ethixweb-csr` (instance, volume, Elastic IP); security group `ethixweb-csr` |
-| Public IP | Elastic IP 15.134.237.50 |
-| Public URLs | `https://voice.15-134-237-50.sslip.io` (Twilio), `https://app.15-134-237-50.sslip.io` (dashboard) |
-| Private only | core-api, voice-orchestrator, Postgres 16, Redis 7 |
-| SSH | `ssh -i ~/.ssh/ethixweb-csr.pem ec2-user@15.134.237.50` (port 22 open to one IP only) |
+| Item         | Value                                                                                             |
+| ------------ | ------------------------------------------------------------------------------------------------- |
+| AWS account  | 493116365060 ("Blank Canvas" project), region `ap-southeast-2`                                    |
+| Machine      | EC2 `c7i-flex.large` (2 vCPU, 4 GB), Amazon Linux 2023, 30 GB gp3, 2 GB swap                      |
+| Name tag     | `ethixweb-csr` (instance, volume, Elastic IP); security group `ethixweb-csr`                      |
+| Public IP    | Elastic IP 15.134.237.50                                                                          |
+| Public URLs  | `https://voice.15-134-237-50.sslip.io` (Twilio), `https://app.15-134-237-50.sslip.io` (dashboard) |
+| Private only | core-api, voice-orchestrator, Postgres 16, Redis 7                                                |
+| SSH          | `ssh -i ~/.ssh/ethixweb-csr.pem ec2-user@15.134.237.50` (port 22 open to one IP only)             |
 
 `sslip.io` turns the IP into a hostname so Caddy can get free Let's Encrypt
 certificates without any DNS setup.

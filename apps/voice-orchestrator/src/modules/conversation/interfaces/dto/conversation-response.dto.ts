@@ -87,7 +87,7 @@ export class TurnResultResponseDto {
   humanTransfer?: { reason: string; transferDestination: string | null };
   @ApiProperty({
     description:
-      "True once a lead actually exists for this call. The only honest signal for \"the request is in\": toolCallsExecuted lists every tool ATTEMPTED, a refused createLead included.",
+      'True once a lead actually exists for this call. The only honest signal for "the request is in": toolCallsExecuted lists every tool ATTEMPTED, a refused createLead included.',
   })
   requestSaved: boolean;
 

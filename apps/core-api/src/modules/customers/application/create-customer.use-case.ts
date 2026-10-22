@@ -12,7 +12,10 @@ import {
   CRM_CUSTOMER_SYNC_PORT,
   type CrmCustomerSyncPort,
 } from "../domain/ports/crm-customer-sync.port";
-import { CUSTOMER_REPOSITORY, type CustomerRepository } from "../domain/ports/customer-repository.port";
+import {
+  CUSTOMER_REPOSITORY,
+  type CustomerRepository,
+} from "../domain/ports/customer-repository.port";
 import { CustomerCacheUpserter } from "./customer-cache-upserter";
 
 export interface CreateCustomerCommand {

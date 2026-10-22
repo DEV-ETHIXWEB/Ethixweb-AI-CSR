@@ -24,16 +24,27 @@ export default tseslint.config(
       "**/*.mjs",
       "apps/dashboard/.next/**",
       "apps/dashboard/.next-types/**",
-      // Ignored rather than listed in `allowDefaultProject` below:
-      // typescript-eslint caps that list at 8 files matched per project,
-      // and voice-orchestrator's eight measure-*.ts scripts already sit
-      // exactly on that cap, so adding a ninth fails the whole lint run
-      // with "Too many files (>8) have matched the default project."
-      // This is a standalone CLI QA harness, never imported by src and
-      // never compiled into the app, so lint coverage of it buys little;
-      // `pnpm run typecheck` and the suite's own execution are what
-      // actually keep it honest.
-      "apps/voice-orchestrator/scripts/qa-suite.ts",
+      // Standalone CLI dev/QA harnesses: never imported by src, never
+      // compiled into an app, run by hand.
+      //
+      // 2026-10-22, found during a production-readiness audit: this used to
+      // list only qa-suite.ts, to keep voice-orchestrator's remaining eight
+      // scripts exactly ON typescript-eslint's cap of 8 files matched per
+      // default project. Two more scripts were added in September, which
+      // put it at nine and failed the whole lint run with "Too many files
+      // (>8) have matched the default project" — so `pnpm run lint`, and
+      // therefore the CI lint step, had been red on main ever since. The
+      // whole directory is ignored now, which cannot silently tip over
+      // again the next time a script is added.
+      //
+      // Stated honestly, because the comment this replaces got it wrong:
+      // these files are now neither linted NOR type-checked. Each app's
+      // tsconfig `include` is "src" only, and adding "scripts" to it once
+      // broke `nest build`'s output path (dist/main.js -> dist/src/main.js,
+      // because TS then computes a different common rootDir), so that is
+      // not a safe way to cover them either. What keeps them honest is
+      // running them.
+      "apps/*/scripts/**",
     ],
   },
   js.configs.recommended,
@@ -62,18 +73,6 @@ export default tseslint.config(
             // commit). ts-node's own `-T` transpile-only mode never
             // needed these listed here at all; this is purely so the
             // project service can type-check them for linting.
-            "apps/voice-orchestrator/scripts/measure-streaming-latency.ts",
-            "apps/voice-orchestrator/scripts/measure-conversation-quality.ts",
-            "apps/voice-orchestrator/scripts/measure-emotional-delivery.ts",
-            "apps/voice-orchestrator/scripts/measure-critical-fixes.ts",
-            "apps/voice-orchestrator/scripts/measure-create-customer-args.ts",
-            "apps/voice-orchestrator/scripts/measure-grace-persona.ts",
-            "apps/voice-orchestrator/scripts/build-street-index.ts",
-            "apps/voice-orchestrator/scripts/measure-full-stack-audit.ts",
-            "apps/voice-orchestrator/scripts/measure-mood-conversion.ts",
-            "apps/voice-runtime/scripts/measure-tts-latency.ts",
-            "apps/core-api/scripts/seed-all-phase-knowledge.ts",
-            "apps/core-api/scripts/check-tenant-readiness.ts",
           ],
         },
         tsconfigRootDir: import.meta.dirname,
