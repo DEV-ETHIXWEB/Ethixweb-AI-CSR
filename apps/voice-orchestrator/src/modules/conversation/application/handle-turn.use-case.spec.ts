@@ -4172,3 +4172,42 @@ describe("a lead is never saved without the caller's own reason for calling", ()
     expect(createLead.execute).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * 2026-10-22 tester call: "when asked 'can someone come out today?' it
+ * skipped the question and followed the normal routine call." The address
+ * readback note ends with "Ask nothing else", and it is the last instruction
+ * the model reads -- so a caller who gives an address and asks a question in
+ * one breath gets the readback and no answer.
+ */
+describe("a caller's own question survives a directive note", () => {
+  async function noteSentFor(transcript: string): Promise<string> {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "The team confirms timing when they call. Is that address right?" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+    await useCase.execute(baseCommand({ transcript }));
+    const sent = aiProvider.requests[0]!.messages.find((m) => m.role === "user")!.content;
+    return typeof sent === "string" ? sent : "";
+  }
+
+  it("tells the model to answer the question first, inside the same single note", async () => {
+    const sent = await noteSentFor("it's 4512 maple street 98032, and can someone come out today");
+    expect(sent).toContain("answer that in one short sentence first");
+    // Still exactly one directive note, and it no longer contradicts itself.
+    expect(sent.match(/read it back once/g)).toHaveLength(1);
+    expect(sent).not.toContain("Ask nothing else");
+  });
+
+  it("leaves the note exactly as it was when the caller asked nothing", async () => {
+    const sent = await noteSentFor("it's 4512 maple street 98032");
+    expect(sent).not.toContain("answer that in one short sentence first");
+    expect(sent).toContain("Ask nothing else");
+  });
+});

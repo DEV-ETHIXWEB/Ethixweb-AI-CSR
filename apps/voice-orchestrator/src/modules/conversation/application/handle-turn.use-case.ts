@@ -42,6 +42,7 @@ import {
   buildCallNotes,
   formatCallNotes,
 } from "../domain/call-notes";
+import { answerFirst, callerAskedAQuestion } from "../domain/caller-question";
 import { compressMessages } from "../domain/context-window";
 import {
   isHoldRequest,
@@ -581,20 +582,27 @@ export class HandleTurnUseCase {
         customerId: hasUsableCustomer(conversation) ? conversation.customerId : null,
         leadEverAttempted: conversation.leadEverAttempted,
       });
+    // See caller-question.ts: these notes each end by telling the model to
+    // ask nothing else, which is the instruction that made a caller's own
+    // question get skipped. The note stays; it gains a clause that puts the
+    // answer first. Never applied to TRAILING_FRAGMENT_NOTE below, whose
+    // whole point is that the caller has not finished talking yet.
+    const owesAnAnswer = !isTrailingOff && callerAskedAQuestion(command.transcript);
+    const directive = (note: string): string => (owesAnAnswer ? answerFirst(note) : note);
     if (isTrailingOff) {
       annotatedTranscript = `${TRAILING_FRAGMENT_NOTE} ${annotatedTranscript}`;
     } else if (pendingReadback) {
-      annotatedTranscript = `${pendingReadback} ${annotatedTranscript}`;
+      annotatedTranscript = `${directive(pendingReadback)} ${annotatedTranscript}`;
     } else if (addressDisputed) {
-      annotatedTranscript = `${addressDisputed} ${annotatedTranscript}`;
+      annotatedTranscript = `${directive(addressDisputed)} ${annotatedTranscript}`;
     } else if (needsName) {
       // Client feedback: a call could run several turns of triage without
       // ever asking for the caller's name, and prompt wording alone did not
       // hold (a real-model QA scenario failed 4/4 on it). Same "reliability
       // ceiling" reasoning as the reminders above: a deterministic note.
-      annotatedTranscript = annotateNameMissing(annotatedTranscript);
+      annotatedTranscript = `${directive(NAME_MISSING_NOTE)} ${annotatedTranscript}`;
     } else if (needsCallbackNumber) {
-      annotatedTranscript = `${callbackNumberNote(conversation.callerAni)} ${annotatedTranscript}`;
+      annotatedTranscript = `${directive(callbackNumberNote(conversation.callerAni))} ${annotatedTranscript}`;
     }
     // See call-notes.ts: what the caller already said, restated every turn so
     // nothing they gave is asked for again or said back under a new name.
@@ -2317,10 +2325,6 @@ export function shouldNudgeForName(conversation: Conversation): boolean {
   );
   const given = callerTurns.some((entry) => NAME_GIVEN_PATTERN.test(entry.text));
   return !asked && !given;
-}
-
-function annotateNameMissing(transcript: string): string {
-  return `${NAME_MISSING_NOTE} ${transcript}`;
 }
 
 function annotateCloseConsent(transcript: string): string {
