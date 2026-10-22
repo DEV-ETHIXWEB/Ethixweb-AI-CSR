@@ -709,8 +709,10 @@ describe("CallSessionOrchestrator", () => {
       // The exact numbers were compressed on 2026-10-22 (see
       // emotional-delivery.ts: the spread was heard as the voice getting
       // louder), so what is asserted is that the cue changed the delivery.
-      expect(deliveredSettings).not.toEqual(DEFAULT_VOICE_DELIVERY_SETTINGS);
-      expect(deliveredSettings.stability).toBeLessThan(DEFAULT_VOICE_DELIVERY_SETTINGS.stability);
+      // 2026-10-23: a cue changes pace only, never tone ("a real person
+      // should be constant"), so the delivered tone matches the default.
+      expect(deliveredSettings.stability).toBe(DEFAULT_VOICE_DELIVERY_SETTINGS.stability);
+      expect(deliveredSettings.style).toBe(DEFAULT_VOICE_DELIVERY_SETTINGS.style);
     });
 
     it("MISSION EXAMPLE: [pause] splits a response into two spoken segments with an explicit silence gap injected between them", async () => {

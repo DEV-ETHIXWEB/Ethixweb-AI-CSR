@@ -19,10 +19,11 @@ describe("parseDelivery", () => {
     expect(result.segments[0]!.text).toBe("I'm sorry you're dealing with that.");
     expect(result.segments[0]!.text).not.toContain("[");
     expect(result.segments[0]!.text).not.toContain("]");
-    // "sincere"/"warm" both resolve to the same warm/reassuring profile —
-    // lower stability, higher style than the untagged default.
-    expect(result.voiceSettings.stability).toBeLessThan(DEFAULT_VOICE_DELIVERY_SETTINGS.stability);
-    expect(result.voiceSettings.style).toBeGreaterThan(DEFAULT_VOICE_DELIVERY_SETTINGS.style);
+    // 2026-10-23: a cue no longer changes TONE ("sometimes so excited,
+    // sometimes so low ... a real person should be constant"). Stability
+    // and style are identical to the untagged default; only pace may move.
+    expect(result.voiceSettings.stability).toBe(DEFAULT_VOICE_DELIVERY_SETTINGS.stability);
+    expect(result.voiceSettings.style).toBe(DEFAULT_VOICE_DELIVERY_SETTINGS.style);
   });
 
   it("a mid-sentence tag with no surrounding whitespace is stripped without gluing the adjacent words together", () => {
@@ -316,10 +317,22 @@ describe("delivery stays within one volume", () => {
     expect(voiceSettings.speed).toBeLessThanOrEqual(1);
   });
 
-  it("still tells the moods apart, so a cue is not cosmetic", () => {
+  /**
+   * 2026-10-23, reversing what this asserted: Akash relaying Yash, "sometimes
+   * it gets so excited, sometimes it's so low ... an old person will feel
+   * weird." Every cue now shares one tone. A mood may only change the pace.
+   */
+  it("keeps one tone for every mood, and lets only the pace differ", () => {
+    for (const cue of cues) {
+      const settings = parseDelivery(`[${cue}] I'm sorry about that.`).voiceSettings;
+      expect(settings.stability).toBe(DEFAULT_VOICE_DELIVERY_SETTINGS.stability);
+      expect(settings.style).toBe(DEFAULT_VOICE_DELIVERY_SETTINGS.style);
+      expect(settings.speed).toBeGreaterThanOrEqual(0.84);
+      expect(settings.speed).toBeLessThanOrEqual(0.95);
+    }
+    const serious = parseDelivery("[serious] I'm sorry about that.").voiceSettings;
     const warm = parseDelivery("[warm] I'm sorry about that.").voiceSettings;
-    const quiet = parseDelivery("[quiet] I'm sorry about that.").voiceSettings;
-    expect(warm.style).toBeGreaterThan(quiet.style);
+    expect(serious.speed).toBeLessThan(warm.speed);
   });
 
   it("keeps a readback the slowest thing Grace says", () => {

@@ -34,10 +34,20 @@ export interface VoiceDeliverySettings {
  * the pitch/volume variation ElevenLabs applies to intonation changes
  * while still sounding natural, not robotic.
  */
+/**
+ * 2026-10-23: these now match every named profile in
+ * emotional-delivery.ts exactly, on purpose. Akash, relaying Yash:
+ * "sometimes it gets so excited, sometimes it's so low. A real person should
+ * be constant." A sentence Grace writes WITHOUT a delivery cue used to come
+ * out at stability 0.55 / style 0 and the very next sentence WITH one at
+ * something else, so the voice changed character mid-reply even after the
+ * profiles themselves were narrowed. Tone is identical cue or no cue now,
+ * and a mood can only move the pace.
+ */
 export const DEFAULT_VOICE_DELIVERY_SETTINGS: VoiceDeliverySettings = {
-  stability: 0.55,
+  stability: 0.6,
   similarityBoost: 0.75,
-  style: 0,
+  style: 0.08,
   speed: 0.92,
 };
 

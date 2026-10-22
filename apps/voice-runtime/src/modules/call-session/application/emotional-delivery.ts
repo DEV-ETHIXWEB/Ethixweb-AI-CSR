@@ -106,12 +106,58 @@ type DeliveryProfile = Partial<Pick<VoiceDeliverySettings, "stability" | "style"
  * change in volume. Speed is left alone except for the one profile that was
  * faster than neutral, which had no reason to be.
  */
-const WARM_REASSURING: DeliveryProfile = { stability: 0.5, style: 0.18, speed: 0.97 };
-const CALM_SERIOUS: DeliveryProfile = { stability: 0.65, style: 0.1, speed: 0.92 };
-const THOUGHTFUL_CURIOUS: DeliveryProfile = { stability: 0.55, style: 0.14, speed: 1 };
-const QUIET_SUBDUED: DeliveryProfile = { stability: 0.6, style: 0.05, speed: 0.9 };
-const CONFIDENT_STEADY: DeliveryProfile = { stability: 0.55, style: 0.12, speed: 1 };
-const RELIEVED_UPBEAT: DeliveryProfile = { stability: 0.5, style: 0.16, speed: 1 };
+/**
+ * 2026-10-23, Akash relaying Yash: "sometimes it gets so excited, sometimes
+ * it's so low. A real person should be constant, a normal feeling. If it
+ * gets too excited, too loud, an old person will feel weird."
+ *
+ * The 2026-10-22 pass narrowed the spread (style 0.4 -> 0.18, stability
+ * floor 0.5) and that was not enough, so the remaining variation in TONE is
+ * removed outright. Every cue now shares one stability and one style: the
+ * voice has a single character for the whole call, and a mood can only
+ * change the PACE, inside a narrow band.
+ *
+ * Why pace and not tone: speed is the one dimension a listener reads as
+ * attentiveness rather than volume. Slowing slightly for something serious
+ * sounds careful; brightening the timbre for good news is what reads as
+ * "excited" on a phone line, and on a bad line it reads as shouting.
+ *
+ * `slowly` is deliberately still well below all of these, because a read-back
+ * is the one thing that genuinely needs a different pace.
+ */
+const STEADY_STABILITY = 0.6;
+const STEADY_STYLE = 0.08;
+
+const WARM_REASSURING: DeliveryProfile = {
+  stability: STEADY_STABILITY,
+  style: STEADY_STYLE,
+  speed: 0.95,
+};
+const CALM_SERIOUS: DeliveryProfile = {
+  stability: STEADY_STABILITY,
+  style: STEADY_STYLE,
+  speed: 0.9,
+};
+const THOUGHTFUL_CURIOUS: DeliveryProfile = {
+  stability: STEADY_STABILITY,
+  style: STEADY_STYLE,
+  speed: 0.95,
+};
+const QUIET_SUBDUED: DeliveryProfile = {
+  stability: STEADY_STABILITY,
+  style: STEADY_STYLE,
+  speed: 0.9,
+};
+const CONFIDENT_STEADY: DeliveryProfile = {
+  stability: STEADY_STABILITY,
+  style: STEADY_STYLE,
+  speed: 0.95,
+};
+const RELIEVED_UPBEAT: DeliveryProfile = {
+  stability: STEADY_STABILITY,
+  style: STEADY_STYLE,
+  speed: 0.95,
+};
 
 const EMOTION_PROFILES: Record<string, DeliveryProfile> = {
   sincere: WARM_REASSURING,
@@ -119,24 +165,24 @@ const EMOTION_PROFILES: Record<string, DeliveryProfile> = {
   warm: WARM_REASSURING,
   gentle: WARM_REASSURING,
   reassuring: WARM_REASSURING,
-  softly: { ...QUIET_SUBDUED, style: 0.08 },
+  softly: QUIET_SUBDUED,
   serious: CALM_SERIOUS,
   concerned: CALM_SERIOUS,
   calm: CALM_SERIOUS,
   curious: THOUGHTFUL_CURIOUS,
   thoughtful: THOUGHTFUL_CURIOUS,
-  building: { stability: 0.5, style: 0.16, speed: 1 },
+  building: { stability: STEADY_STABILITY, style: STEADY_STYLE, speed: 0.95 },
   confident: CONFIDENT_STEADY,
   relieved: RELIEVED_UPBEAT,
   frustrated: QUIET_SUBDUED,
-  tired: { ...QUIET_SUBDUED, speed: 0.88 },
+  tired: { ...QUIET_SUBDUED, speed: 0.9 },
   quiet: QUIET_SUBDUED,
   // Not a true rendered sigh sound — that requires ElevenLabs' higher-
   // latency v3 dialogue endpoint (see this file's own top comment). Here
   // it's approximated as a subdued, slightly slower delivery, honestly
   // short of the real thing.
-  sighs: { ...QUIET_SUBDUED, speed: 0.9 },
-  slower: { speed: 0.85 },
+  sighs: QUIET_SUBDUED,
+  slower: { stability: STEADY_STABILITY, style: STEADY_STYLE, speed: 0.88 },
   // Added by the orchestrator's output guard, never by the model: address and phone
   // read-backs were "not clearly hearable" (client feedback), so they are spoken
   // slower than any emotional cue ever goes. stability raised to 0.6 and speed
