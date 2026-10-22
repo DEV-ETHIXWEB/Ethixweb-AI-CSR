@@ -4445,3 +4445,107 @@ it("stays silent when the caller only said 'mm-hmm', rather than talking at them
 
   expect(result.responseText).toBe("");
 });
+
+/**
+ * FOUND 2026-10-22 in the real tool audit of the last 100 calls, and it was
+ * the single largest cause of lost leads: the model mis-transcribes the UUID
+ * createCustomer just returned, by ONE character.
+ *   createCustomer returned  aef4d425-2d99-4f1c-bf06-35be7ca77643
+ *   createLead passed        aef4d425-2d99-4b1c-bf06-35be7ca77643
+ * core-api answers 404 "Customer not found", the model retries the same
+ * wrong id until the turn's budget is gone, and the request is never saved.
+ * Eleven of thirty-eight createLead calls failed exactly this way.
+ */
+describe("identifiers come from our own records, not the model's copy", () => {
+  const CORRECT = "aef4d425-2d99-4f1c-bf06-35be7ca77643";
+  const MISTYPED = "aef4d425-2d99-4b1c-bf06-35be7ca77643";
+
+  it("uses the customer id createCustomer returned, not the one the model typed", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation({ customerId: CORRECT, customerDetailsOnFile: true }));
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        {
+          type: "tool_call",
+          toolCall: {
+            id: "t1",
+            name: "createLead",
+            arguments: {
+              customer_id: MISTYPED,
+              problem_summary: "kitchen sink backing up",
+              priority: "routine",
+              lead_type: "residential",
+            },
+          },
+        },
+        { type: "done", stopReason: "tool_use" },
+      ],
+      [
+        { type: "text_delta", text: "You're all set." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const createLead = { execute: jest.fn().mockResolvedValue({ lead_id: "lead-1" }) };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "createLead", handler: createLead }],
+    });
+
+    await useCase.execute(
+      baseCommand({
+        transcript: "my kitchen sink is backing up, go ahead and submit it",
+        allowedTools: ["createLead"],
+      }),
+    );
+
+    expect(createLead.execute).toHaveBeenCalledTimes(1);
+    const passed = createLead.execute.mock.calls[0]?.[0] as { customer_id: string };
+    expect(passed.customer_id).toBe(CORRECT);
+  });
+
+  it("leaves the arguments alone when we have no id of our own", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation({ customerId: null, customerDetailsOnFile: true }));
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        {
+          type: "tool_call",
+          toolCall: {
+            id: "t1",
+            name: "createLead",
+            arguments: {
+              customer_id: MISTYPED,
+              problem_summary: "kitchen sink backing up",
+              priority: "routine",
+              lead_type: "residential",
+            },
+          },
+        },
+        { type: "done", stopReason: "tool_use" },
+      ],
+      [
+        { type: "text_delta", text: "Okay." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const createLead = { execute: jest.fn().mockResolvedValue({ lead_id: "lead-1" }) };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "createLead", handler: createLead }],
+    });
+
+    await useCase.execute(
+      baseCommand({
+        transcript: "my kitchen sink is backing up, go ahead and submit it",
+        allowedTools: ["createLead"],
+      }),
+    );
+
+    const passed = createLead.execute.mock.calls[0]?.[0] as { customer_id: string };
+    expect(passed.customer_id).toBe(MISTYPED);
+  });
+});

@@ -572,3 +572,68 @@ describe("a caller who changes their name mid-call", () => {
     expect(formatCallNotes(notes)).toContain("P-R-A-T-E-E-K");
   });
 });
+
+/**
+ * 2026-10-22, from running the last 100 real calls' transcripts back through
+ * this parser. Grace was recorded saying, verbatim:
+ *   'Okay, just to confirm, your name is spelled "O-K-A-Y, T-H-A-T
+ *    apostrophe S, R-I-G-H-T"? What's ...'
+ *   'Your name is S-S-K, spelled as you said it.'
+ * Conversational filler and speech-recognition debris were being written to
+ * the customer record as names.
+ */
+describe("filler and debris are not names", () => {
+  const asNameAnswer = (answer: string) =>
+    buildCallNotes(
+      [answer],
+      [
+        { speaker: "agent", text: "Can I get your name?" },
+        { speaker: "caller", text: answer },
+      ],
+    );
+
+  it.each([
+    ["okay that's right"],
+    ["okay"],
+    ["yeah sure"],
+    ["go ahead"],
+    ["that's right"],
+    ["hi there"],
+    ["hello how are you"],
+    ["no problem"],
+    ["it's fine"],
+    // Three stray letters with nothing to corroborate them.
+    ["s s k"],
+  ])("takes no name from %p", (answer) => {
+    const notes = asNameAnswer(answer);
+    expect(notes.statedName).toBeNull();
+    expect(notes.spelledName).toBeNull();
+  });
+
+  it.each([
+    ["Tom"],
+    ["Tom Harris"],
+    ["Siobhan"],
+    ["Jose Hernandez"],
+    ["Zayn"],
+    ["Kwame"],
+    ["Luz"],
+    ["Guadalupe"],
+  ])("still accepts the real name %p", (answer) => {
+    const notes = asNameAnswer(answer);
+    expect(notes.statedName ?? notes.spelledName?.join(" ")).not.toBeNull();
+  });
+
+  it("keeps a three-letter spelling the caller corroborated", () => {
+    expect(buildCallNotes(["my name is Bob", "b o b"]).spelledName).toEqual(["bob"]);
+    expect(
+      buildCallNotes(
+        ["b o b"],
+        [
+          { speaker: "agent", text: "Could you spell that for me?" },
+          { speaker: "caller", text: "b o b" },
+        ],
+      ).spelledName,
+    ).toEqual(["bob"]);
+  });
+});

@@ -1785,6 +1785,27 @@ export class HandleTurnUseCase {
       return { output: DUPLICATE_NAME_ERROR };
     }
 
+    // The identifiers come from THIS service's own records, never from the
+    // model's copy of them.
+    //
+    // FOUND 2026-10-22 in the real tool audit of the last 100 calls, and it
+    // is the single largest cause of lost leads: the model mis-transcribes
+    // the UUID createCustomer just returned, by ONE character.
+    //   createCustomer returned  aef4d425-2d99-4f1c-bf06-35be7ca77643
+    //   createLead passed        aef4d425-2d99-4b1c-bf06-35be7ca77643
+    //   createCustomer returned  b9856348-874e-4025-9f9d-d9df41581a64
+    //   createLead passed        b9856348-874e-4025-9d9d-d9df41581a64
+    // core-api answers 404 "Customer not found", the model retries the same
+    // wrong id until the turn's budget is gone, and the request is never
+    // saved. Eleven of thirty-eight createLead calls failed this way, which
+    // matches the share of real conversations that ended with no lead.
+    //
+    // Copying a 36-character opaque identifier by hand is not something a
+    // language model should ever have been asked to do, and no prompt
+    // wording fixes it. docs/04 §3.8's own rule applies: the model decides,
+    // infrastructure acts.
+    toolCall = this.withOwnIdentifiers(conversation, toolCall);
+
     try {
       const result = await this.executeTool.execute({
         tenantId: conversation.tenantId,
@@ -1855,6 +1876,39 @@ export class HandleTurnUseCase {
    * runtime" has no other channel a real, out-of-process Voice Runtime can
    * observe.
    */
+  /**
+   * Replaces a model-supplied `customer_id`/`lead_id` with the one this
+   * service actually created. See the call site for the real-call evidence.
+   */
+  private withOwnIdentifiers(
+    conversation: Conversation,
+    toolCall: AiToolCallRequest,
+  ): AiToolCallRequest {
+    const ours: Array<[string, string, string | null | undefined]> = [
+      ["createLead", "customer_id", conversation.customerId],
+      ["updateLead", "lead_id", conversation.leadId],
+    ];
+    for (const [toolName, field, correct] of ours) {
+      if (toolCall.name !== toolName || !correct) {
+        continue;
+      }
+      const passed = toolCall.arguments[field];
+      if (passed === correct) {
+        continue;
+      }
+      this.logger.warn("replacing the model's identifier with our own", {
+        tenantId: conversation.tenantId,
+        conversationId: conversation.id,
+        toolName,
+        field,
+        passed: typeof passed === "string" ? passed : null,
+        used: correct,
+      });
+      return { ...toolCall, arguments: { ...toolCall.arguments, [field]: correct } };
+    }
+    return toolCall;
+  }
+
   private async reactToToolSuccess(
     conversation: Conversation,
     toolName: string,

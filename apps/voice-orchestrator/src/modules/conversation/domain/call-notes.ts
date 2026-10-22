@@ -185,7 +185,22 @@ export function buildCallNotes(
   );
   const statedFound = statedNameAt(callerTexts);
   const stated = statedFound?.value ?? answeredName(turns);
-  const spelledFound = spelledNameAt(callerTexts, spellingAsked);
+  let spelledFound = spelledNameAt(callerTexts, spellingAsked);
+  // A three-letter spelled run with nothing to corroborate it is far more
+  // often speech-recognition debris than a name. Found 2026-10-22 in a real
+  // transcript: Grace said "Your name is S-S-K, spelled as you said it."
+  // Three letters is kept legitimate when there is a reason to trust it:
+  // Grace asked for a spelling, or the caller also SAID a name that it
+  // matches ("my name is Bob, B O B").
+  if (
+    spelledFound &&
+    spelledFound.words.length === 1 &&
+    (spelledFound.words[0] ?? "").length === 3 &&
+    !spellingAsked &&
+    !statedFound
+  ) {
+    spelledFound = null;
+  }
   // The LATER of the two wins.
   //
   // 2026-10-22, client call: "when I said goodbye it still used my old name
@@ -539,6 +554,43 @@ const NOT_A_NAME_EXTRA = new Set([
   "we",
   "they",
   "them",
+  // Conversational filler taken as a NAME on real calls, found 2026-10-22 by
+  // running the last 100 calls' transcripts back through this parser:
+  // "okay" became the name Okay, "yeah sure" became Sure, and "go ahead"
+  // became Go Ahead. One transcript has Grace saying: 'your name is spelled
+  // "O-K-A-Y, T-H-A-T apostrophe S, R-I-G-H-T"'.
+  "okay",
+  "ok",
+  "kay",
+  "alright",
+  "sure",
+  "right",
+  "correct",
+  "yep",
+  "yup",
+  "nope",
+  "nah",
+  "go",
+  "ahead",
+  "hold",
+  "wait",
+  "hang",
+  "there",
+  "definitely",
+  "absolutely",
+  "exactly",
+  "perfect",
+  "cool",
+  "awesome",
+  "maybe",
+  "probably",
+  "anyway",
+  "nothing",
+  "anything",
+  "everything",
+  "someone",
+  "somebody",
+  "anyone",
 ]);
 
 /**
