@@ -77,6 +77,14 @@ export interface TurnResult {
         transferDestination: string | null;
       }
     | undefined;
+  /**
+   * True once a lead actually exists for this call. NOT derivable from
+   * `toolCallsExecuted`, which lists every tool ATTEMPTED including a
+   * createLead a save gate refused — using that would have this runtime
+   * telling a caller their request was in when it was not. Optional so an
+   * older orchestrator build still parses.
+   */
+  requestSaved?: boolean | undefined;
   /** The non-emergency counterpart to `escalation` — present iff transferToHuman fired this turn. Always this runtime's cue to execute the actual transfer when present (unlike `escalation`, there's no "checked but not urgent" outcome). */
   humanTransfer?:
     | {

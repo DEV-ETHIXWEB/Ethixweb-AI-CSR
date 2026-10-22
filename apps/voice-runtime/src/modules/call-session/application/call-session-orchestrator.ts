@@ -252,6 +252,23 @@ const SILENCE_TROUBLE_HEARING_PHRASE =
   "If you're talking, try speaking up a little, or give me a shout again.";
 
 /**
+ * Said in place of the line above when the caller's request is already
+ * saved. 2026-10-22, second tester: "sometime the same line arises that is
+ * im here speak up altho this would result in the clinet hanging up as
+ * their issue was taken in but this leaves the csr act weird."
+ *
+ * He is right. "Try speaking up" is troubleshooting advice, and there is
+ * nothing left to troubleshoot: the lead is in, so a caller who has gone
+ * quiet is finished, not unheard. Gated on `requestSaved` from the turn
+ * response and nothing looser — claiming this when nothing was saved would
+ * be the false promise this codebase works hardest to prevent. Promises no
+ * time, only that the team has it.
+ */
+const SILENCE_WRAP_UP_PHRASE =
+  "[softly] Alright — you're all set, and the team has your request. " +
+  "Thanks for calling, and take care.";
+
+/**
  * Why it repeats at all, and why it stops: the original design fired
  * exactly once per silence episode, deliberately, to avoid nagging. A
  * real call disproved that: a caller stuck in an STT dead zone got one
@@ -406,6 +423,8 @@ export class CallSessionOrchestrator {
   /** See `buildSilentTurnFallback`'s own comment — round-robins so a call that happens to hit this fallback more than once doesn't repeat the exact same line. */
   private silentTurnFallbackIndex = 0;
   /** See `handleFinalTranscriptCandidate`'s own comment — a finalized transcript flagged as a likely fragment, accumulated here while waiting to see if more follows, instead of starting a turn immediately. */
+  /** True once any turn has reported a saved lead — see SILENCE_WRAP_UP_PHRASE. Never goes back to false: a lead cannot be un-created. */
+  private requestSaved = false;
   private pendingFragment: { transcript: string; confidence: number } | null = null;
   /** Caller turns actually handled on this call. Only read by the farewell hang-up below, which refuses to fire on the very first thing a caller says — see that branch's own comment. */
   private callerTurnsHandled = 0;
@@ -892,6 +911,9 @@ export class CallSessionOrchestrator {
     }
 
     this.activeTurnAbort = null;
+    if (turnResult.requestSaved === true) {
+      this.requestSaved = true;
+    }
     log.info("turn HTTP round-trip completed", {
       durationMs: Date.now() - turnStartedAt,
       toolCallsExecuted: turnResult.toolCallsExecuted,
@@ -1265,7 +1287,11 @@ export class CallSessionOrchestrator {
     }
     this.silenceCheckInCount += 1;
     const phrase =
-      this.silenceCheckInCount === 1 ? SILENCE_CHECK_IN_PHRASE : SILENCE_TROUBLE_HEARING_PHRASE;
+      this.silenceCheckInCount === 1
+        ? SILENCE_CHECK_IN_PHRASE
+        : this.requestSaved
+          ? SILENCE_WRAP_UP_PHRASE
+          : SILENCE_TROUBLE_HEARING_PHRASE;
     this.logger.info("silence check-in: no caller activity detected for the full timeout", {
       conversationId: this.conversationId,
       timeoutMs: silenceCheckInTimeoutMs(),

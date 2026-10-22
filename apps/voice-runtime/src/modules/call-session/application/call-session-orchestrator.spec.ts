@@ -2218,6 +2218,62 @@ describe("CallSessionOrchestrator", () => {
       }
     });
 
+    /**
+     * 2026-10-22, second tester: "sometime the same line arises that is im
+     * here speak up altho this would result in the clinet hanging up as
+     * their issue was taken in but this leaves the csr act weird." Once the
+     * lead is in there is nothing left to troubleshoot, so the caller is
+     * finished, not unheard.
+     */
+    it("closes warmly instead of saying 'speak up' once the request is actually saved", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+        orchestratorClient.turnResponses = [
+          {
+            conversationId: "conv-1",
+            responseText: "You're all set. Anything else I can help with?",
+            toolCallsExecuted: ["createLead"],
+            interrupted: false,
+            state: "qualifying",
+            requestSaved: true,
+          },
+        ];
+
+        await orchestrator.onCallStart(baseParams(), sink);
+        // A plain turn, not a sign-off: a goodbye would start the farewell
+        // hang-up instead, which is a different path.
+        stt.sessions[0]!.emitFinalTranscript("my sink is leaking", 0.95);
+        await jest.advanceTimersByTimeAsync(0);
+
+        await jest.advanceTimersByTimeAsync(1000); // 1st check-in
+        await jest.advanceTimersByTimeAsync(1000); // 2nd
+
+        expect(tts.synthesizeCalls.join(" ")).toContain("the team has your request");
+        expect(tts.synthesizeCalls.join(" ")).not.toContain("might not be hearing you");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("still says 'speak up' when nothing was saved, so an unheard caller is told something useful", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+
+        await orchestrator.onCallStart(baseParams(), sink);
+        await jest.advanceTimersByTimeAsync(1000);
+        await jest.advanceTimersByTimeAsync(1000);
+
+        expect(tts.synthesizeCalls.join(" ")).toContain("might not be hearing you");
+        expect(tts.synthesizeCalls.join(" ")).not.toContain("the team has your request");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it("a REAL Grace utterance (not just continued silence) resets the repeat budget for a genuinely new silence episode", async () => {
       jest.useFakeTimers();
       try {

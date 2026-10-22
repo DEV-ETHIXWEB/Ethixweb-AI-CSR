@@ -120,6 +120,15 @@ export interface HandleTurnResult {
    * `escalation.transferDestination` above.
    */
   humanTransfer?: { reason: string; transferDestination: string | null };
+  /**
+   * True once a lead actually exists for this call. Additive, and the only
+   * HONEST signal for "the request is in" that the runtime can see:
+   * `toolCallsExecuted` lists every tool ATTEMPTED, including a createLead a
+   * save gate refused, so it cannot be used for this. Added 2026-10-22 so
+   * the silence check-in can stop telling a caller whose request was already
+   * taken to speak up (second tester: "this leaves the csr act weird").
+   */
+  requestSaved: boolean;
 }
 
 /**
@@ -1215,6 +1224,7 @@ export class HandleTurnUseCase {
       toolCallsExecuted,
       interrupted,
       state: conversation.state,
+      requestSaved: conversation.leadId !== null,
       ...(escalation ? { escalation } : {}),
       ...(humanTransfer ? { humanTransfer } : {}),
     };

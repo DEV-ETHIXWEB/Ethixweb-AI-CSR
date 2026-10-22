@@ -85,6 +85,11 @@ export class TurnResultResponseDto {
       "Present iff transferToHuman succeeded this turn — the non-emergency counterpart to `escalation`. Always a signal to execute the actual SIP/PSTN transfer when present; this service never places or transfers calls itself.",
   })
   humanTransfer?: { reason: string; transferDestination: string | null };
+  @ApiProperty({
+    description:
+      "True once a lead actually exists for this call. The only honest signal for \"the request is in\": toolCallsExecuted lists every tool ATTEMPTED, a refused createLead included.",
+  })
+  requestSaved: boolean;
 
   constructor(result: {
     conversationId: string;
@@ -94,12 +99,14 @@ export class TurnResultResponseDto {
     state: ConversationState;
     escalation?: { severity: string; action: string; transferDestination: string | null };
     humanTransfer?: { reason: string; transferDestination: string | null };
+    requestSaved?: boolean;
   }) {
     this.conversationId = result.conversationId;
     this.responseText = result.responseText;
     this.toolCallsExecuted = result.toolCallsExecuted;
     this.interrupted = result.interrupted;
     this.state = result.state;
+    this.requestSaved = result.requestSaved === true;
     if (result.escalation) {
       this.escalation = result.escalation;
     }
