@@ -79,6 +79,17 @@ describe("isRepeatRequest", () => {
     "what did you say",
     "sorry you broke up there for a second",
     "one more time",
+    // Yash, 2026-10-22: how a caller actually asks at the end of a call.
+    "can you repeat the information",
+    "can you repeat the address you have",
+    "please repeat that",
+    "read that back to me",
+    "read the address back",
+    "go over that again",
+    "tell me the address again",
+    "what was that",
+    "what was the number",
+    "I didn't catch the address",
   ])("hears the request to repeat in %p", (said) => {
     expect(isRepeatRequest(said)).toBe(true);
   });
@@ -90,6 +101,8 @@ describe("isRepeatRequest", () => {
     "yes that's right",
     "my kitchen sink is leaking",
     "sorry about the noise, my dog is barking",
+    "I'm a repeat customer",
+    "what was that noise coming from the wall",
     // Has its own established answer ("Yes, I'm here"), so it stays there.
     "hello",
     "hello?",

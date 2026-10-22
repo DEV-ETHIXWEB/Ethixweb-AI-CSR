@@ -32,6 +32,27 @@ import type { AiMessage } from "../../ai-provider/domain/ai-provider.port";
 export const DEFAULT_MAX_MESSAGES = 40;
 const RECENT_KEEP = 20;
 
+/**
+ * 2026-10-22, chasing a second tester's "extremely long pauses" near the end
+ * of a call: the MESSAGE COUNT is bounded, and the summary's own LENGTH was
+ * not. Each pass carries the previous summary forward verbatim and appends
+ * twenty more lines to it, so on the real 21-minute, 99-turn call this
+ * module's own comment describes, the summary alone had grown to hold some
+ * eighty messages of text. Every later turn then paid for all of it, in
+ * tokens and in time to first word, on exactly the calls that were already
+ * dragging.
+ *
+ * Kept as a CHARACTER budget on the carried-forward half, with the newest
+ * lines kept and the oldest dropped: the oldest material is both the least
+ * likely to still matter and the most likely to have been restated since
+ * (the call notes put the name, address, ZIP and number in front of every
+ * turn regardless, which is what makes losing the tail of a long summary
+ * survivable at all). 4000 characters is roughly a thousand tokens -- room
+ * for a long call's worth of facts, and a firm ceiling on a pathological one.
+ */
+const MAX_CARRIED_SUMMARY_CHARS = 4000;
+const SUMMARY_TRUNCATION_MARKER = "[...earlier detail dropped to stay within the window] ";
+
 export function compressMessages(
   messages: AiMessage[],
   maxMessages: number = DEFAULT_MAX_MESSAGES,
@@ -71,10 +92,24 @@ export function compressMessages(
     role: "system",
     content:
       `[Earlier in this call — ${dropped.length} message(s) summarized to stay within the context window] ` +
-      lines.join(" | "),
+      capSummaryLength(lines.join(" | ")),
   };
 
   return [summary, ...kept];
+}
+
+/**
+ * Trims a summary to MAX_CARRIED_SUMMARY_CHARS, keeping the NEWEST lines and
+ * cutting at a line boundary so no fact is left as half a sentence.
+ */
+function capSummaryLength(body: string): string {
+  if (body.length <= MAX_CARRIED_SUMMARY_CHARS) {
+    return body;
+  }
+  const tail = body.slice(body.length - MAX_CARRIED_SUMMARY_CHARS);
+  const firstBoundary = tail.indexOf(" | ");
+  const fromBoundary = firstBoundary === -1 ? tail : tail.slice(firstBoundary + 3);
+  return `${SUMMARY_TRUNCATION_MARKER}${fromBoundary}`;
 }
 
 /**

@@ -292,3 +292,42 @@ describe("a hard name spelled out", () => {
     expect(buildCallNotes(["oh are you able to come out this week"]).spelledName).toBeNull();
   });
 });
+
+/**
+ * 2026-10-22, second tester (Yash): "there are few instances where the csr
+ * still guesses big names - i tried with mexican, caucasian and black names".
+ * The prompt tells Grace to spell every name back, which for a name she only
+ * has by ear is an invitation to supply the nearest familiar spelling.
+ */
+describe("a big name she only has by ear", () => {
+  it.each([["Siobhan"], ["Okonkwo"], ["Xochitl"], ["Guadalupe"], ["Michelle"]])(
+    "tells her to ask for the spelling of %p instead of asserting one",
+    (name) => {
+      const text = formatCallNotes(buildCallNotes([`my name is ${name}`]))!;
+      expect(text).toContain("Do NOT spell it back as if you know it");
+      expect(text).toContain("ask them to spell it, once");
+    },
+  );
+
+  it.each([["Dana"], ["Tom"], ["Maria"], ["Jose"], ["Akash"]])(
+    "leaves a short name like %p alone, so nothing changes for most callers",
+    (name) => {
+      const text = formatCallNotes(buildCallNotes([`my name is ${name}`]))!;
+      expect(text).not.toContain("Do NOT spell it back");
+    },
+  );
+
+  it("says nothing once the caller has actually spelled it", () => {
+    const text = formatCallNotes(buildCallNotes(["my name is Siobhan, s i o b h a n"]))!;
+    expect(text).not.toContain("Do NOT spell it back");
+    expect(text).toContain("S-I-O-B-H-A-N");
+  });
+
+  it("says nothing once she has already asked for a spelling", () => {
+    const text = formatCallNotes(buildCallNotes(["my name is Siobhan"], [
+      { speaker: "agent", text: "Could you spell that for me?" },
+      { speaker: "caller", text: "my name is Siobhan" },
+    ]))!;
+    expect(text).not.toContain("Do NOT spell it back");
+  });
+});

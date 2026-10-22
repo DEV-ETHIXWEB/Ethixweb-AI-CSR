@@ -4260,7 +4260,7 @@ describe("a caller who did not hear gets it again", () => {
   it("tells the model to say the last sentence again and not move on", async () => {
     const sent = await sentFor("what");
     expect(sent).toContain("did not hear you");
-    expect(sent).toContain("Do not move on to the next question");
+    expect(sent).toContain("do not move on to the next question");
   });
 
   it("outranks the callback-number nudge, which has nothing to do with it", async () => {

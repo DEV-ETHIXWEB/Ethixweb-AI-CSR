@@ -146,3 +146,54 @@ describe("compressMessages", () => {
     expect(firstNonSummary?.role).not.toBe("tool");
   });
 });
+
+/**
+ * 2026-10-22, chasing a second tester's "extremely long pauses" near the end
+ * of a call: the message COUNT was bounded and the summary's own LENGTH was
+ * not. Each pass carried the previous summary forward verbatim and appended
+ * twenty more lines, so a long call paid for all of it on every later turn.
+ */
+describe("the carried-forward summary cannot grow without limit", () => {
+  function longCall(turns: number): AiMessage[] {
+    return Array.from({ length: turns }, (_unused, index) => ({
+      role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
+      content: `turn ${index} ${"detail ".repeat(20)}`,
+    }));
+  }
+
+  it("holds the summary to its budget across many compaction passes", () => {
+    let messages = longCall(40);
+    // Each pass adds twenty more messages, exactly as a long call does.
+    for (let pass = 0; pass < 12; pass += 1) {
+      messages = compressMessages(messages);
+      messages = [...messages, ...longCall(20)];
+    }
+    const summary = compressMessages(messages).find((message) => message.role === "system");
+    expect(summary).toBeDefined();
+    expect(summary!.content.length).toBeLessThan(4500);
+  });
+
+  it("keeps the NEWEST facts and cuts at a line boundary, never mid-sentence", () => {
+    const messages: AiMessage[] = [
+      ...Array.from({ length: 30 }, (_unused, index) => ({
+        role: "user" as const,
+        content: `old line ${index} ${"x".repeat(300)}`,
+      })),
+      { role: "user", content: "my name is Akash" },
+      { role: "assistant", content: "Got it, Akash." },
+      ...longCall(20),
+    ];
+
+    const summary = compressMessages(messages).find((message) => message.role === "system")!;
+
+    expect(summary.content).toContain("earlier detail dropped");
+    expect(summary.content).toContain("my name is Akash");
+    expect(summary.content).not.toContain("old line 0 ");
+  });
+
+  it("leaves a short call's summary exactly as it was", () => {
+    const messages = longCall(45);
+    const summary = compressMessages(messages).find((message) => message.role === "system")!;
+    expect(summary.content).not.toContain("earlier detail dropped");
+  });
+});

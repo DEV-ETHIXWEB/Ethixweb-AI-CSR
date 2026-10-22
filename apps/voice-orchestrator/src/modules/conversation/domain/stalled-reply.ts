@@ -46,8 +46,50 @@ const CLOSING_LINE =
 // nobody reported as broken.
 const REPEAT_WORDS =
   /^\s*(what|what'?s that|huh|sorry|pardon|excuse me|come again|again|say (that )?again)\b[\s?.!]*$/i;
-const REPEAT_PHRASES =
-  /\b(say that again|repeat that|repeat it|come again|didn'?t (quite )?(catch|hear|get) (that|you)|could'?nt hear|can'?t hear you|couldn'?t hear you|you broke up|broke up|one more time|what did you say|say it again)\b/i;
+/**
+ * 2026-10-22, second tester (Yash): "after the conversation reaches the end
+ * and if the client asks for the information to be repeated the csr starts
+ * taking extremely long pauses... sometimes the same line arises that is
+ * I'm here speak up."
+ *
+ * That is this same finding in its worst form, and the first version of this
+ * pattern would have missed it: it matched "repeat that" and "repeat it" but
+ * not "repeat the information", which is how a caller actually asks at the
+ * end of a call. `repeat` is matched with any object now, with the one
+ * phrase that is NOT a request excluded by name ("I'm a repeat customer").
+ *
+ * The long pauses themselves have the same cause as the ignored "what?":
+ * the output guard drops a sentence that repeats a recent one, so a repeat
+ * the caller asked for was dropped, the reply came out empty, and fifteen
+ * seconds of nothing later the silence check-in said "I'm still here" --
+ * then "try speaking up" on its second pass.
+ */
+const REPEAT_PHRASES = new RegExp(
+  [
+    "say (that|it) again",
+    "say again",
+    // Any object: "repeat that", "repeat the address", "repeat the
+    // information you have". Excludes the one common non-request.
+    "repeat\\b(?!\\s+(customer|caller|client|business|offender))",
+    "read (that|it|them|back)\\b",
+    "read (the|my) \\w+ back",
+    "go (over|through) (that|it|everything|them) again",
+    "run that by me again",
+    "tell me (that |the \\w+ |them )?again",
+    "come again",
+    "one more time",
+    "what did you say",
+    // Only when it closes the clause: "what was that noise" is about their
+    // plumbing, not a request to repeat.
+    "what was that(?!\\s+\\w)",
+    "what was the (address|number|phone|name|zip|street|time)",
+    "didn'?t (quite )?(catch|hear|get) (that|you|the \\w+)",
+    "(can'?t|cannot|couldn'?t|could not) hear you",
+    "you broke up",
+    "broke up",
+  ].join("|"),
+  "i",
+);
 const REPEAT_MAX_WORDS = 5;
 
 export function isRepeatRequest(callerTranscript: string): boolean {
@@ -62,10 +104,11 @@ export function isRepeatRequest(callerTranscript: string): boolean {
 }
 
 export const REPEAT_NOTE =
-  "[The caller did not hear you. Your whole reply: say your LAST sentence again, " +
-  "the same words, nothing added and nothing new. If it was an address, a ZIP or a phone " +
-  "number, say the digits one at a time. Do not move on to the next question, and do not " +
-  "apologise at length.]";
+  "[The caller did not hear you, or asked you to say it again. Your whole reply: say it " +
+  "again. If they want your last sentence, use the same words. If they asked for the " +
+  "details you have, read back only what they gave you: name, street address, callback " +
+  "number. Say every digit one at a time. Add nothing new, do not move on to the next " +
+  "question, and do not apologise at length.]";
 
 /**
  * A listener noise, not a turn: "yeah", "uh-huh", "mm-hmm", "okay" and
