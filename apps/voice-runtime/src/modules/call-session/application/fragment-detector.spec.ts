@@ -237,3 +237,34 @@ describe("isPartialNumberUtterance", () => {
     expect(isPartialNumberUtterance(said)).toBe(false);
   });
 });
+
+/**
+ * FOUND ON A LIVE CALL, 2026-10-22, on the current build. The caller's name
+ * was not being heard, so they announced a spelling, and the transcript
+ * committed after two letters:
+ *   caller: "i'm gonna spell out my name s y"
+ *   Grace:  "Got it, Josh, spelled J-O-S-H."
+ * Grace asserted a guessed spelling over letters the caller was still giving.
+ */
+describe("a spelling that has only just started", () => {
+  it.each([
+    ["i'm gonna spell out my name s y"],
+    ["let me spell it j"],
+    ["my name is spelled s y u"],
+    ["it's j o"],
+  ])("holds %p so the rest of the letters can arrive", (said) => {
+    expect(fragmentStrength(said)).toBe("strong");
+  });
+
+  it.each([
+    // The 2026-10-14 case this must not break: a COMPLETE spelling, which
+    // held as a fragment left Grace saying only "Mm-hm" and then "I'm still
+    // here".
+    ["marisa m a r i s a"],
+    ["s u m a l i a"],
+    ["my sink is leaking"],
+    ["yes that's right"],
+  ])("still treats %p as finished", (said) => {
+    expect(fragmentStrength(said)).toBe("none");
+  });
+});

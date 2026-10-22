@@ -269,6 +269,9 @@ export function fragmentStrength(transcript: string): FragmentStrength {
   if (isPartialNumber(words)) {
     return "strong";
   }
+  if (isSpellingInProgress(words)) {
+    return "strong";
+  }
   if (isLoneDigit(words)) {
     return "weak";
   }
@@ -277,6 +280,39 @@ export function fragmentStrength(transcript: string): FragmentStrength {
   }
   const first = normalizeWord(words[0]!);
   return OPENING_WORDS.has(first) ? "weak" : "none";
+}
+
+/**
+ * The caller has STARTED spelling and is not finished.
+ *
+ * FOUND ON A LIVE CALL, 2026-10-22. The caller's name was not being heard,
+ * so they announced a spelling, and the transcript committed after two
+ * letters:
+ *   caller: "i'm gonna spell out my name s y"
+ *   Grace:  "Got it, Josh, spelled J-O-S-H."
+ * Grace asserted a guessed spelling over the letters the caller was in the
+ * middle of giving.
+ *
+ * The length of the trailing run is what separates this from the case the
+ * 2026-10-14 fix protects. "marisa m a r i s a" ends in six letters and is
+ * a COMPLETE spelling, which must not be held (holding it left Grace saying
+ * only "Mm-hm" and then "I'm still here"). One to three trailing letters is
+ * a spelling that has just begun, and the rest is still coming.
+ */
+const SPELLING_IN_PROGRESS_MAX_LETTERS = 3;
+
+function isSpellingInProgress(words: readonly string[]): boolean {
+  let run = 0;
+  for (let index = words.length - 1; index >= 0; index -= 1) {
+    const word = normalizeWord(words[index]!);
+    if (word.length !== 1 || !/[a-z]/.test(word)) {
+      break;
+    }
+    run += 1;
+  }
+  // A run of 0 is not a spelling at all, and the whole utterance being one
+  // letter is already handled above as its own case.
+  return run >= 1 && run <= SPELLING_IN_PROGRESS_MAX_LETTERS && run < words.length;
 }
 
 export function looksLikeIncompleteFragment(transcript: string): boolean {
