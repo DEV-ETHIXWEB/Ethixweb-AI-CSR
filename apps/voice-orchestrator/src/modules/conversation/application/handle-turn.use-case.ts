@@ -123,6 +123,52 @@ export type TurnAdmission =
 /** Bounds a pathological model tool-loop. Not a documented constant — an INFERRED safety limit; a real call needs at most a handful (searchCustomer → escalateEmergency → createLead). */
 const MAX_TOOL_ITERATIONS = 5;
 
+/**
+ * 2026-10-22 tester calls, twice: "it broke down like after giving the name
+ * and address it said I am having trouble", once at the very end of a call
+ * after every detail had been taken. Traced to this loop, not to the model
+ * or the network.
+ *
+ * voice-runtime aborts a /turns request after 20s (REQUEST_TIMEOUT_MS) and
+ * only retries when NOT ONE text chunk has been spoken yet — then, after
+ * its retry budget, it speaks "Sorry, I'm having trouble right now." So the
+ * failure needs a turn that runs long AND stays silent, and the save gates
+ * produce exactly that: createCustomer rejected by `saveBlockedReason`
+ * forces another completion, the model answers with another tool call and
+ * no words, and five iterations of that is a minute of silence followed by
+ * an apology the caller did not deserve.
+ *
+ * Two independent brakes, both needed. This one stops the loop while there
+ * is still time to say something; `SOFT_SAVE_GATES` below stops the
+ * rejection that drives it from repeating inside one turn. Set well under
+ * voice-runtime's own 20s so a final completion still fits.
+ */
+const SILENT_TURN_BUDGET_MS = 9000;
+
+/**
+ * Spoken when the loop above ends with nothing to say and the caller was
+ * not interrupting. Promise-free (nothing is claimed saved, sent or
+ * scheduled) and ends by handing the turn back, which is what the caller
+ * is actually waiting for. Before this, an empty `responseText` reached
+ * voice-runtime as a successful turn with no audio at all: dead air until
+ * the silence check-in fired.
+ */
+const SILENT_TURN_FALLBACK = "Sorry about the pause there. What else can I help with?";
+
+/**
+ * Save gates that ask for a CONFIRMATION the caller has already supplied the
+ * underlying fact for, as opposed to gates that stop a genuinely incomplete
+ * record being written. Repeating one of these inside a single turn trades a
+ * complete record for dead air (see `SILENT_TURN_BUDGET_MS`), so the second
+ * identical rejection in the same turn lets the save through instead: the
+ * address and number are already in the arguments either way, and a record
+ * written with one readback missing beats no record and an apology.
+ */
+const SOFT_SAVE_GATES: ReadonlySet<string> = new Set([
+  "address_not_confirmed",
+  "callback_number_not_confirmed",
+]);
+
 interface CompletionResult {
   text: string;
   toolCalls: AiToolCallRequest[];
@@ -581,8 +627,24 @@ export class HandleTurnUseCase {
     let iterationCount = 0;
     let keptCallMoving = false;
     let continuingStalledReply = false;
+    /** Save-gate errors already handed back this turn — see `SOFT_SAVE_GATES`. */
+    const gateRejections = new Set<string>();
 
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+      // See SILENT_TURN_BUDGET_MS: a turn that has run this long without
+      // producing a single spoken word is the shape voice-runtime turns
+      // into "Sorry, I'm having trouble right now." Stop here while a
+      // reply still fits inside its request timeout.
+      if (iteration > 0 && !responseText.trim() && Date.now() - startedAt > SILENT_TURN_BUDGET_MS) {
+        this.logger.warn("turn budget spent with nothing spoken yet — ending the tool loop", {
+          tenantId: conversation.tenantId,
+          conversationId: conversation.id,
+          elapsedMs: Date.now() - startedAt,
+          iterations: iterationCount,
+          toolCallsExecuted,
+        });
+        break;
+      }
       iterationCount += 1;
       conversation.messages = compressMessages(conversation.messages);
 
@@ -804,7 +866,13 @@ export class HandleTurnUseCase {
         if (toolCall.name === "getBusinessHours") {
           conversation.businessHoursChecked = true;
         }
-        const ran = await this.runTool(conversation, toolCall, command.allowedTools, responseText);
+        const ran = await this.runTool(
+          conversation,
+          toolCall,
+          command.allowedTools,
+          responseText,
+          gateRejections,
+        );
         let output = ran.output;
         const toolEscalation = ran.escalation;
         const toolHumanTransfer = ran.humanTransfer;
@@ -998,6 +1066,27 @@ export class HandleTurnUseCase {
       if (humanTransferredThisIteration && turn.text.trim().length > 0) {
         break;
       }
+    }
+
+    // See SILENT_TURN_FALLBACK. A turn that produced no words is not a
+    // turn the caller can tell apart from a dropped call, and voice-runtime
+    // has nothing of its own to say here either: it only speaks text this
+    // method hands it.
+    //
+    // The two silences that are DELIBERATE are excluded: a caller still
+    // mid-sentence (TRAILING_FRAGMENT_NOTE asks for exactly no reply, and
+    // speaking here would talk over them — the complaint this codebase has
+    // already been through twice), and a caller who asked Grace to wait.
+    const silenceWasIntended =
+      trailsOff(command.transcript) || isHoldRequest(command.transcript);
+    if (!responseText.trim() && !interrupted && !silenceWasIntended) {
+      this.logger.warn("turn produced no spoken text — speaking the fallback line", {
+        tenantId: conversation.tenantId,
+        conversationId: conversation.id,
+        toolCallsExecuted,
+      });
+      responseText = SILENT_TURN_FALLBACK;
+      onChunk?.(responseText);
     }
 
     if (responseText) {
@@ -1465,6 +1554,7 @@ export class HandleTurnUseCase {
     toolCall: AiToolCallRequest,
     allowedTools: readonly string[],
     currentTurnText = "",
+    gateRejections: Set<string> = new Set(),
   ): Promise<{
     output: unknown;
     escalation?: { severity: string; action: string; transferDestination: string | null };
@@ -1500,12 +1590,23 @@ export class HandleTurnUseCase {
         phone: toolCall.arguments["phone"],
       });
       if (blocked) {
-        this.logger.warn("createCustomer blocked: address not ready", {
-          tenantId: conversation.tenantId,
-          conversationId: conversation.id,
-          reason: blocked.error,
-        });
-        return { output: blocked };
+        const alreadyRefusedThisTurn =
+          SOFT_SAVE_GATES.has(blocked.error) && gateRejections.has(blocked.error);
+        gateRejections.add(blocked.error);
+        if (alreadyRefusedThisTurn) {
+          this.logger.warn("createCustomer gate waived: already refused once this turn", {
+            tenantId: conversation.tenantId,
+            conversationId: conversation.id,
+            reason: blocked.error,
+          });
+        } else {
+          this.logger.warn("createCustomer blocked", {
+            tenantId: conversation.tenantId,
+            conversationId: conversation.id,
+            reason: blocked.error,
+          });
+          return { output: blocked };
+        }
       }
     }
     if (toolCall.name === "createLead" && conversation.customerDetailsOnFile === false) {

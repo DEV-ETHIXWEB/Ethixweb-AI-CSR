@@ -3941,3 +3941,143 @@ describe("HandleTurnUseCase: at most one directive note fires per turn (2026-10-
     expect(directiveNoteCount(sentUser)).toBeLessThanOrEqual(1);
   });
 });
+
+/**
+ * 2026-10-22 tester calls: twice, after the caller had given every detail,
+ * the line said "Sorry, I'm having trouble right now." Nothing was wrong
+ * with the model or the network — the save gates and this loop produced a
+ * turn that ran for a minute without speaking a word, which is the exact
+ * shape voice-runtime converts into that apology (zero chunks received, so
+ * it retries the whole request, then gives up out loud).
+ */
+describe("a turn can never run long and silent (2026-10-22 'I'm having trouble')", () => {
+  const at = new Date().toISOString();
+
+  function callerSaid(...texts: string[]): TranscriptTurn[] {
+    return texts.map((text, index) => ({
+      turnIndex: index,
+      speaker: "caller",
+      text,
+      confidence: null,
+      offsetMs: 0,
+      at,
+    }));
+  }
+
+  it("waives a confirmation gate the second time it fires in ONE turn, instead of bouncing the model again", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(
+      baseConversation({
+        transcript: callerSaid("my name is akash and i'm at 4512 maple street"),
+      }),
+    );
+    const saveCall = {
+      type: "tool_call" as const,
+      toolCall: {
+        id: "call-1",
+        name: "createCustomer",
+        arguments: {
+          name: { first: "Akash" },
+          phone: "+15552014477",
+          address: { street: "4512 Maple Street", city: "Kent", state: "WA", zip: "98032" },
+        },
+      },
+    };
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [saveCall, { type: "done", stopReason: "tool_use" }],
+      [{ ...saveCall, toolCall: { ...saveCall.toolCall, id: "call-2" } }, { type: "done", stopReason: "tool_use" }],
+      [{ type: "text_delta", text: "You're all set." }, { type: "done", stopReason: "end_turn" }],
+    ];
+    const createCustomerHandler = {
+      execute: jest.fn().mockResolvedValue({ customer_id: "c1", created: true }),
+    };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "createCustomer", handler: createCustomerHandler }],
+    });
+
+    await useCase.execute(
+      baseCommand({ transcript: "yes that's right", allowedTools: ["createCustomer"] }),
+    );
+
+    expect(createCustomerHandler.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops the tool loop once the turn has spent its budget with nothing spoken", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(
+      baseConversation({ transcript: callerSaid("my name is akash and i'm at 4512 maple street") }),
+    );
+    const aiProvider = new FakeAiProvider();
+    // Every completion answers with the same blocked save and no words —
+    // the real shape of the failing turn.
+    aiProvider.responses = [
+      [
+        {
+          type: "tool_call",
+          toolCall: {
+            id: "call-1",
+            name: "createCustomer",
+            arguments: { name: { first: "Akash" }, phone: "+15552014477" },
+          },
+        },
+        { type: "done", stopReason: "tool_use" },
+      ],
+    ];
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [
+        { name: "createCustomer", handler: { execute: jest.fn().mockResolvedValue({}) } },
+      ],
+    });
+    const realNow = Date.now.bind(Date);
+    let elapsed = 0;
+    const nowSpy = jest.spyOn(Date, "now").mockImplementation(() => {
+      elapsed += 4000;
+      return realNow() + elapsed;
+    });
+
+    try {
+      const result = await useCase.execute(
+        baseCommand({ transcript: "yes that's right", allowedTools: ["createCustomer"] }),
+      );
+      expect(aiProvider.requests.length).toBeLessThanOrEqual(2);
+      expect(result.responseText).toContain("What else can I help with?");
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("speaks a short fallback rather than returning a turn with no words at all", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [[{ type: "done", stopReason: "end_turn" }]];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+    const spoken: string[] = [];
+
+    const admission = await useCase.admitTurn(baseCommand({ transcript: "my toilet is clogged" }));
+    if (admission.kind !== "live") {
+      throw new Error("expected a live turn");
+    }
+    const result = await admission.run((text) => spoken.push(text));
+
+    expect(result.responseText).toContain("What else can I help with?");
+    expect(spoken.join("")).toContain("What else can I help with?");
+  });
+
+  it("still says nothing when the caller is plainly mid-sentence", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [[{ type: "done", stopReason: "end_turn" }]];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    const result = await useCase.execute(baseCommand({ transcript: "my address is" }));
+
+    expect(result.responseText).toBe("");
+  });
+});
