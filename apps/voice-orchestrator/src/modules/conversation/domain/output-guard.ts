@@ -291,6 +291,14 @@ export class OutputGuard {
     alreadySaidThisTurn = "",
     private readonly callerName: string | null = null,
     private readonly houseNumber: string | null = null,
+    /**
+     * The caller asked Grace to say it again. The repeat suppression below
+     * exists because a CSR who says the same sentence twice unprompted sounds
+     * like a recording (client feedback, Oct 7) -- but when the repeat is
+     * what was asked for, dropping it is dead air on top of a caller who
+     * already could not hear. See isRepeatRequest.
+     */
+    private readonly repeatRequested = false,
   ) {
     this.spokeAlready = alreadySpokeThisTurn;
     this.questionsThisTurn = splitSentences(alreadySaidThisTurn)
@@ -328,6 +336,9 @@ export class OutputGuard {
   }
 
   private repeatsRecentStatement(sentence: string): boolean {
+    if (this.repeatRequested) {
+      return false;
+    }
     if (isQuestion(sentence)) {
       // 2026-10-14: "Is the water running right now...? Got it... Is the
       // water running right now...?" in one reply. A question already asked

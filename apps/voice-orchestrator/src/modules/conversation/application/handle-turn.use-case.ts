@@ -46,8 +46,10 @@ import { answerFirst, callerAskedAQuestion } from "../domain/caller-question";
 import { compressMessages } from "../domain/context-window";
 import {
   isHoldRequest,
+  isRepeatRequest,
   isStalledReply,
   KEEP_CALL_MOVING_NOTE,
+  REPEAT_NOTE,
   TRAILING_FRAGMENT_NOTE,
   trailsOff,
 } from "../domain/stalled-reply";
@@ -558,7 +560,11 @@ export class HandleTurnUseCase {
     // (below) is suppressed too while trailing off, so "say only Mm-hm" is
     // never diluted by a second instruction in the same message.
     const isTrailingOff = trailsOff(command.transcript);
-    const pendingReadback = isTrailingOff
+    // Ranked directly below "the caller is still talking" and above
+    // everything else: a caller who did not hear has nothing to answer yet,
+    // so no other note on this turn is relevant. See isRepeatRequest.
+    const wantsItAgain = !isTrailingOff && isRepeatRequest(command.transcript);
+    const pendingReadback = isTrailingOff || wantsItAgain
       ? null
       : addressReadbackNote(callerTextsSoFar, agentTextsSoFar);
     // Ranked below pendingReadback deliberately: a correction that arrives as
@@ -566,13 +572,18 @@ export class HandleTurnUseCase {
     // the new address back). This covers the corrections that do not parse,
     // which used to produce no note at all. See addressDisputeNote.
     const addressDisputed =
-      !isTrailingOff && !pendingReadback
+      !isTrailingOff && !wantsItAgain && !pendingReadback
         ? addressDisputeNote(callerTextsSoFar, agentTextsSoFar)
         : null;
     const needsName =
-      !isTrailingOff && !pendingReadback && !addressDisputed && shouldNudgeForName(conversation);
+      !isTrailingOff &&
+      !wantsItAgain &&
+      !pendingReadback &&
+      !addressDisputed &&
+      shouldNudgeForName(conversation);
     const needsCallbackNumber =
       !isTrailingOff &&
+      !wantsItAgain &&
       !pendingReadback &&
       !addressDisputed &&
       !needsName &&
@@ -591,6 +602,8 @@ export class HandleTurnUseCase {
     const directive = (note: string): string => (owesAnAnswer ? answerFirst(note) : note);
     if (isTrailingOff) {
       annotatedTranscript = `${TRAILING_FRAGMENT_NOTE} ${annotatedTranscript}`;
+    } else if (wantsItAgain) {
+      annotatedTranscript = `${REPEAT_NOTE} ${annotatedTranscript}`;
     } else if (pendingReadback) {
       annotatedTranscript = `${directive(pendingReadback)} ${annotatedTranscript}`;
     } else if (addressDisputed) {
@@ -1328,6 +1341,9 @@ export class HandleTurnUseCase {
       // caller gave, so a readback is recognised as one even when the street
       // type is not in the same sentence.
       callerHouseNumber(conversation),
+      // See OutputGuard's own `repeatRequested`: the repeat suppression must
+      // not swallow a repeat the caller asked for.
+      isRepeatRequest(lastCallerText(conversation)),
     );
     const emit = (segment: string): void => {
       const guarded = guard.apply(segment);
@@ -1873,6 +1889,13 @@ function callerFirstName(conversation: Conversation): string | null {
     .map((entry) => entry.text);
   const notes = buildCallNotes(callerTexts, conversation.transcript);
   return notes.spelledName?.[0] ?? notes.statedName?.split(/\s+/)[0] ?? null;
+}
+
+/** The caller's most recent utterance, or an empty string. */
+function lastCallerText(conversation: Conversation): string {
+  return (
+    conversation.transcript.filter((entry) => entry.speaker === "caller").at(-1)?.text ?? ""
+  );
 }
 
 /** The house number from the street the caller gave, or null. */

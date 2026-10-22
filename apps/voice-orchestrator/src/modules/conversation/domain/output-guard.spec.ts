@@ -409,3 +409,23 @@ describe("a readback is recognised from the house number the caller gave", () =>
     expect(guard.apply("What's going on with the sink?")).toBe("What's going on with the sink?");
   });
 });
+
+/**
+ * 2026-10-22: the other half of "when asked what, it moved on". Telling the
+ * model to say its last sentence again is useless if this guard then drops it
+ * as a repeat -- that would turn a caller who could not hear into a caller
+ * hearing silence.
+ */
+describe("a repeat the caller asked for", () => {
+  const readback = "So that's 4-5-1-2 Maple Street, is that right?";
+
+  it("is dropped when nobody asked, which is why the suppression exists", () => {
+    const guard = new OutputGuard([readback], false, "", null, null, false);
+    expect(guard.apply(readback).trim()).toBe("");
+  });
+
+  it("is spoken when the caller asked for it", () => {
+    const guard = new OutputGuard([readback], false, "", null, "4512", true);
+    expect(guard.apply(readback)).toContain("4-5-1-2 Maple Street");
+  });
+});

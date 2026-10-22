@@ -4211,3 +4211,103 @@ describe("a caller's own question survives a directive note", () => {
     expect(sent).toContain("Ask nothing else");
   });
 });
+
+/**
+ * 2026-10-22 tester call: the readback came out garbled, "and when asked
+ * what, it moved on to next question like what's the best phone number and
+ * all."
+ */
+describe("a caller who did not hear gets it again", () => {
+  const at = new Date().toISOString();
+
+  async function sentFor(callerSaid: string): Promise<string> {
+    const repository = new FakeConversationRepository();
+    repository.seed(
+      baseConversation({
+        transcript: [
+          {
+            turnIndex: 0,
+            speaker: "caller",
+            text: "it's 4512 maple street, 98032",
+            confidence: null,
+            offsetMs: 0,
+            at,
+          },
+          {
+            turnIndex: 1,
+            speaker: "agent",
+            text: "So that's 4-5-1-2 Maple Street, 9-8-0-3-2?",
+            confidence: null,
+            offsetMs: 0,
+            at,
+          },
+        ],
+      }),
+    );
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "So that's 4-5-1-2 Maple Street, 9-8-0-3-2?" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+    await useCase.execute(baseCommand({ transcript: callerSaid }));
+    const sent = aiProvider.requests[0]!.messages.find((m) => m.role === "user")!.content;
+    return typeof sent === "string" ? sent : "";
+  }
+
+  it("tells the model to say the last sentence again and not move on", async () => {
+    const sent = await sentFor("what");
+    expect(sent).toContain("did not hear you");
+    expect(sent).toContain("Do not move on to the next question");
+  });
+
+  it("outranks the callback-number nudge, which has nothing to do with it", async () => {
+    const sent = await sentFor("sorry, say that again");
+    expect(sent).not.toContain("best number to reach them");
+  });
+
+  it("speaks the repeat instead of dropping it as a repeated statement", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(
+      baseConversation({
+        transcript: [
+          {
+            turnIndex: 0,
+            speaker: "caller",
+            text: "it's 4512 maple street, 98032",
+            confidence: null,
+            offsetMs: 0,
+            at,
+          },
+          {
+            turnIndex: 1,
+            speaker: "agent",
+            text: "So that's 4-5-1-2 Maple Street, 9-8-0-3-2?",
+            confidence: null,
+            offsetMs: 0,
+            at,
+          },
+        ],
+      }),
+    );
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "So that's 4-5-1-2 Maple Street, 9-8-0-3-2?" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    const result = await useCase.execute(baseCommand({ transcript: "what" }));
+
+    expect(result.responseText).toContain("4-5-1-2 Maple Street");
+  });
+
+  it("leaves an ordinary question alone", async () => {
+    const sent = await sentFor("what time do you open");
+    expect(sent).not.toContain("did not hear you");
+  });
+});

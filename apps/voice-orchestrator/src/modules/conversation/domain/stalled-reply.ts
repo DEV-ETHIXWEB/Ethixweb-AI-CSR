@@ -24,6 +24,45 @@ const ASKS_OR_INVITES =
 const CLOSING_LINE =
   /\b(bye|goodbye|good bye|take care|talk soon|have a (good|great|nice|wonderful) (day|night|one|evening|weekend)|thanks? (you )?for calling|good luck|hope you get (it|that) sorted)\b/i;
 
+/**
+ * 2026-10-22 tester call: the address readback came out fast and garbled,
+ * "and when asked what, it moved on to next question like what's the best
+ * phone number and all."
+ *
+ * A caller who did not hear needs the same words again, not the next
+ * question. Nothing in the prompt or the code covered this, so the model
+ * treated "what?" as any other turn and carried on with the intake -- which
+ * leaves the caller never having heard the one thing they were being asked
+ * to confirm.
+ *
+ * Two shapes: a short utterance that is only a request to repeat, and an
+ * explicit one at any length. The short-utterance limit is what keeps
+ * "what time do you open" and "what do you need from me" out of it -- those
+ * are real questions, and answering them with a repeat would be its own bug.
+ */
+const REPEAT_WORDS =
+  /^\s*(what|what'?s that|huh|sorry|pardon|excuse me|come again|again|hello|say (that )?again)\b[\s?.!]*$/i;
+const REPEAT_PHRASES =
+  /\b(say that again|repeat that|repeat it|come again|didn'?t (quite )?(catch|hear|get) (that|you)|could'?nt hear|can'?t hear you|couldn'?t hear you|you broke up|broke up|one more time|what did you say|say it again)\b/i;
+const REPEAT_MAX_WORDS = 5;
+
+export function isRepeatRequest(callerTranscript: string): boolean {
+  const text = callerTranscript.trim();
+  if (text.length === 0) {
+    return false;
+  }
+  if (REPEAT_PHRASES.test(text)) {
+    return true;
+  }
+  return text.split(/\s+/).length <= REPEAT_MAX_WORDS && REPEAT_WORDS.test(text);
+}
+
+export const REPEAT_NOTE =
+  "[The caller did not hear you. Your whole reply: say your LAST sentence again, " +
+  "the same words, nothing added and nothing new. If it was an address, a ZIP or a phone " +
+  "number, say the digits one at a time. Do not move on to the next question, and do not " +
+  "apologise at length.]";
+
 /** The caller asked Grace to wait ("hold on, let me find the zip"): the reply should only agree, never add a question. */
 export function isHoldRequest(callerTranscript: string): boolean {
   return /\b(hold on|hang on|one (sec|second|moment|minute)|just a (sec|second|moment|minute)|give me a (sec|second|moment|minute)|let me (check|find|look|get|grab)|wait a (sec|second|moment|minute))\b/i.test(

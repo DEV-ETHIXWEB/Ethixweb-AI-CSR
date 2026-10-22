@@ -1,4 +1,4 @@
-import { isStalledReply, trailsOff } from "./stalled-reply";
+import { isRepeatRequest, isStalledReply, trailsOff } from "./stalled-reply";
 
 describe("isStalledReply", () => {
   it.each([
@@ -50,5 +50,43 @@ describe("trailsOff", () => {
     "that's who it's from",
   ])("does not flag %p", (text) => {
     expect(trailsOff(text)).toBe(false);
+  });
+});
+
+/**
+ * 2026-10-22 tester call: the address readback came out fast and garbled,
+ * "and when asked what, it moved on to next question like what's the best
+ * phone number and all." A caller who did not hear needs the same words
+ * again, not the next question.
+ */
+describe("isRepeatRequest", () => {
+  it.each([
+    "what",
+    "what?",
+    "huh",
+    "sorry",
+    "pardon",
+    "come again",
+    "say that again",
+    "sorry, say that again",
+    "I didn't catch that",
+    "could you repeat that please",
+    "what did you say",
+    "sorry you broke up there for a second",
+    "one more time",
+  ])("hears the request to repeat in %p", (said) => {
+    expect(isRepeatRequest(said)).toBe(true);
+  });
+
+  it.each([
+    "what time do you open",
+    "what do you need from me",
+    "what's the cost going to be",
+    "yes that's right",
+    "my kitchen sink is leaking",
+    "sorry about the noise, my dog is barking",
+    "",
+  ])("does not treat %p as a request to repeat", (said) => {
+    expect(isRepeatRequest(said)).toBe(false);
   });
 });
