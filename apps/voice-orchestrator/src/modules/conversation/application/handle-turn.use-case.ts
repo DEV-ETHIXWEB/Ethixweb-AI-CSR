@@ -50,6 +50,7 @@ import {
 import { compressMessages } from "../domain/context-window";
 import {
   isHoldRequest,
+  isPureBackchannel,
   isRepeatRequest,
   isStalledReply,
   KEEP_CALL_MOVING_NOTE,
@@ -1153,12 +1154,15 @@ export class HandleTurnUseCase {
     // has nothing of its own to say here either: it only speaks text this
     // method hands it.
     //
-    // The two silences that are DELIBERATE are excluded: a caller still
+    // The silences that are DELIBERATE are excluded: a caller still
     // mid-sentence (TRAILING_FRAGMENT_NOTE asks for exactly no reply, and
     // speaking here would talk over them — the complaint this codebase has
-    // already been through twice), and a caller who asked Grace to wait.
+    // already been through twice), a caller who asked Grace to wait, and a
+    // caller only saying "mm-hmm, go on", who has not taken the floor at all.
     const silenceWasIntended =
-      trailsOff(command.transcript) || isHoldRequest(command.transcript);
+      trailsOff(command.transcript) ||
+      isHoldRequest(command.transcript) ||
+      isPureBackchannel(command.transcript);
     if (!responseText.trim() && !interrupted && !silenceWasIntended) {
       this.logger.warn("turn produced no spoken text — speaking the fallback line", {
         tenantId: conversation.tenantId,

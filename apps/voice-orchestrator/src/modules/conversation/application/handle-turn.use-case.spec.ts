@@ -4346,3 +4346,15 @@ describe("a question on a turn with no other note still comes first", () => {
     expect(sent).not.toContain("Your FIRST sentence answers it");
   });
 });
+
+it("stays silent when the caller only said 'mm-hmm', rather than talking at them", async () => {
+  const repository = new FakeConversationRepository();
+  repository.seed(baseConversation());
+  const aiProvider = new FakeAiProvider();
+  aiProvider.responses = [[{ type: "done", stopReason: "end_turn" }]];
+  const { useCase } = buildUseCase({ aiProvider, repository });
+
+  const result = await useCase.execute(baseCommand({ transcript: "mm-hmm" }));
+
+  expect(result.responseText).toBe("");
+});

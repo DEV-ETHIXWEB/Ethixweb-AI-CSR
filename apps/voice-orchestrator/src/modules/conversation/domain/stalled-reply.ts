@@ -67,6 +67,49 @@ export const REPEAT_NOTE =
   "number, say the digits one at a time. Do not move on to the next question, and do not " +
   "apologise at length.]";
 
+/**
+ * A listener noise, not a turn: "yeah", "uh-huh", "mm-hmm", "okay" and
+ * nothing else. voice-runtime already treats these as not taking the floor
+ * (its own backchannel-detector, which gates barge-in), and it allows an
+ * empty reply to one rather than filling the gap.
+ *
+ * Needed here because of the never-silent fallback in handle-turn: without
+ * this, a model that correctly answers a backchannel with nothing would get
+ * a spoken line put in its mouth, and Grace would talk at a caller who was
+ * only saying "mm-hmm, go on". The word list matches voice-runtime's own
+ * deliberately short one; the WHOLE utterance must be backchannel, so a real
+ * short objection ("no", "wait") and anything that merely starts with one
+ * ("yeah, but hold on") is a genuine turn.
+ */
+const BACKCHANNEL_WORDS = new Set([
+  "yeah",
+  "yep",
+  "yup",
+  "ok",
+  "okay",
+  "right",
+  "sure",
+  "alright",
+  "mhm",
+  "mmhmm",
+  "uhhuh",
+  "mm",
+  "hmm",
+  "hm",
+  "huh",
+  "uh",
+  "oh",
+]);
+
+export function isPureBackchannel(callerTranscript: string): boolean {
+  const words = callerTranscript
+    .trim()
+    .split(/\s+/)
+    .map((word) => word.toLowerCase().replace(/[^a-z0-9]/g, ""))
+    .filter((word) => word.length > 0);
+  return words.length > 0 && words.every((word) => BACKCHANNEL_WORDS.has(word));
+}
+
 /** The caller asked Grace to wait ("hold on, let me find the zip"): the reply should only agree, never add a question. */
 export function isHoldRequest(callerTranscript: string): boolean {
   return /\b(hold on|hang on|one (sec|second|moment|minute)|just a (sec|second|moment|minute)|give me a (sec|second|moment|minute)|let me (check|find|look|get|grab)|wait a (sec|second|moment|minute))\b/i.test(

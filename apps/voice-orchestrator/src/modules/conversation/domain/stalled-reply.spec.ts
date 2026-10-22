@@ -1,4 +1,9 @@
-import { isRepeatRequest, isStalledReply, trailsOff } from "./stalled-reply";
+import {
+  isPureBackchannel,
+  isRepeatRequest,
+  isStalledReply,
+  trailsOff,
+} from "./stalled-reply";
 
 describe("isStalledReply", () => {
   it.each([
@@ -92,4 +97,20 @@ describe("isRepeatRequest", () => {
   ])("does not treat %p as a request to repeat", (said) => {
     expect(isRepeatRequest(said)).toBe(false);
   });
+});
+
+describe("isPureBackchannel", () => {
+  it.each([["yeah"], ["uh-huh"], ["mm-hmm"], ["okay"], ["right"], ["oh yeah"]])(
+    "treats %p as a listener noise, not a turn",
+    (said) => {
+      expect(isPureBackchannel(said)).toBe(true);
+    },
+  );
+
+  it.each([["no"], ["wait"], ["yeah but hold on"], ["okay what's next"], [""]])(
+    "treats %p as a real turn",
+    (said) => {
+      expect(isPureBackchannel(said)).toBe(false);
+    },
+  );
 });
