@@ -1319,6 +1319,11 @@ export class HandleTurnUseCase {
       ],
       alreadySaidThisTurn.trim().length > 0,
       alreadySaidThisTurn,
+      // See output-guard.ts's VOCATIVE_TRAILING: the name the CALLER gave
+      // this call, so a different one cannot be spoken at them. Taken from
+      // the same call notes the model is shown, so the guard and the model
+      // are never working from different names.
+      callerFirstName(conversation),
     );
     const emit = (segment: string): void => {
       const guarded = guard.apply(segment);
@@ -1850,6 +1855,20 @@ export class HandleTurnUseCase {
   private appendTranscript(conversation: Conversation, turn: TranscriptTurn): void {
     conversation.transcript.push(turn);
   }
+}
+
+/**
+ * The first name the CALLER gave this call, spelled version preferred, or
+ * null. Deliberately not the name on any matched record: several people
+ * share a phone number, which is why the prompt forbids ever saying a stored
+ * name at all.
+ */
+function callerFirstName(conversation: Conversation): string | null {
+  const callerTexts = conversation.transcript
+    .filter((entry) => entry.speaker === "caller")
+    .map((entry) => entry.text);
+  const notes = buildCallNotes(callerTexts, conversation.transcript);
+  return notes.spelledName?.[0] ?? notes.statedName?.split(/\s+/)[0] ?? null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

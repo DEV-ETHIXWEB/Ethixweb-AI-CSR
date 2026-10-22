@@ -20,6 +20,8 @@
  * be counted and the prompt fixed at the source.
  */
 
+import { editDistanceAtMostOne } from "./name-grounding";
+
 export const SAFE_TIMING_LINE = "The team will confirm the timing with you.";
 export const SAFE_PREFERENCE_LINE =
   "I'll note that preference, and the team will confirm the time.";
@@ -99,7 +101,73 @@ export type GuardAction =
   | "cause_claim"
   | "slow_readback"
   | "repeated_statement"
-  | "word_limit";
+  | "word_limit"
+  | "wrong_name";
+
+/**
+ * 2026-10-22 tester call: "Called as a returning customer, also gave name in
+ * starting, but still near the end of the call it changed the name completely
+ * to something else."
+ *
+ * Several people share a phone number, so the prompt already forbids ever
+ * saying a stored name ("# RETURNING CALLERS": never say a stored name, treat
+ * every caller as new). Late in a long call that rule loses to whatever name
+ * is nearest in context -- the matched record's, or a plain mishearing -- and
+ * being called by a stranger's name at the close undoes the whole call.
+ *
+ * Nothing invents or substitutes a name here: a name Grace was NOT given is
+ * simply not spoken. Addressing someone by no name reads as normal; by the
+ * wrong one does not.
+ *
+ * Only the two forms Grace actually uses are touched, both of them vocative:
+ * a trailing ", Dana" at the end of a sentence, and a greeting or thanks
+ * followed by a name. A name used any other way (a street called Dana Avenue,
+ * a technician the caller asked for) is left exactly as written.
+ */
+const VOCATIVE_TRAILING = /,\s+([A-Z][a-z'’-]{1,20})(?=\s*[.!?]|\s*$)/g;
+// Spelled with explicit case rather than the `i` flag: `i` would also make
+// the NAME group match a lowercase word, and "thanks for calling" would read
+// "for" as the name.
+const VOCATIVE_AFTER_OPENER =
+  /\b([Tt]hanks|[Tt]hank you|[Hh]i|[Hh]ello|[Hh]ey|[Oo]kay|[Oo]k|[Aa]lright|[Aa]ll right|[Gg]ot it|[Ss]ure|[Pp]erfect|[Bb]ye|[Gg]oodbye|[Tt]ake care)\s+([A-Z][a-z'’-]{1,20})\b/g;
+
+/** Capitalised words that follow a vocative pattern but are never the caller's name. */
+const NOT_A_VOCATIVE_NAME = new Set([
+  "i",
+  "im",
+  "ill",
+  "ive",
+  "and",
+  "but",
+  "so",
+  "the",
+  "we",
+  "you",
+  "your",
+  "it",
+  "its",
+  "is",
+  "that",
+  "this",
+  "there",
+  "then",
+  "yes",
+  "no",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+  "grace",
+]);
+
+const sameName = (a: string, b: string): boolean => {
+  const left = a.toLowerCase().replace(/[^a-z]/g, "");
+  const right = b.toLowerCase().replace(/[^a-z]/g, "");
+  return left.length > 0 && (left === right || editDistanceAtMostOne(left, right));
+};
 
 /**
  * Client feedback (previous vendor's call, Oct 7): the CSR answered three
@@ -181,10 +249,12 @@ export class OutputGuard {
 
   /** `recentAgentReplies`: Grace's last few replies this call, oldest first. */
   /** `alreadySpokeThisTurn`: an earlier pass of this same turn already said something. */
+  /** `callerName`: the first name the caller gave THIS call, when one is known — see NOT_A_VOCATIVE_NAME. */
   constructor(
     recentAgentReplies: readonly string[] = [],
     alreadySpokeThisTurn = false,
     alreadySaidThisTurn = "",
+    private readonly callerName: string | null = null,
   ) {
     this.spokeAlready = alreadySpokeThisTurn;
     this.questionsThisTurn = splitSentences(alreadySaidThisTurn)
@@ -243,6 +313,41 @@ export class OutputGuard {
     return this.recentStatements.some(
       (earlier) => similarity(current, earlier) >= REPEAT_SIMILARITY,
     );
+  }
+
+  /**
+   * Drops a vocative name that is not the one the caller gave. See
+   * VOCATIVE_TRAILING's own comment: the name comes out, nothing is
+   * substituted, and only the two vocative forms are touched.
+   */
+  private withoutAStrangersName(sentence: string): string {
+    if (!this.callerName) {
+      return sentence;
+    }
+    const isWrong = (spoken: string): boolean =>
+      !NOT_A_VOCATIVE_NAME.has(spoken.toLowerCase().replace(/[^a-z]/g, "")) &&
+      !sameName(spoken, this.callerName!);
+    let changed = false;
+    const cleaned = sentence
+      .replace(VOCATIVE_TRAILING, (whole, spoken: string) => {
+        if (!isWrong(spoken)) {
+          return whole;
+        }
+        changed = true;
+        return "";
+      })
+      .replace(VOCATIVE_AFTER_OPENER, (whole, opener: string, spoken: string) => {
+        if (!isWrong(spoken)) {
+          return whole;
+        }
+        changed = true;
+        return opener;
+      });
+    if (!changed) {
+      return sentence;
+    }
+    this.actions.push("wrong_name");
+    return cleaned.replace(/\s{2,}/g, " ").replace(/\s+([.!?,])/g, "$1");
   }
 
   /** Returns the text to speak for this segment; an empty string means say nothing. */
@@ -328,6 +433,7 @@ export class OutputGuard {
       let kept = isQuestion(sentence)
         ? plainSpoken(sentence)
         : plainSpoken(sentence).replace(OWN_TODAY, "right away");
+      kept = this.withoutAStrangersName(kept);
       if (slow) {
         kept = hyphenateHouseNumber(kept);
       }

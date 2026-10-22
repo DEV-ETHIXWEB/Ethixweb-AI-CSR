@@ -330,3 +330,53 @@ describe("OutputGuard 2026-10-14 tester-call leaks", () => {
     );
   });
 });
+
+/**
+ * 2026-10-22 tester call: "Called as a returning customer, also gave name in
+ * starting, but still near the end of the call it changed the name completely
+ * to something else." Several people share a phone number, so a stored name
+ * is never safe to say, and being called by a stranger's name at the close
+ * undoes the whole call.
+ */
+describe("a name the caller never gave is not spoken", () => {
+  const guard = () => new OutputGuard([], false, "", "Akash");
+
+  it("drops a trailing vocative that is the wrong name", () => {
+    expect(guard().apply("You're all set, Robert.")).toBe("You're all set.");
+  });
+
+  it("drops a wrong name after a thanks or a goodbye", () => {
+    expect(guard().apply("Thanks Robert, take care.")).toBe("Thanks, take care.");
+  });
+
+  it("keeps the name the caller actually gave", () => {
+    expect(guard().apply("You're all set, Akash.")).toBe("You're all set, Akash.");
+  });
+
+  it("tolerates a one-letter difference, which is speech recognition, not a new person", () => {
+    expect(guard().apply("Thanks Akash, bye.")).toBe("Thanks Akash, bye.");
+    expect(new OutputGuard([], false, "", "Ana").apply("You're all set, Anna.")).toBe(
+      "You're all set, Anna.",
+    );
+  });
+
+  it("leaves a name used any other way alone", () => {
+    expect(guard().apply("Is that Robert Street or Roberts Avenue?")).toBe(
+      "Is that Robert Street or Roberts Avenue?",
+    );
+  });
+
+  it("changes nothing when no name was ever given", () => {
+    expect(new OutputGuard().apply("You're all set, Robert.")).toBe("You're all set, Robert.");
+  });
+
+  it("does not mistake an ordinary capitalised word for a name", () => {
+    expect(guard().apply("Got it, I'll note that.")).toBe("Got it, I'll note that.");
+  });
+
+  it("reports the rewrite so it can be counted", () => {
+    const g = guard();
+    g.apply("You're all set, Robert.");
+    expect(g.actions).toContain("wrong_name");
+  });
+});
