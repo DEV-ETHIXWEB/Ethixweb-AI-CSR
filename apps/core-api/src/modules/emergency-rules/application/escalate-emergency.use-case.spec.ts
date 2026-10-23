@@ -368,3 +368,34 @@ describe("a 'no ...' rule means something is missing", () => {
     expect((await classify(description)).isEmergency).toBe(true);
   });
 });
+
+/** 2026-10-23, client decision: a burning or electrical smell is handled like a gas smell. */
+describe("a burning or electrical smell transfers the call", () => {
+  const classify = (description: string) =>
+    buildUseCase().execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      callId: "call-1",
+      description,
+    });
+
+  it.each([
+    [
+      "water heater started doing some random noises and then i am smelling a burning smell around it",
+    ],
+    ["it died overnight and i'm actually also smelling something like a burning smell near it"],
+    ["it smells like something is burning in the basement"],
+    ["there's an electrical smell coming from the water heater"],
+    ["there's smoke coming out of the unit"],
+    ["the outlet by the heater is sparking"],
+  ])("transfers %p", async (description) => {
+    expect((await classify(description)).action).toBe("forward_call");
+  });
+
+  it.each([["my kitchen faucet drips a little"], ["the water heater makes a ticking noise"]])(
+    "leaves %p alone",
+    async (description) => {
+      expect((await classify(description)).action).toBe("standard_lead");
+    },
+  );
+});

@@ -2410,6 +2410,11 @@ function looksEmergencyAdjacent(transcript: string): boolean {
     "pouring",
     "gushing",
     "spraying",
+    // 2026-10-23: handled like a gas smell (see core-api's default rules).
+    "burning",
+    "electrical smell",
+    "smoke",
+    "sparking",
   ];
   return triggers.some((trigger) => lower.includes(trigger));
 }

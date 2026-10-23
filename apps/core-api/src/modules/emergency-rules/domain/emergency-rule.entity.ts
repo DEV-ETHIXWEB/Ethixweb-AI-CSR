@@ -58,6 +58,18 @@ export const DEFAULT_EMERGENCY_KEYWORDS: ReadonlyArray<{
   { pattern: "water knees", severity: "critical", action: "forward_call" },
   { pattern: "ceiling collapsing", severity: "critical", action: "forward_call" },
   { pattern: "ceiling caving", severity: "critical", action: "forward_call" },
+  // 2026-10-23, client decision: a burning or electrical smell, smoke or
+  // sparking is handled like a gas smell (a water heater with a burning
+  // smell near it had been saved as routine). Words match in any order, so
+  // "smelling something like a burning smell" and "smells like it's
+  // burning" are both covered.
+  { pattern: "burning smell", severity: "critical", action: "forward_call" },
+  { pattern: "smelling burning", severity: "critical", action: "forward_call" },
+  { pattern: "smells burning", severity: "critical", action: "forward_call" },
+  { pattern: "burning odor", severity: "critical", action: "forward_call" },
+  { pattern: "electrical smell", severity: "critical", action: "forward_call" },
+  { pattern: "smoke coming", severity: "critical", action: "forward_call" },
+  { pattern: "sparking", severity: "critical", action: "forward_call" },
   { pattern: "no hot water", severity: "high", action: "priority_notify" },
   { pattern: "no water", severity: "high", action: "priority_notify" },
   { pattern: "overflowing toilet", severity: "high", action: "priority_notify" },
