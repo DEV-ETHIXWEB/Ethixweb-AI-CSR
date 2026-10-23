@@ -537,3 +537,13 @@ describe("a number the caller gives is read back before it is saved", () => {
     ).toBeNull();
   });
 });
+
+/** 2026-10-23 live call: these were not recognized, the save was refused five times, and nothing was saved. */
+describe("more ways of asking for the callback number", () => {
+  it.each([
+    ["Thanks, Peter. Just to confirm, is the number you called from the best way to reach you?"],
+    ["Is there a different number you'd like me to use, or is the one you called from the best?"],
+  ])("counts %p", (text) => {
+    expect(NUMBER_ASKED.test(text)).toBe(true);
+  });
+});

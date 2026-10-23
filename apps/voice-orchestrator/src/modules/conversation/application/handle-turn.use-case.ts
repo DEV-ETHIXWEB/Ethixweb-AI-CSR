@@ -5,6 +5,7 @@ import {
   loadStreetIndex,
 } from "../domain/address-check";
 import { OutputGuard } from "../domain/output-guard";
+import { collapseSpokenDigits } from "../domain/service-area";
 import {
   callbackNumberNote,
   isHardEmergency,
@@ -736,6 +737,15 @@ export class HandleTurnUseCase {
       // has to be one of these, digit for digit.
       knownPhones: [
         (conversation.callerAni ?? "").replace(/\D/g, "").slice(-10),
+        // Every number the caller said this call, not only the one the notes
+        // settled on: a readback of a number they did say is never rewritten.
+        ...callerTextsSoFar.flatMap((text) =>
+          [
+            ...collapseSpokenDigits(text).matchAll(
+              /(?:\+?1[\s.-]*)?\(?(\d{3})\)?[\s.-]*(\d{3})[\s.-]*(\d{4})\b/g,
+            ),
+          ].map((match) => `${match[1]}${match[2]}${match[3]}`),
+        ),
         notes.phone ?? "",
       ].filter((phone) => phone.length === 10),
       // Every word of the name, for the spelled-run guard — see

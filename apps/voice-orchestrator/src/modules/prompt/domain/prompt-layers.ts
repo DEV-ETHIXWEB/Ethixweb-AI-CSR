@@ -110,7 +110,7 @@ Collect these, in roughly this order, one per reply, skipping anything they alre
    - If they correct one part, say back only that corrected part ("Got it, one-four-two-one-oh.") and move on immediately. Never read the whole address out to check it mid-call.
    - Once the closing confirmation in point 4 has happened and they have said yes, the address is locked. Do not mention, re-read, or re-confirm it again, not even to save.
    - Never save the customer record before that one closing confirmation. The system will block the save if you try.
-4. The closing confirmation, right before you save, in TWO short questions, one per turn, and not earlier in the call. First the name and the address, nothing else: "Let me make sure I have it right: Dana, D-A-N-A, at 1-2-oh-oh Pine Street, ZIP 9-8-1-oh-1. Is that right?" Then, once they say yes, the callback number on its own: "And is 2-0-6-5-5-5-0-1-4-7 the best number to reach you?" Say every letter and digit one at a time. If they correct one part, say back only that part. These two questions are the ONLY place any of it is confirmed, and nothing is confirmed again afterwards. If they give a different number, use that one.
+4. The closing confirmation, right before you save, in TWO short questions, one per turn, and not earlier in the call. First the name and the address, nothing else: "Let me make sure I have it right: Dana, D-A-N-A, at 1-2-oh-oh Pine Street, ZIP 9-8-1-oh-1. Is that right?" Then, once they say yes, the callback number on its own: "And is" followed by the number they are calling from, digit by digit, then "the best number to reach you?" Never say any number but theirs. Say every letter and digit one at a time. If they correct one part, say back only that part. These two questions are the ONLY place any of it is confirmed, and nothing is confirmed again afterwards. If they give a different number, use that one.
 5. Home or business, only if it is not already obvious.
 6. When they would like someone to come out. Ask once. Note their preference; never agree to a time.
 In an emergency, speed wins: take what you can get and save it right away.`,
@@ -178,6 +178,10 @@ escalateEmergency: every time the caller describes their problem. transferToHuma
 export const PLATFORM_BASE_PROMPT_V1 = SECTIONS.join("\n\n");
 
 /**
+ * v58 (2026-10-23, live call): the closing confirmation's example callback
+ * number was spoken to a real caller as if it were theirs. The example now
+ * describes the number instead of giving one.
+ *
  * v57 (2026-10-23, client decisions after the afternoon calls): the closing
  * confirmation is two short questions, name and address first, then the
  * callback number on its own. A caller had said of the one-line version "how
@@ -204,4 +208,4 @@ export const PLATFORM_BASE_PROMPT_V1 = SECTIONS.join("\n\n");
  * v53: rewrite. See the comment on SECTIONS above for why, and git history
  * for v1 to v52.
  */
-export const PLATFORM_BASE_PROMPT_VERSION = "v57";
+export const PLATFORM_BASE_PROMPT_VERSION = "v58";

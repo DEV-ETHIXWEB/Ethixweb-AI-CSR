@@ -49,8 +49,8 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
   const prompt = PLATFORM_BASE_PROMPT_V1;
   const lower = prompt.toLowerCase();
 
-  it("is versioned v57 and far shorter than the 11,000-word v52", () => {
-    expect(PLATFORM_BASE_PROMPT_VERSION).toBe("v57");
+  it("is versioned v58 and far shorter than the 11,000-word v52", () => {
+    expect(PLATFORM_BASE_PROMPT_VERSION).toBe("v58");
     expect(prompt.split(/\s+/).length).toBeLessThan(3700);
   });
 
@@ -209,6 +209,11 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
       expect(lower).toContain("first the name and the address, nothing else");
       expect(lower).toContain("then, once they say yes, the callback number on its own");
       expect(lower).toContain("these two questions are the only place any of it is confirmed");
+    });
+
+    it("gives no example phone number the model could read out as the caller's (v58)", () => {
+      expect(lower).not.toMatch(/\d-\d-\d-\d-\d-\d-\d/);
+      expect(lower).toContain("never say any number but theirs");
     });
 
     it("treats a burning or electrical smell as an emergency, with its own safety line (v57)", () => {

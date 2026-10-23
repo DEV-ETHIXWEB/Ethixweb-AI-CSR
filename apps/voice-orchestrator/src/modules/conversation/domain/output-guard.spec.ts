@@ -501,9 +501,30 @@ describe("the callback number is read back exactly", () => {
     expect(said).not.toContain("+1");
   });
 
-  it("leaves a genuinely different number alone", () => {
-    const said = guard().apply("Got it, so the best number is 2-0-6-5-5-5-0-1-4-7.");
-    expect(said).toContain("2-0-6-5-5-5-0-1-4-7");
+  it("leaves a different number alone when the caller gave it", () => {
+    const said = new OutputGuard(
+      [],
+      false,
+      "",
+      null,
+      null,
+      false,
+      [],
+      ["8722784999", "2065550147"],
+    ).apply("Got it, so the best number is 2-0-6-5-5-5-0-1-4-7.");
+    expect(said).toContain("2-oh-6-5-5-5-oh-1-4-7");
+  });
+
+  /** 2026-10-23 live call: the prompt's example number was read out as "the number you called from". */
+  it("replaces a callback number nobody on this call ever had, in digits or in words", () => {
+    expect(
+      guard().apply("Is the number you called from, 2-0-6-5-5-5-0-1-4-7, the best one?"),
+    ).toContain("8-7-2-2-7-8-4-9-9-9");
+    const said = guard().apply(
+      "Thanks, Peter. Just to confirm, is the number you called from, two-zero-six-five-five-five-zero-one-four-seven, the best way to reach you?",
+    );
+    expect(said).toContain("8-7-2-2-7-8-4-9-9-9");
+    expect(said).not.toContain("two-zero-six");
   });
 
   it("leaves house numbers and ZIP codes alone", () => {

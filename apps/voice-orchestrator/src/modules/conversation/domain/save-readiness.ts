@@ -119,7 +119,7 @@ export function leadProblemBlockedReason(args: {
 }
 
 export const NUMBER_ASKED =
-  /\b(best number|number (to|we can|i can) (reach|call)|reach you (at|on)|call you (at|on|back)|(right|correct|best|good|usable) number|call ?back number|contact number|phone number|number (you'?re|you are) calling from|number on (this|the) (call|line)|this number|(best|good|right) one to (reach|call) you|number (we'?re|we are|you'?re|you are) (talking|speaking) on)\b/i;
+  /\b(best number|number (to|we can|i can) (reach|call)|reach you (at|on)|call you (at|on|back)|(right|correct|best|good|usable) number|call ?back number|contact number|phone number|number (you'?re|you are) calling from|number on (this|the) (call|line)|this number|(best|good|right) one to (reach|call) you|number (we'?re|we are|you'?re|you are) (talking|speaking) on|number (you|they) called (from|on)|(best|good|right) way to (reach|contact|call) you|different number|number (you'?d|you would|i should|we should) (like me to )?use)\b/i;
 
 export const PHONE_NOT_CONFIRMED_ERROR = {
   error: "callback_number_not_confirmed",

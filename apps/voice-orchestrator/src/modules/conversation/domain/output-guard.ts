@@ -156,8 +156,9 @@ function withTheRealNumber(sentence: string, knownPhones: readonly string[]): st
   if (knownPhones.length === 0) {
     return sentence;
   }
-  return sentence.replace(PHONE_RUN, (run) => {
-    let digits = run.replace(/\D/g, "");
+  const aboutTheCallback = CALLBACK_CONTEXT.test(sentence);
+  const fix = (run: string, digitsOf: (run: string) => string): string => {
+    let digits = digitsOf(run);
     if (digits.length === 11 && digits.startsWith("1")) {
       digits = digits.slice(1);
     }
@@ -167,9 +168,47 @@ function withTheRealNumber(sentence: string, knownPhones: readonly string[]): st
     const nearest = knownPhones
       .map((phone) => ({ phone, edits: editDistance(digits, phone) }))
       .sort((a, b) => a.edits - b.edits)[0]!;
-    return nearest.edits <= PHONE_READBACK_MAX_EDITS ? spellDigits(nearest.phone) : run;
-  });
+    if (nearest.edits <= PHONE_READBACK_MAX_EDITS) {
+      return spellDigits(nearest.phone);
+    }
+    // 2026-10-23, live call: offered as "the number you called from", a number
+    // this call never had (the prompt's own example) was read to the caller.
+    // Asked about as their callback number, it can only be one of theirs; the
+    // one they said last wins over caller ID.
+    return aboutTheCallback ? spellDigits(knownPhones[knownPhones.length - 1]!) : run;
+  };
+  return sentence
+    .replace(PHONE_RUN, (run) => fix(run, (r) => r.replace(/\D/g, "")))
+    .replace(SPOKEN_PHONE_RUN, (run) =>
+      fix(run, (r) =>
+        r
+          .toLowerCase()
+          .split(/[^a-z]+/)
+          .filter(Boolean)
+          .map((word) => SPOKEN_DIGIT[word] ?? "")
+          .join(""),
+      ),
+    );
 }
+
+/** A number said in words, "two-zero-six-five-five-five...". */
+const SPOKEN_PHONE_RUN =
+  /\b(?:(?:zero|oh|one|two|three|four|five|six|seven|eight|nine)[\s,-]+){7,10}(?:zero|oh|one|two|three|four|five|six|seven|eight|nine)\b/gi;
+const SPOKEN_DIGIT: Record<string, string> = {
+  zero: "0",
+  oh: "0",
+  one: "1",
+  two: "2",
+  three: "3",
+  four: "4",
+  five: "5",
+  six: "6",
+  seven: "7",
+  eight: "8",
+  nine: "9",
+};
+/** The sentence is about where to reach the caller. */
+const CALLBACK_CONTEXT = /\b(number|reach you|call you|callback|call back)\b/i;
 
 function editDistance(a: string, b: string): number {
   const previous = Array.from({ length: b.length + 1 }, (_, k) => k);
