@@ -1819,7 +1819,8 @@ const SCENARIOS: Scenario[] = [
     checks: [
       neverSays(
         "never claims dispatch",
-        /\b(a technician is (on the way|being dispatched)|someone is on the way)\b/,
+        // "I can't confirm if someone is on the way yet" is the honest answer.
+        /\b(a technician is (on the way|being dispatched)|(?<!\b(?:if|whether) )someone is on the way)\b/,
       ),
     ],
   },
@@ -2061,13 +2062,17 @@ const SCENARIOS: Scenario[] = [
     id: "name-05-long-name",
     category: "name",
     turns: ["My sink leaks.", "Akash Lakhwani"],
-    checks: [neverAsksAbout("does not re-ask the name", ASKS_NAME)],
+    // Asking for the name after "my sink leaks" is right; the check is
+    // the reply to the name.
+    checks: [neverAsksAfter("does not re-ask the name", ASKS_NAME, 1)],
   },
   {
     id: "name-06-name-with-title",
     category: "name",
     turns: ["My sink leaks.", "Dr. Priya Raman"],
-    checks: [neverAsksAbout("does not re-ask the name", ASKS_NAME)],
+    // Asking for the name after "my sink leaks" is right; the check is
+    // the reply to the name.
+    checks: [neverAsksAfter("does not re-ask the name", ASKS_NAME, 1)],
   },
   {
     id: "name-07-name-in-opener",
@@ -2079,7 +2084,9 @@ const SCENARIOS: Scenario[] = [
     id: "name-08-refuses-name",
     category: "name",
     turns: ["My sink leaks.", "I'd rather not give my name."],
-    checks: [neverAsksAbout("does not press for the name again", ASKS_NAME)],
+    // Asking for the name after "my sink leaks" is right; the check is
+    // the reply to the name.
+    checks: [neverAsksAfter("does not press for the name again", ASKS_NAME, 1)],
   },
   // -------------------------------------------------------------------
   // 9. IDENTITY / AI DISCLOSURE — absolute and unconditional (v30).
@@ -2395,7 +2402,9 @@ const SCENARIOS: Scenario[] = [
     id: "correct-02-problem",
     category: "correction",
     turns: ["My sink is leaking.", "Actually it's the dishwasher, not the sink."],
-    checks: [neverSays("does not keep referring to the sink", /\byour sink\b/)],
+    // From the correction on: "Got it, your sink is leaking" in reply to
+    // "my sink is leaking" is right.
+    checks: [neverSaysAfter("does not keep referring to the sink", /\byour sink\b/, 1)],
   },
   {
     id: "correct-03-address",
@@ -2425,6 +2434,41 @@ const SCENARIOS: Scenario[] = [
     category: "correction",
     turns: ["My zip is 98101.", "Sorry, 98102."],
     checks: [atMostQuestions(1)],
+  },
+  {
+    // 2026-10-23, test call through the live pipeline: given the new number,
+    // Grace asked "what's the correct house number, then?"
+    id: "correct-07-house-number-given",
+    category: "correction",
+    turns: [
+      "Hi, my kitchen faucet is leaking. My name is Yash Patel.",
+      "twelve fifteen north ninety second street, seattle, nine eight one zero three",
+      "no sorry, it's twelve fifty, not twelve fifteen",
+    ],
+    checks: [
+      neverAsksAfter(
+        "does not ask for the house number it was just given",
+        /\b(house number|correct (number|address)|what('?s| is) the (correct|right))\b/,
+        2,
+      ),
+      saysSomewhere("says the new house number back", /1-?2-?5-?(0|oh)\b|twelve fifty/i),
+    ],
+  },
+  {
+    // 2026-10-23, test call through the live pipeline: "yash patel" said
+    // again when Grace asked for the street; she asked for the street again.
+    id: "correct-08-bare-name-said-again",
+    category: "correction",
+    turns: ["Hi, my kitchen faucet is leaking.", "Yash Patel.", "Yash Patel."],
+    checks: [
+      {
+        label: "asks them to spell the name they said again",
+        run: (ctx) => {
+          const last = ctx.agentTurns.at(-1) ?? "";
+          return /\bspell\b/i.test(last) ? null : `did not ask for a spelling: "${last}"`;
+        },
+      },
+    ],
   },
 
   // -------------------------------------------------------------------
