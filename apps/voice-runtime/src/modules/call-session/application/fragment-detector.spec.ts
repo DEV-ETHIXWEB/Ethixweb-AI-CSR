@@ -252,6 +252,8 @@ describe("a spelling that has only just started", () => {
     ["let me spell it j"],
     ["my name is spelled s y u"],
     ["it's j o"],
+    // 2026-10-23 client call: cut off here, and Grace said "Your name is Qvist".
+    ["the last name is lindquist l i n d"],
   ])("holds %p so the rest of the letters can arrive", (said) => {
     expect(fragmentStrength(said)).toBe("strong");
   });
@@ -262,6 +264,7 @@ describe("a spelling that has only just started", () => {
     // here".
     ["marisa m a r i s a"],
     ["s u m a l i a"],
+    ["lindquist l i n d q u i s t"],
     ["my sink is leaking"],
     ["yes that's right"],
   ])("still treats %p as finished", (said) => {

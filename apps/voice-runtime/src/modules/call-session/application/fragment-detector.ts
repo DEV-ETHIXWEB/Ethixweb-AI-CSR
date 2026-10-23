@@ -303,16 +303,31 @@ const SPELLING_IN_PROGRESS_MAX_LETTERS = 3;
 
 function isSpellingInProgress(words: readonly string[]): boolean {
   let run = 0;
+  let letters = "";
   for (let index = words.length - 1; index >= 0; index -= 1) {
     const word = normalizeWord(words[index]!);
     if (word.length !== 1 || !/[a-z]/.test(word)) {
       break;
     }
     run += 1;
+    letters = word + letters;
   }
   // A run of 0 is not a spelling at all, and the whole utterance being one
   // letter is already handled above as its own case.
-  return run >= 1 && run <= SPELLING_IN_PROGRESS_MAX_LETTERS && run < words.length;
+  if (run >= 1 && run <= SPELLING_IN_PROGRESS_MAX_LETTERS && run < words.length) {
+    return true;
+  }
+  // 2026-10-23, client call: "the last name is lindquist l i n d", a pause,
+  // then "q v i s t". Four letters is past the limit above, so it committed,
+  // and Grace answered "Your name is Qvist". Letters that are the start of a
+  // word the caller has just said, and stop short of it, cannot be finished.
+  return (
+    run >= 2 &&
+    words
+      .slice(0, words.length - run)
+      .map((word) => normalizeWord(word))
+      .some((word) => word.length > letters.length && word.startsWith(letters))
+  );
 }
 
 export function looksLikeIncompleteFragment(transcript: string): boolean {
