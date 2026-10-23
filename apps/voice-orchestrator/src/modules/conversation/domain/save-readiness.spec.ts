@@ -4,6 +4,7 @@ import {
   leadProblemBlockedReason,
   saveBlockedReason,
   shouldNudgeForCallbackNumber,
+  readsBackStreet,
   zipMissingNote,
   NUMBER_ASKED,
 } from "./save-readiness";
@@ -545,5 +546,77 @@ describe("more ways of asking for the callback number", () => {
     ["Is there a different number you'd like me to use, or is the one you called from the best?"],
   ])("counts %p", (text) => {
     expect(NUMBER_ASKED.test(text)).toBe(true);
+  });
+});
+
+/** 2026-10-23 live calls: the confirmation steps as they really went. */
+describe("the closing confirmation holds whatever order Grace takes it in", () => {
+  it("Peter: the address read back without the name in the same breath completes the first step", () => {
+    const note = callbackNumberNote(
+      "+18722784999",
+      { spelled: null, stated: "Peter Parker" },
+      { street: "3015 south jackson street", zip: "98114" },
+      [
+        "Thanks, Peter! Can you provide your street address, please?",
+        "Got it. Let me confirm your address: 3-oh-1-5 South Jackson Street, Seattle, Washington, ZIP 98114. Is that right?",
+      ],
+    );
+    expect(note).toContain("872-278-4999");
+    expect(note).not.toContain("ONLY the first");
+  });
+
+  it("Mary Jane: echoing the house number while asking for the street is not a readback", () => {
+    expect(
+      readsBackStreet(
+        "What's the street name for twelve fifteen?",
+        "1215 north ninety second street",
+        null,
+      ),
+    ).toBe(false);
+    expect(
+      readsBackStreet(
+        "Let me make sure I have it right: Mary Jane, at 1-2-1-5 North Ninety Second Street, ZIP 9-8-1-oh-3.",
+        "1215 north ninety second street",
+        "98103",
+      ),
+    ).toBe(true);
+  });
+
+  it("Mary Jane: asking for the number first does not skip the name and address", () => {
+    const args = {
+      callerTexts: [
+        "the morning when i went there for a bath the water heater was not heating the water",
+        "yeah sure it's mary jane",
+        "the address is twelve fifteen",
+        "north ninety second street seattle washington ninety second street",
+        "seattle washington nine eight one zero three",
+      ],
+      agentTexts: [
+        "Got it, your water heater isn't heating water. Can I have your name, please?",
+        "Got it, Mary Jane. What's the street address for the water heater?",
+        "What's the street name for twelve fifteen?",
+        "Mary Jane, is this number you're calling from, 8-7-2-2-7-8-4-9-9-9, the best number to reach you?",
+      ],
+    };
+    expect(shouldNudgeForCallbackNumber(args)).toBe(true);
+    expect(
+      saveBlockedReason({
+        ...args,
+        address: { street: "1215 North Ninety Second Street", zip: "98103" },
+      })?.error,
+    ).toBe("address_not_confirmed");
+  });
+
+  it("Sarah: the number question never tells Grace to save on the same turn", () => {
+    const note = callbackNumberNote(
+      "+18722784999",
+      { spelled: null, stated: "Sarah Miller" },
+      { street: "200 northwest fiftieth street", zip: "98101" },
+      [
+        "Let me make sure I have it right: Sarah, S-A-R-A-H, Miller, at 2-oh-oh Northwest Fiftieth Street, ZIP 9-8-1-0-1. Is that right?",
+      ],
+    );
+    expect(note).toContain("Do not save on this turn");
+    expect(note).not.toContain("Then save");
   });
 });

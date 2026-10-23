@@ -218,13 +218,54 @@ function readBackByAgent(address: unknown, agentTexts: readonly string[]): boole
     return false;
   }
   const street = (address as Record<string, string>)["street"] ?? "";
-  const houseNumber = street.match(/\d{1,6}/)?.[0];
-  if (!houseNumber) {
+  const zip = (address as Record<string, unknown>)["zip"];
+  return agentTexts.some((text) =>
+    readsBackStreet(text, street, typeof zip === "string" ? zip : null),
+  );
+}
+
+const STREET_DIRECTIONS = new Set([
+  "n",
+  "s",
+  "e",
+  "w",
+  "ne",
+  "nw",
+  "se",
+  "sw",
+  "north",
+  "south",
+  "east",
+  "west",
+  "northeast",
+  "northwest",
+  "southeast",
+  "southwest",
+]);
+
+/**
+ * One reply of Grace's that reads the street back: the house number, and
+ * with it the street's name or the ZIP.
+ *
+ * 2026-10-23, live call: "What's the street name for twelve fifteen?"
+ * contains the house number and was counted as the address being read back,
+ * so the request was saved without the address ever being confirmed. Echoing
+ * the number while asking for the rest is not a readback.
+ */
+export function readsBackStreet(text: string, street: string, zip: string | null): boolean {
+  const tokens = street.toLowerCase().split(/\s+/).filter(Boolean);
+  const house = tokens[0]?.match(/^\d{1,6}$/)?.[0];
+  if (!house) {
     return false;
   }
-  return agentTexts.some((text) =>
-    collapseSpokenDigits(text).replace(/[\s-]/g, "").includes(houseNumber),
-  );
+  const digits = collapseSpokenDigits(text.toLowerCase()).replace(/[\s-]/g, "");
+  if (!digits.includes(house)) {
+    return false;
+  }
+  const name = tokens.slice(1).find((token) => token.length >= 3 && !STREET_DIRECTIONS.has(token));
+  const saysName = name !== undefined && text.toLowerCase().includes(name);
+  const saysZip = zip !== null && zip.length === 5 && digits.includes(zip);
+  return saysName || saysZip;
 }
 
 function addressBlockedReason({ callerTexts, agentTexts, address }: Args) {
@@ -306,7 +347,7 @@ export function callbackNumberNote(
   return (
     "[The caller has confirmed their name and address. Your whole reply confirms ONE thing: " +
     `whether ${spoken} is the best number to reach them, read digit by digit, without the +1. ` +
-    "Then save. Ask nothing else.]"
+    "Do not save on this turn; save once they answer. Ask nothing else.]"
   );
 }
 
@@ -322,20 +363,28 @@ function nameAndAddressReadBack(
 ): boolean {
   const first = (name?.spelled?.[0] ?? name?.stated?.split(/\s+/)[0] ?? "").toLowerCase();
   if (!first) {
-    return false;
+    // No name to confirm: the address read back is the whole first step.
+    return (
+      !!address?.street &&
+      agentTexts.some((text) => readsBackStreet(text, address.street ?? "", address.zip))
+    );
   }
-  const house = address?.street?.match(/^\d{1,6}/)?.[0] ?? "";
+  const spelled = first.toUpperCase().split("").join("-");
   // No street (declined, or an emergency saved without one): the name's
   // spelling read back is the whole of the first question.
-  const spelled = first.toUpperCase().split("").join("-");
-  return agentTexts.some((text) => {
-    if (!house) {
-      return text.includes(spelled);
-    }
-    const lower = text.toLowerCase();
-    const digits = lower.replace(/\boh\b/g, "0").replace(/[\s-]/g, "");
-    return lower.includes(first) && digits.includes(house);
-  });
+  if (!address?.street) {
+    return agentTexts.some((text) => text.includes(spelled));
+  }
+  // 2026-10-23, live call: Grace read the address back without the name in
+  // the same breath. Requiring both in ONE reply left this step "not done",
+  // so its note fired on all eight remaining turns. The address readback is
+  // what is checked; the name only has to have been said back at some point.
+  const saidName = agentTexts.some(
+    (text) => text.toLowerCase().includes(first) || text.includes(spelled),
+  );
+  return (
+    saidName && agentTexts.some((text) => readsBackStreet(text, address.street ?? "", address.zip))
+  );
 }
 
 /** The address as it should be spoken in the closing confirmation, or "" when there is none. */
@@ -426,7 +475,17 @@ export function shouldNudgeForCallbackNumber(args: {
   // waiting on (2026-10-22): this note now DOES the address readback, so
   // waiting for one would deadlock and the call would never reach a
   // confirmation at all.
-  return !args.agentTexts.some((text) => NUMBER_ASKED.test(text));
+  // 2026-10-23, live call: Grace asked for the number on her own before
+  // reading back the name and address, and because the number had been
+  // asked, this stopped firing; the address was never confirmed. It now keeps
+  // going until BOTH steps have happened, in whatever order.
+  const numberAsked = args.agentTexts.some((text) => NUMBER_ASKED.test(text));
+  const readBack = nameAndAddressReadBack(
+    args.agentTexts,
+    { spelled: notes.spelledName, stated: notes.statedName },
+    { street: notes.street, zip: notes.zip },
+  );
+  return !(numberAsked && readBack);
 }
 
 /** Grace asking for the ZIP code. */
