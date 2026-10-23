@@ -43,6 +43,7 @@ import { ToolRegistry } from "../../tool-broker/application/tool-registry";
 import {
   addressDisputeNote,
   nameDisputeNote,
+  nameUpdateNote,
   addressReadbackNote,
   buildCallNotes,
   formatCallNotes,
@@ -594,8 +595,14 @@ export class HandleTurnUseCase {
       !isTrailingOff && !wantsItAgain && !pendingReadback
         ? nameDisputeNote(callerTextsSoFar, notedFirstName)
         : null;
-    const addressDisputed =
+    // See nameUpdateNote: below a dispute (which has to get the letters
+    // first) and above the address, which a name update must not reopen.
+    const nameUpdated =
       !isTrailingOff && !wantsItAgain && !pendingReadback && !nameDisputed
+        ? nameUpdateNote(callerTextsSoFar)
+        : null;
+    const addressDisputed =
+      !isTrailingOff && !wantsItAgain && !pendingReadback && !nameDisputed && !nameUpdated
         ? addressDisputeNote(callerTextsSoFar, agentTextsSoFar)
         : null;
     const needsName =
@@ -603,6 +610,7 @@ export class HandleTurnUseCase {
       !wantsItAgain &&
       !pendingReadback &&
       !nameDisputed &&
+      !nameUpdated &&
       !addressDisputed &&
       shouldNudgeForName(conversation);
     const needsCallbackNumber =
@@ -610,6 +618,7 @@ export class HandleTurnUseCase {
       !wantsItAgain &&
       !pendingReadback &&
       !nameDisputed &&
+      !nameUpdated &&
       !addressDisputed &&
       !needsName &&
       shouldNudgeForCallbackNumber({
@@ -630,6 +639,7 @@ export class HandleTurnUseCase {
       wantsItAgain ||
       pendingReadback !== null ||
       nameDisputed !== null ||
+      nameUpdated !== null ||
       addressDisputed !== null ||
       needsName ||
       needsCallbackNumber ||
@@ -642,6 +652,8 @@ export class HandleTurnUseCase {
       annotatedTranscript = `${directive(pendingReadback)} ${annotatedTranscript}`;
     } else if (nameDisputed) {
       annotatedTranscript = `${directive(nameDisputed)} ${annotatedTranscript}`;
+    } else if (nameUpdated) {
+      annotatedTranscript = `${directive(nameUpdated)} ${annotatedTranscript}`;
     } else if (addressDisputed) {
       annotatedTranscript = `${directive(addressDisputed)} ${annotatedTranscript}`;
     } else if (needsName) {

@@ -1211,6 +1211,29 @@ export function nameDisputeNote(
   );
 }
 
+/** "can you update my full name", "change the name to", "fix my last name". */
+const NAME_UPDATE =
+  /\b(?:update|change|correct|fix|edit|spell)\s+(?:my|the|his|her)\s+(?:full\s+|first\s+|last\s+)?name\b|\bname\s+(?:should be|is actually|needs to be)\b/i;
+
+/**
+ * 2026-10-23, client call: after "you're all set", the caller asked "can you
+ * update my full name" and spelled it. Grace confirmed the name and then
+ * asked for the street address again, which the caller had already given and
+ * confirmed. A name update is about the name; nothing else is reopened.
+ */
+export function nameUpdateNote(callerTexts: readonly string[]): string | null {
+  const latest = (callerTexts.at(-1) ?? "").trim();
+  if (!latest || !NAME_UPDATE.test(latest)) {
+    return null;
+  }
+  return (
+    "[The caller is updating their NAME only. Say the corrected name back once, spelled out, " +
+    "using the call notes above. Do NOT ask again for the address, the phone number, or anything " +
+    "else already given, and do not restart the intake. If their request was already saved, save " +
+    "the corrected name with createCustomer using the same phone and address.]"
+  );
+}
+
 /**
  * QA 2026-10-13: a caller who volunteered the address while Grace was waiting
  * on a different question ("is it leaking right now?") was ignored, and she

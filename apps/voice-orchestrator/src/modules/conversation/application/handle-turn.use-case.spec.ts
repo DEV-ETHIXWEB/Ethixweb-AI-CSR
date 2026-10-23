@@ -4619,3 +4619,49 @@ describe("a disputed name is asked for letter by letter (2026-10-23 'Yash' heard
     expect(sent).not.toContain("spell their first name letter by letter");
   });
 });
+
+/** 2026-10-23 client call: "can you update my full name" was followed by a request for the street address. */
+describe("a name update reopens nothing else", () => {
+  const at = new Date().toISOString();
+  it("sends the name-only note, with the full corrected name in the notes", async () => {
+    const lines: Array<[string, string]> = [
+      ["caller", "yes my name is trevor"],
+      ["agent", "Got it, Trevor. Could you please provide your street address?"],
+      ["caller", "yes the street address is nine zero one four rainier avenue south"],
+      ["agent", "Can you please provide the ZIP code?"],
+      ["caller", "seattle washington nine eight one one eight"],
+      ["agent", "You're all set, Trevor. Take care!"],
+    ];
+    const repository = new FakeConversationRepository();
+    repository.seed(
+      baseConversation({
+        transcript: lines.map(([speaker, text], turnIndex) => ({
+          turnIndex,
+          speaker: speaker as "caller" | "agent",
+          text,
+          confidence: null,
+          offsetMs: 0,
+          at,
+        })),
+      }),
+    );
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "Got it, Trevor Lindquist." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+    await useCase.execute(
+      baseCommand({
+        transcript:
+          "also can you update my full name well it's trevor and the last name is lindquist",
+      }),
+    );
+    const sent = aiProvider.requests[0]!.messages.find((m) => m.role === "user")!.content;
+    expect(sent).toContain("updating their NAME only");
+    expect(sent).toContain("L-I-N-D-Q-U-I-S-T");
+    expect(sent).not.toContain("service address is wrong");
+  });
+});

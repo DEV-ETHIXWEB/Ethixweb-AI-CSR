@@ -1,6 +1,7 @@
 import {
   addressDisputeNote,
   nameDisputeNote,
+  nameUpdateNote,
   addressReadbackNote,
   buildCallNotes,
   formatCallNotes,
@@ -794,5 +795,25 @@ describe("names from the 2026-10-23 client calls", () => {
       ["caller", "h a r r i s"],
     );
     expect(notes.spelledName).toEqual(["tom", "harris"]);
+  });
+});
+
+/** 2026-10-23 client call: a name update was followed by "can I get your street address?". */
+describe("nameUpdateNote", () => {
+  it.each([
+    ["also can you update my full name well it's trevor and the last name is lindquist l i n d"],
+    ["can you change my last name"],
+    ["please correct the name"],
+    ["my name should be spelled differently"],
+  ])("keeps the turn to the name for %p", (said) => {
+    expect(nameUpdateNote([said])).toContain("Do NOT ask again for the address");
+  });
+
+  it.each([
+    ["can you fix the leak, my name is bob"],
+    ["my name is trevor"],
+    ["can you update me on the time"],
+  ])("stays quiet for %p", (said) => {
+    expect(nameUpdateNote([said])).toBeNull();
   });
 });
