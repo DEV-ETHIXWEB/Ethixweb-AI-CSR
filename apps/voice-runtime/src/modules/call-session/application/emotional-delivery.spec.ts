@@ -61,7 +61,7 @@ describe("parseDelivery", () => {
 
   it("MARKUP SANITIZATION — an unsupported/unrecognized tag is still stripped from spoken text, even though it contributes no voice-setting change", () => {
     const result = parseDelivery("[excitedly] Great news!");
-    expect(result.segments[0]!.text).toBe("Great news!");
+    expect(result.segments[0]!.text).toBe("Great news.");
     expect(result.voiceSettings).toEqual(DEFAULT_VOICE_DELIVERY_SETTINGS);
   });
 
@@ -225,7 +225,7 @@ describe("parseDelivery", () => {
     const result = parseDelivery(
       "No problem, talk soon! The caller has said goodbye and ended the call. As instructed, I let them go with a warm closing line and did not ask any qualifying questions.",
     );
-    expect(result.segments[0]!.text).toBe("No problem, talk soon!");
+    expect(result.segments[0]!.text).toBe("No problem, talk soon.");
   });
 
   it.each([
@@ -243,8 +243,14 @@ describe("parseDelivery", () => {
 
   it("leaves ordinary speech TO the caller untouched", () => {
     const input =
-      "Thanks for calling! Can I get your name, and is this the best number to reach you?";
+      "Thanks for calling. Can I get your name, and is this the best number to reach you?";
     expect(parseDelivery(input).segments[0]!.text).toBe(input);
+  });
+
+  it("2026-10-23: speaks an exclamation as a full stop, so the voice stays level", () => {
+    expect(parseDelivery("Alright, have a great day, Sarah!").segments[0]!.text).toBe(
+      "Alright, have a great day, Sarah.",
+    );
   });
 
   it("never strips an utterance down to nothing on the narration rule alone", () => {

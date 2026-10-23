@@ -37,6 +37,7 @@ import {
   silenceBuffer,
   type DeliverySegment,
 } from "./emotional-delivery";
+import { LoudnessLeveler } from "./loudness-leveler";
 import {
   addressStillComing,
   fragmentStrength,
@@ -101,13 +102,6 @@ const STRONG_FRAGMENT_HOLD_MS = 3000;
  */
 const PARTIAL_NUMBER_HOLD_MS = 1500;
 
-/**
- * The hold while a caller is still reading out an address; see
- * `addressStillComing`. Measured on the 2026-10-23 call that prompted it: the
- * gaps between pieces, from one turn being finalized to the caller speaking
- * again, ran about one to two seconds. Never applied once a ZIP closes the
- * address, so the turn that matters most is not slowed at all.
- */
 const ADDRESS_HOLD_MS = 2000;
 
 /** Bounds a capacity-429 wait loop — a caller genuinely on hold this long has almost certainly already hung up or should hit the tenant's configured overflowNumber instead of waiting forever. Not a documented constant, an INFERRED safety limit (same honesty convention as voice-orchestrator's own MAX_TOOL_ITERATIONS). */
@@ -1750,6 +1744,8 @@ export class CallSessionOrchestrator {
     const startedAt = Date.now();
     let firstChunkAt: number | null = null;
     let chunkCount = 0;
+    // One level for the whole utterance: see loudness-leveler.ts.
+    const leveler = new LoudnessLeveler();
     try {
       for (const segment of segments) {
         if (abortController.signal.aborted) {
@@ -1770,7 +1766,7 @@ export class CallSessionOrchestrator {
             firstChunkAt = Date.now();
           }
           chunkCount += 1;
-          this.recordSentAudio(sink, chunk);
+          this.recordSentAudio(sink, leveler.process(chunk));
         }
       }
     } catch (error) {

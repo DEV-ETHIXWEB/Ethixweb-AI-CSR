@@ -441,7 +441,10 @@ export function parseDelivery(rawInput: string): ParsedDelivery {
   let match: RegExpExecArray | null;
 
   const flush = (endIndex: number): void => {
-    const buffer = stripAllTags(raw.slice(cursor, endIndex));
+    // 2026-10-23: an exclamation mark makes the voice louder and more excited
+    // (measured: "Alright, have a great day, Sarah!" 24% louder than the same
+    // line with a full stop). Grace keeps one steady, calm tone.
+    const buffer = stripAllTags(raw.slice(cursor, endIndex)).replace(/!/g, ".");
     if (buffer.length > 0) {
       segments.push({ text: buffer, pauseBeforeMs: pendingPauseMs });
       pendingPauseMs = 0;
