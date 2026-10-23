@@ -399,3 +399,30 @@ describe("a burning or electrical smell transfers the call", () => {
     },
   );
 });
+
+/** 2026-10-23 live call: a restaurant with water flowing was saved as routine. */
+describe("water flowing and a business losing money", () => {
+  const classify = (description: string) =>
+    buildUseCase().execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      callId: "call-1",
+      description,
+    });
+
+  it("transfers water that is flowing", async () => {
+    expect(
+      (
+        await classify(
+          "currently my kitchen is basically leaking and water is flowing from the sink",
+        )
+      ).action,
+    ).toBe("forward_call");
+  });
+
+  it("marks a business losing money as urgent", async () => {
+    expect((await classify("we are out of business and we are not able to operate")).action).toBe(
+      "priority_notify",
+    );
+  });
+});

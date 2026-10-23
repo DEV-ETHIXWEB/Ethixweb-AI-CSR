@@ -70,6 +70,17 @@ export const DEFAULT_EMERGENCY_KEYWORDS: ReadonlyArray<{
   { pattern: "electrical smell", severity: "critical", action: "forward_call" },
   { pattern: "smoke coming", severity: "critical", action: "forward_call" },
   { pattern: "sparking", severity: "critical", action: "forward_call" },
+  // 2026-10-23 live call: a restaurant owner said "water is flowing from the
+  // sink ... we are not able to operate", was saved as routine and not put
+  // through, while another caller who said "flooding" was. Water actively
+  // flowing is the same emergency in other words; a business losing money
+  // to the problem is at least urgent.
+  { pattern: "water flowing", severity: "critical", action: "forward_call" },
+  { pattern: "water is flowing", severity: "critical", action: "forward_call" },
+  { pattern: "losing money", severity: "high", action: "priority_notify" },
+  { pattern: "out of business", severity: "high", action: "priority_notify" },
+  { pattern: "can't operate", severity: "high", action: "priority_notify" },
+  { pattern: "not able to operate", severity: "high", action: "priority_notify" },
   { pattern: "no hot water", severity: "high", action: "priority_notify" },
   { pattern: "no water", severity: "high", action: "priority_notify" },
   { pattern: "overflowing toilet", severity: "high", action: "priority_notify" },
