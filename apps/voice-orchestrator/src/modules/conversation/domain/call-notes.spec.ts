@@ -1011,3 +1011,19 @@ describe("describing words after 'it's' or 'i'm' are never a name", () => {
     expect(buildCallNotes(["my name is kimberly"]).statedName).toBe("Kimberly");
   });
 });
+
+/** 2026-10-23 live call: correcting the street, the caller became "Pontler". */
+describe("a street said after 'it's' is never a name", () => {
+  it("keeps the caller's name when they correct the street", () => {
+    expect(
+      buildCallNotes([
+        "hi this is victor amsprey",
+        "yes it's it's pontler roy way southwest seattle",
+      ]).statedName,
+    ).toBe("Victor Amsprey");
+  });
+
+  it("still takes a name followed by an address", () => {
+    expect(buildCallNotes(["this is tom at 4512 maple street"]).statedName).toBe("Tom");
+  });
+});

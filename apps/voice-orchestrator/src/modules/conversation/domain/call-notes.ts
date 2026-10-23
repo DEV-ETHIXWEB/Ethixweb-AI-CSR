@@ -1099,6 +1099,18 @@ function statedNameAt(callerTexts: readonly string[]): { value: string; index: n
         if (LOOSE_CUE.test(match[0]) && NOT_AFTER_A_NAME.test(lower.slice(firstEnd))) {
           continue;
         }
+        // 2026-10-23, live call: correcting the street read back to him, the
+        // caller said "yes it's it's pontler roy way", and Grace began calling
+        // him Pontler. After a loose cue, a street type within the next two
+        // words makes it a street.
+        if (
+          LOOSE_CUE.test(match[0]) &&
+          (lower.slice(at + match[0].indexOf(match[1] ?? "")).match(/[a-z0-9']+/g) ?? [])
+            .slice(1, 3)
+            .some((word) => STREET_SUFFIXES.has(word))
+        ) {
+          continue;
+        }
         // "it's steadily dripping": an -ly word straight before a verb is
         // describing the problem. Emily, Kelly and Kimberly are names; they
         // are only refused here, in front of an -ing or -ed word.
