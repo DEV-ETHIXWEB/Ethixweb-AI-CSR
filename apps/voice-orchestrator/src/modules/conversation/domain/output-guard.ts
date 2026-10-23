@@ -139,7 +139,8 @@ export type GuardAction =
   | "word_limit"
   | "wrong_name"
   | "wrong_spelling"
-  | "wrong_phone_readback";
+  | "wrong_phone_readback"
+  | "second_question";
 
 /**
  * 2026-10-23 client call: the callback number read back as
@@ -706,6 +707,14 @@ export class OutputGuard {
         (this.houseNumber !== null && mentionsHouseNumber(plain, this.houseNumber))
       ) {
         slow = true;
+      }
+      // One question per turn, as the prompt asks. 2026-10-23, real-model QA
+      // on gpt-4o-mini (the production model), on the live code as well:
+      // "What seems to be the problem today? Is it happening right now?" The
+      // caller can answer only one; the second is dropped, never the first.
+      if (isQuestion(sentence) && this.questionsThisTurn.length > 0) {
+        this.actions.push("second_question");
+        continue;
       }
       if (isQuestion(sentence)) {
         this.questionsThisTurn.push(normalizedWords(sentence));

@@ -566,3 +566,20 @@ describe("bracketed stage directions are never spoken", () => {
     expect(said).toContain("I'm sorry to hear that.");
   });
 });
+
+/** 2026-10-23, real-model QA on gpt-4o-mini: two questions in one reply. */
+describe("one question per reply", () => {
+  it("keeps the first question and drops the second", () => {
+    const said = new OutputGuard().apply(
+      "Got it. What seems to be the problem today? Is it happening right now?",
+    );
+    expect(said).toContain("What seems to be the problem today?");
+    expect(said).not.toContain("Is it happening right now?");
+  });
+
+  it("keeps an answer and its one question", () => {
+    const said = new OutputGuard().apply("Yes, we do tankless conversions. Can I get your name?");
+    expect(said).toContain("Yes, we do tankless conversions.");
+    expect(said).toContain("Can I get your name?");
+  });
+});
