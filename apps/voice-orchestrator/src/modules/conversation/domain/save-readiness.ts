@@ -146,6 +146,21 @@ export function phoneMismatchError(spoken: string) {
   } as const;
 }
 
+/** The agent's text carries these digits in order, however they were written ("2-0-6...", "206 555..."). */
+function saysDigits(text: string, digits: string): boolean {
+  return text
+    .replace(/\boh\b/gi, "0")
+    .replace(/\D/g, "")
+    .includes(digits);
+}
+
+export function newNumberNotReadBackError(spoken: string) {
+  return {
+    error: "new_callback_number_not_read_back",
+    detail: `Do not save yet. Read the number they just gave back to them, digit by digit, without the +1: ${spoken.split("").join("-")}, and ask if that is right. Then save it as the phone. Do not ask for anything else again.`,
+  } as const;
+}
+
 interface Args {
   callerTexts: readonly string[];
   agentTexts: readonly string[];
@@ -174,6 +189,13 @@ export function saveBlockedReason(args: Args) {
     if (passed !== spoken) {
       return phoneMismatchError(spoken);
     }
+  }
+  // QA 2026-10-23 (feedback-15): "please call me on 206 555 0147 instead",
+  // and the request was saved and closed without the new number ever being
+  // said back. A number the caller gives is read back before it is saved,
+  // the same as the one on caller ID; a wrong one cannot be recovered.
+  if (spoken !== null && !agentTexts.some((text) => saysDigits(text, spoken))) {
+    return newNumberNotReadBackError(spoken);
   }
   if (callerTexts.some((text) => HARD_EMERGENCY.test(text))) {
     return null;
@@ -412,7 +434,10 @@ const ZIP_ASKED = /\b(zip|zip code|postal code)\b/i;
 /** The caller saying they do not have it. */
 const ZIP_UNKNOWN =
   /\b(don'?t|do not|can'?t|cannot) (know|remember|recall)\b[^.?!]{0,25}\bzip\b|\bzip\b[^.?!]{0,25}\b(don'?t|do not|can'?t) (know|remember)\b|\bno idea\b/i;
-const MAX_ZIP_ASKS = 2;
+// Once: the prompt's own rule is to ask for the ZIP once and accept the city
+// if they do not know it. Twice made a real-model QA caller who answered
+// "in Seattle" get asked again (2026-10-23, scenario feel-05).
+const MAX_ZIP_ASKS = 1;
 
 function zipStillNeeded(
   callerTexts: readonly string[],
@@ -447,8 +472,8 @@ function zipStillNeeded(
  * confirmation fired on the street alone, and the note that asks for a
  * missing ZIP only fires on a turn whose own words carry a whole street
  * ("westlake avenue unit four" has no house number, so it did not). So the
- * ZIP is now asked for, on its own, before the closing confirmation, at most
- * twice, and not when the caller says they do not know it.
+ * ZIP is now asked for, on its own, before the closing confirmation, once,
+ * and not when the caller says they do not know it.
  */
 export function zipMissingNote(args: {
   callerTexts: readonly string[];

@@ -137,7 +137,11 @@ describe("saveBlockedReason (client feedback: no submitting before name and addr
       expect(
         saveBlockedReason({
           ...withAddress,
-          agentTexts: ["What's your address?", "So that's 1200 Pine Street?"],
+          agentTexts: [
+            "What's your address?",
+            "So that's 1200 Pine Street?",
+            "So that's 2-0-6-5-5-5-0-1-8-4?",
+          ],
           callerTexts: ["it's 1200 Pine Street", "my number is (206) 555-0184"],
           phone: "+12065550184",
         }),
@@ -491,12 +495,45 @@ describe("zipMissingNote", () => {
     expect(zipMissingNote({ callerTexts: [...named, "it's 30301"], agentTexts: [] })).toBeNull();
   });
 
-  it("never asks more than twice, and not after the caller says they don't know it", () => {
+  it("asks only once, and not after the caller says they don't know it", () => {
     expect(
-      zipMissingNote({ callerTexts: named, agentTexts: ["What's the ZIP code?", "And the ZIP?"] }),
+      zipMissingNote({
+        callerTexts: [...named, "in seattle"],
+        agentTexts: ["What's the ZIP code?"],
+      }),
     ).toBeNull();
     expect(
       zipMissingNote({ callerTexts: [...named, "i don't know the zip"], agentTexts: [] }),
+    ).toBeNull();
+  });
+});
+
+/** QA 2026-10-23 (feedback-15): a new number was saved without ever being said back. */
+describe("a number the caller gives is read back before it is saved", () => {
+  const args = {
+    callerTexts: ["it's 1200 Pine Street, Seattle 98101", "please call me on 206 555 0147 instead"],
+    address: { street: "1200 Pine Street" },
+    phone: "+12065550147",
+  };
+
+  it("refuses the save until Grace has said the new number back", () => {
+    expect(
+      saveBlockedReason({
+        ...args,
+        agentTexts: ["Let me make sure I have it right: 1-2-oh-oh Pine Street. Is that right?"],
+      })?.error,
+    ).toBe("new_callback_number_not_read_back");
+  });
+
+  it("accepts it once she has, however she wrote the digits", () => {
+    expect(
+      saveBlockedReason({
+        ...args,
+        agentTexts: [
+          "Let me make sure I have it right: 1-2-oh-oh Pine Street. Is that right?",
+          "Got it, 2-0-6-5-5-5-oh-1-4-7. Is that right?",
+        ],
+      }),
     ).toBeNull();
   });
 });

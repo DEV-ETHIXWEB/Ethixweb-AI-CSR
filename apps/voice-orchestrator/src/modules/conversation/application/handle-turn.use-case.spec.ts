@@ -822,7 +822,7 @@ describe("HandleTurnUseCase", () => {
         {
           turnIndex: 5,
           speaker: "agent" as const,
-          text: "So that's 1200 Pine Street?",
+          text: "So that's 1200 Pine Street, and 2-0-6-5-5-5-0-1-4-7?",
           confidence: null,
           offsetMs: 0,
           at,
@@ -973,7 +973,7 @@ describe("HandleTurnUseCase", () => {
             {
               turnIndex: 1,
               speaker: "agent",
-              text: "So that's 1200 Pine Street?",
+              text: "So that's 1200 Pine Street, and 2-0-6-5-5-5-0-1-4-7?",
               confidence: null,
               offsetMs: 0,
               at,
@@ -1065,7 +1065,7 @@ describe("HandleTurnUseCase", () => {
         {
           turnIndex: 5,
           speaker: "agent" as const,
-          text: "So that's 1200 Pine Street?",
+          text: "So that's 1200 Pine Street, and 2-0-6-5-5-5-0-1-4-7?",
           confidence: null,
           offsetMs: 0,
           at,

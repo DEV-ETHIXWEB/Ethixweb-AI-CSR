@@ -197,6 +197,7 @@ const SILENT_TURN_FALLBACK = "Sorry about the pause there. What else can I help 
 const SOFT_SAVE_GATES: ReadonlySet<string> = new Set([
   "address_not_confirmed",
   "callback_number_not_confirmed",
+  "new_callback_number_not_read_back",
 ]);
 
 interface CompletionResult {
