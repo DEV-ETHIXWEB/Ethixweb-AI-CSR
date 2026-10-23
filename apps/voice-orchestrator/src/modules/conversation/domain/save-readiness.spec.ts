@@ -4,6 +4,7 @@ import {
   leadProblemBlockedReason,
   saveBlockedReason,
   shouldNudgeForCallbackNumber,
+  NUMBER_ASKED,
 } from "./save-readiness";
 
 const asked = "Is the number you're calling from the best number to reach you?";
@@ -418,5 +419,23 @@ describe("an active overflow counts as an emergency", () => {
 
   it("still does not treat an ordinary drip as one", () => {
     expect(isHardEmergency(["my water heater is leaking a little"])).toBe(false);
+  });
+});
+
+/**
+ * 2026-10-23 client calls: Grace asked for the callback number in words the
+ * check did not know, the save was refused as "callback number not
+ * confirmed", and she asked the same caller again. Twice, in two calls.
+ */
+describe("the callback question is recognized however Grace phrases it", () => {
+  it.each([
+    [
+      "[slowly] Got it! Is the number you're calling from, 8-7-2-2-7-8-4-9-9-9, the best one to reach you?",
+    ],
+    [
+      "Thanks, Omar Hadad. [slowly] Is the number we're talking on the best one to reach you, 8-7-2-2-7-8-4-9-9-9?",
+    ],
+  ])("counts %p as asking", (agentText) => {
+    expect(NUMBER_ASKED.test(agentText)).toBe(true);
   });
 });

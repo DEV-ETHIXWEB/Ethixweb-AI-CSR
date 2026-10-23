@@ -4686,3 +4686,30 @@ describe("a reply with no words in it is never saved", () => {
     },
   );
 });
+
+/** 2026-10-23: the model writes "you’re"; every rule spells it "you're". */
+describe("Grace's replies are stored with straight apostrophes", () => {
+  it("so the rules that read them match what she actually said", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        {
+          type: "text_delta",
+          text: "Is the number you’re calling from the best one to reach you?",
+        },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+    await useCase.execute(baseCommand({ transcript: "my sink is leaking" }));
+    const saved = (await repository.findById("tenant-1", "conv-1"))?.transcript ?? [];
+    const agentText = saved
+      .filter((turn) => turn.speaker === "agent")
+      .map((turn) => turn.text)
+      .join(" ");
+    expect(agentText).toContain("you're calling from");
+    expect(agentText).not.toContain("’");
+  });
+});

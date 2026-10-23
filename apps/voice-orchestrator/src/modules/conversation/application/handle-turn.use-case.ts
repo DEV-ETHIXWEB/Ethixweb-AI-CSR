@@ -2051,8 +2051,18 @@ export class HandleTurnUseCase {
   }
 
   private appendTranscript(conversation: Conversation, turn: TranscriptTurn): void {
-    conversation.transcript.push(turn);
+    // 2026-10-23 client calls: the model writes curly apostrophes ("you’re",
+    // "What’s"), and every rule that reads the transcript spells them
+    // straight ("you'?re"). "Is the number you’re calling from the best one?"
+    // was therefore never seen as the callback question, the save was refused
+    // as "callback number not confirmed", and the caller was asked again. One
+    // straightening here, where the text is stored, covers every reader.
+    conversation.transcript.push({ ...turn, text: straightQuotes(turn.text) });
   }
+}
+
+function straightQuotes(text: string): string {
+  return text.replace(/[’‘]/g, "'").replace(/[“”]/g, '"');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
