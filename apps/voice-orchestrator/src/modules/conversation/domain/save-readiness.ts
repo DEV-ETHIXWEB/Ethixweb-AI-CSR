@@ -20,7 +20,7 @@ import { collapseSpokenDigits } from "./service-area";
 // the prompt's active-problem rule); this one did not, so an active overflow
 // was the one phrasing that did NOT relax the save gate for speed.
 const HARD_EMERGENCY =
-  /\b(burst|flood(?:ing|ed)?|overflow(?:s|ed|ing)?|gas leak|smell(?:s)? (?:like )?gas|gas smell|sewage|sewer back|no water|water everywhere|pouring|gushing|spraying)\b/i;
+  /\b(burst|flood(?:ing|ed)?|overflow(?:s|ed|ing)?|gas leak|smell(?:s)? (?:like )?gas|gas smell|sewage|sewer back|no water|water everywhere|pouring|gushing|spraying|burning smell|smell(?:s|ing)? (?:something )?(?:like )?(?:it'?s )?burning|electrical smell|smoke coming|sparking)\b/i;
 const DECLINED_ADDRESS =
   /\b(don'?t|do not|won'?t|rather not|prefer not|not comfortable|no need|skip)\b.{0,40}\b(address|give|say|share|location)\b|\bno address\b/i;
 const ASKED_FOR_ADDRESS =
@@ -249,6 +249,7 @@ export function callbackNumberNote(
   callerAni: string | null | undefined,
   name?: { spelled: readonly string[] | null; stated: string | null },
   address?: { street: string | null; zip: string | null },
+  agentTexts: readonly string[] = [],
 ): string {
   const digits = (callerAni ?? "").replace(/\D/g, "").slice(-10);
   const spoken =
@@ -267,25 +268,52 @@ export function callbackNumberNote(
   // one closing confirmation instead of being read back when it is taken.
   const spokenAddress = addressForConfirmation(address);
   const letters = nameLetters(name);
-  if (!letters) {
+  // 2026-10-23, client decision: two short questions, not one line. A caller
+  // said of the one-line version "how can I understand if you speak the
+  // address and number at once". Name and address first; once Grace has
+  // read those back, the number on its own (the branch just below).
+  if (letters && !nameAndAddressReadBack(agentTexts, name, address)) {
     return (
-      "[You have their address. Your whole reply confirms ONE thing: whether " +
-      `${spoken} is the best number to reach them, read digit by digit, without the +1. ` +
-      "Ask nothing else.]"
+      "[You now have everything you need. Confirm it in TWO short questions, one per turn, and " +
+      "this turn is ONLY the first: read back the name, spelled out " +
+      `(${letters})${spokenAddress}, and ask if that is right. Say every letter and digit one at ` +
+      "a time. Do not mention the phone number yet; that is the next question. This is the ONLY " +
+      "time the name and address are confirmed. Ask nothing else.]"
     );
   }
-  // The wording says "here, before you save" and not "at the end", because
-  // this note fires the moment the intake is complete -- which is where the
-  // save happens, and is as late as it can be without the call being over.
-  // Telling the model "not earlier" while firing it mid-call would be its
-  // own contradiction, which is the class of bug this module keeps finding.
   return (
-    "[You now have everything you need, so confirm it once, here, before you save. This is the " +
-    "ONLY time any of it is confirmed, and it must not be confirmed again afterwards. Your " +
-    `whole reply reads back, in one short line: the name, spelled out (${letters})` +
-    `${spokenAddress}, and whether ${spoken} is the best number to reach them. Say every digit ` +
-    "one at a time. Then ask if that is all correct, and save. Ask nothing else.]"
+    "[The caller has confirmed their name and address. Your whole reply confirms ONE thing: " +
+    `whether ${spoken} is the best number to reach them, read digit by digit, without the +1. ` +
+    "Then save. Ask nothing else.]"
   );
+}
+
+/**
+ * Grace has already read the name and the address back: one reply of hers
+ * carries both the caller's first name and the house number (in any form,
+ * "1748" or our own "1-7-4-8").
+ */
+function nameAndAddressReadBack(
+  agentTexts: readonly string[],
+  name?: { spelled: readonly string[] | null; stated: string | null },
+  address?: { street: string | null; zip: string | null },
+): boolean {
+  const first = (name?.spelled?.[0] ?? name?.stated?.split(/\s+/)[0] ?? "").toLowerCase();
+  if (!first) {
+    return false;
+  }
+  const house = address?.street?.match(/^\d{1,6}/)?.[0] ?? "";
+  // No street (declined, or an emergency saved without one): the name's
+  // spelling read back is the whole of the first question.
+  const spelled = first.toUpperCase().split("").join("-");
+  return agentTexts.some((text) => {
+    if (!house) {
+      return text.includes(spelled);
+    }
+    const lower = text.toLowerCase();
+    const digits = lower.replace(/\boh\b/g, "0").replace(/[\s-]/g, "");
+    return lower.includes(first) && digits.includes(house);
+  });
 }
 
 /** The address as it should be spoken in the closing confirmation, or "" when there is none. */

@@ -4798,3 +4798,64 @@ describe("the emergency rules, not the model, set the lead's priority", () => {
     expect(saved?.strongestEmergencyAction).toBe("priority_notify");
   });
 });
+
+/** 2026-10-23, client decision: the closing confirmation is two short questions. */
+describe("the closing confirmation runs as two questions", () => {
+  const at = new Date().toISOString();
+  async function sentAfter(lines: Array<[string, string]>, callerNow: string): Promise<string> {
+    const repository = new FakeConversationRepository();
+    repository.seed(
+      baseConversation({
+        callerAni: "+12065550147",
+        transcript: lines.map(([speaker, text], turnIndex) => ({
+          turnIndex,
+          speaker: speaker as "caller" | "agent",
+          text,
+          confidence: null,
+          offsetMs: 0,
+          at,
+        })),
+      }),
+    );
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "Okay." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+    await useCase.execute(baseCommand({ transcript: callerNow }));
+    return aiProvider.requests[0]!.messages.find((m) => m.role === "user")!.content;
+  }
+
+  const intake: Array<[string, string]> = [
+    ["caller", "my kitchen sink is leaking"],
+    ["agent", "Sorry to hear that. Can I get your name?"],
+    ["caller", "my name is tom harris"],
+    ["agent", "Thanks, Tom. What's the service address?"],
+  ];
+
+  it("asks about the name and address first, without the number", async () => {
+    const sent = await sentAfter(intake, "it's 4512 maple street seattle 98103");
+    expect(sent).toContain("ONLY the first");
+    expect(sent).not.toContain("206-555-0147");
+  });
+
+  it("asks about the number alone once the caller has said yes to the name and address", async () => {
+    const sent = await sentAfter(
+      [
+        ...intake,
+        ["caller", "it's 4512 maple street seattle 98103"],
+        [
+          "agent",
+          "Let me make sure I have it right: Tom, T-O-M, H-A-R-R-I-S, at 4-5-1-2 Maple Street, ZIP 9-8-1-oh-3. Is that right?",
+        ],
+      ],
+      "yes that's right",
+    );
+    expect(sent).toContain("206-555-0147");
+    expect(sent).toContain("ONE thing");
+    expect(sent).not.toContain("ONLY the first");
+  });
+});

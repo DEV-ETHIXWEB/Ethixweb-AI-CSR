@@ -49,8 +49,8 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
   const prompt = PLATFORM_BASE_PROMPT_V1;
   const lower = prompt.toLowerCase();
 
-  it("is versioned v56 and far shorter than the 11,000-word v52", () => {
-    expect(PLATFORM_BASE_PROMPT_VERSION).toBe("v56");
+  it("is versioned v57 and far shorter than the 11,000-word v52", () => {
+    expect(PLATFORM_BASE_PROMPT_VERSION).toBe("v57");
     expect(prompt.split(/\s+/).length).toBeLessThan(3700);
   });
 
@@ -146,7 +146,7 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
     it("confirms every name's spelling exactly once, at the end, not mid-intake", () => {
       expect(lower).toContain("do not read its letters back when you first hear it");
       expect(lower).toContain(
-        "confirmed once, later, in the same breath as the callback number, right before you save",
+        "confirmed once, at the end, together with the address, right before you save",
       );
       expect(lower).toContain("never ask for the same name's spelling twice");
       expect(lower).toContain("could you spell that for me?");
@@ -186,7 +186,7 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
      */
     it("does not read the address back when taking it, only once at the close", () => {
       expect(lower).toContain("do not read the address back when you take it");
-      expect(lower).toContain("read back once, at the end, in the same breath as the name");
+      expect(lower).toContain("read back once, at the end, together with the name");
       expect(lower).toContain("say back only that corrected part");
       expect(lower).toContain("never read the whole address out to check it mid-call");
       expect(lower).toContain("the house number and a numbered street ran together");
@@ -197,12 +197,23 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
      * all), but together with the name at the end instead of in a turn of
      * its own — see the NAMES tests above.
      */
-    it("confirms the callback number with the name AND the address, at the end", () => {
+    /**
+     * v57 (2026-10-23, client decision): two short questions instead of one
+     * line. A caller said of the one-line version "how can I understand if
+     * you speak the address and number at once".
+     */
+    it("confirms the name and address, then the callback number on its own, at the end", () => {
       expect(lower).toContain(
-        "the callback number, confirmed together with the name and the address, once, right before you save",
+        "the closing confirmation, right before you save, in two short questions",
       );
-      expect(lower).toContain("in one short line and nothing else");
-      expect(lower).toContain("this is the only place any of it is confirmed");
+      expect(lower).toContain("first the name and the address, nothing else");
+      expect(lower).toContain("then, once they say yes, the callback number on its own");
+      expect(lower).toContain("these two questions are the only place any of it is confirmed");
+    });
+
+    it("treats a burning or electrical smell as an emergency, with its own safety line (v57)", () => {
+      expect(lower).toContain("a burning or electrical smell, smoke or sparking");
+      expect(lower).toContain("switch it off at the power");
     });
 
     it("lets the caller explain the problem before asking for contact details", () => {

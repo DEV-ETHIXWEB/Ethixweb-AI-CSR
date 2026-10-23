@@ -687,6 +687,7 @@ export class HandleTurnUseCase {
           conversation.callerAni,
           { spelled: notes.spelledName, stated: notes.statedName },
           { street: notes.street, zip: notes.zip },
+          agentTextsSoFar,
         ),
       )} ${annotatedTranscript}`;
     } else if (owesAnAnswer) {

@@ -351,21 +351,48 @@ describe("leadProblemBlockedReason", () => {
  * letters were read back mid-intake and the number was its own turn.
  */
 describe("the closing confirmation", () => {
-  it("confirms the name, the address and the number together, in one line", () => {
+  /**
+   * 2026-10-23, client decision: two short questions instead of one line. A
+   * caller said of the one-line version "how can I understand if you speak
+   * the address and number at once".
+   */
+  it("first asks about the name and the address only, with no phone number", () => {
     const note = callbackNumberNote(
       "+12065550147",
       { spelled: ["tom"], stated: "Tom" },
       { street: "4512 maple street", zip: "98032" },
     );
     expect(note).toContain("T-O-M");
-    expect(note).toContain("206-555-0147");
     expect(note).toContain("4-5-1-2 maple street");
     expect(note).toContain("ZIP 9-8-oh-3-2");
-    expect(note).toContain("in one short line");
-    // Fires the moment the intake is complete, so it must not claim to be
-    // waiting for a later moment that never comes.
-    expect(note).toContain("here, before you save");
-    expect(note).not.toContain("not earlier");
+    expect(note).toContain("ONLY the first");
+    expect(note).not.toContain("206-555-0147");
+  });
+
+  it("then, once Grace has read those back, asks about the number on its own", () => {
+    const note = callbackNumberNote(
+      "+12065550147",
+      { spelled: ["tom"], stated: "Tom" },
+      { street: "4512 maple street", zip: "98032" },
+      [
+        "Let me make sure I have it right: Tom, T-O-M, at 4-5-1-2 Maple Street, ZIP 9-8-oh-3-2. Is that right?",
+      ],
+    );
+    expect(note).toContain("206-555-0147");
+    expect(note).toContain("ONE thing");
+    expect(note).not.toContain("4-5-1-2");
+  });
+
+  it("with no street, the name's spelling is the whole first question", () => {
+    const name = { spelled: null, stated: "Omar" };
+    expect(callbackNumberNote("+12065550147", name, { street: null, zip: null })).toContain(
+      "ONLY the first",
+    );
+    expect(
+      callbackNumberNote("+12065550147", name, { street: null, zip: null }, [
+        "So that's Omar, O-M-A-R?",
+      ]),
+    ).toContain("206-555-0147");
   });
 
   it("uses the spelled letters when the caller spelled their name", () => {
@@ -388,8 +415,7 @@ describe("the closing confirmation", () => {
       { spelled: null, stated: "Tom" },
       { street: "4512 maple street", zip: null },
     );
-    expect(note).toContain("ONLY time any of it is confirmed");
-    expect(note).toContain("must not be confirmed again afterwards");
+    expect(note).toContain("ONLY time the name and address are confirmed");
     expect(note).toContain("4-5-1-2 maple street");
   });
 
