@@ -704,6 +704,12 @@ export class HandleTurnUseCase {
       // recognised when the street type is not in the same sentence.
       houseNumber: /^\d{3,6}$/.test(houseNumber) ? houseNumber : null,
       repeatRequested: wantsItAgain,
+      // See output-guard.ts withTheRealNumber: the number Grace reads back
+      // has to be one of these, digit for digit.
+      knownPhones: [
+        (conversation.callerAni ?? "").replace(/\D/g, "").slice(-10),
+        notes.phone ?? "",
+      ].filter((phone) => phone.length === 10),
       // Every word of the name, for the spelled-run guard — see
       // output-guard.ts SPELLED_RUN. The caller's own spelling wins over
       // what speech recognition heard.
@@ -1431,6 +1437,7 @@ export class HandleTurnUseCase {
       houseNumber: string | null;
       repeatRequested: boolean;
       nameWords: readonly string[];
+      knownPhones: readonly string[];
     },
     onChunk?: (text: string) => void,
     /** What earlier passes of this same turn already said, so a later pass cannot say it again. */
@@ -1460,6 +1467,7 @@ export class HandleTurnUseCase {
       guardFacts.houseNumber,
       guardFacts.repeatRequested,
       guardFacts.nameWords,
+      guardFacts.knownPhones,
     );
     const emit = (segment: string): void => {
       const guarded = guard.apply(segment);

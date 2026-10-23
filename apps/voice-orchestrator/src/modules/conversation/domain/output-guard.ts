@@ -138,7 +138,56 @@ export type GuardAction =
   | "repeated_statement"
   | "word_limit"
   | "wrong_name"
-  | "wrong_spelling";
+  | "wrong_spelling"
+  | "wrong_phone_readback";
+
+/**
+ * 2026-10-23 client call: the callback number read back as
+ * "8-7-2-2-7-8-4-9-9", one digit short, and the caller said yes to it. Another
+ * call read it with the "+1" the prompt says to leave out. The note gives the
+ * model the exact digits; it still slips. A number read back within two
+ * digits of a number this call actually has is that number, so it is said
+ * exactly. Anything further off is left alone: it is a different number.
+ */
+const PHONE_RUN = /(?:\+\s?1[\s.-]*)?(?:\d[\s.()-]{0,2}){6,10}\d/g;
+const PHONE_READBACK_MAX_EDITS = 2;
+
+function withTheRealNumber(sentence: string, knownPhones: readonly string[]): string {
+  if (knownPhones.length === 0) {
+    return sentence;
+  }
+  return sentence.replace(PHONE_RUN, (run) => {
+    let digits = run.replace(/\D/g, "");
+    if (digits.length === 11 && digits.startsWith("1")) {
+      digits = digits.slice(1);
+    }
+    if (digits.length < 8 || digits.length > 10) {
+      return run;
+    }
+    const nearest = knownPhones
+      .map((phone) => ({ phone, edits: editDistance(digits, phone) }))
+      .sort((a, b) => a.edits - b.edits)[0]!;
+    return nearest.edits <= PHONE_READBACK_MAX_EDITS ? spellDigits(nearest.phone) : run;
+  });
+}
+
+function editDistance(a: string, b: string): number {
+  const previous = Array.from({ length: b.length + 1 }, (_, k) => k);
+  for (let i = 1; i <= a.length; i += 1) {
+    let diagonal = previous[0]!;
+    previous[0] = i;
+    for (let k = 1; k <= b.length; k += 1) {
+      const above = previous[k]!;
+      previous[k] = Math.min(
+        above + 1,
+        previous[k - 1]! + 1,
+        diagonal + (a[i - 1] === b[k - 1] ? 0 : 1),
+      );
+      diagonal = above;
+    }
+  }
+  return previous[b.length]!;
+}
 
 /**
  * 2026-10-22 tester call: "Called as a returning customer, also gave name in
@@ -345,6 +394,8 @@ export class OutputGuard {
     private readonly repeatRequested = false,
     /** Every word of the name the caller gave, lowercase — see SPELLED_RUN. */
     private readonly nameWords: readonly string[] = [],
+    /** This call's phone numbers, 10 digits each — see withTheRealNumber. */
+    private readonly knownPhones: readonly string[] = [],
   ) {
     this.spokeAlready = alreadySpokeThisTurn;
     this.questionsThisTurn = splitSentences(alreadySaidThisTurn)
@@ -567,6 +618,12 @@ export class OutputGuard {
         : plainSpoken(sentence).replace(OWN_TODAY, "right away");
       kept = this.withoutAStrangersName(kept);
       kept = this.withTheRealSpelling(kept);
+      const numbered = withTheRealNumber(kept, this.knownPhones);
+      if (numbered !== kept) {
+        this.actions.push("wrong_phone_readback");
+        kept = numbered;
+        slow = true;
+      }
       if (slow) {
         kept = hyphenateHouseNumber(kept, this.houseNumber);
       }

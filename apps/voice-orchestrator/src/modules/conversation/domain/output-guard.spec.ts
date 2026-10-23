@@ -481,3 +481,34 @@ describe("a spelling that is not the caller's own", () => {
     expect(guard.apply("So that's 4-5-1-2 Maple Street?")).toContain("4-5-1-2");
   });
 });
+
+/** 2026-10-23 client calls: the callback number read back a digit short, and with "+1". */
+describe("the callback number is read back exactly", () => {
+  const guard = () => new OutputGuard([], false, "", null, null, false, [], ["8722784999"]);
+
+  it("restores a digit the model dropped", () => {
+    const said = guard().apply(
+      "Just to check, is this the best number to reach you, 8-7-2-2-7-8-4-9-9?",
+    );
+    expect(said).toContain("8-7-2-2-7-8-4-9-9-9?");
+  });
+
+  it("drops the +1 and reads it digit by digit", () => {
+    const said = guard().apply(
+      "Is the number you're calling from, +1-872-278-4999, the best one to reach you?",
+    );
+    expect(said).toContain("8-7-2-2-7-8-4-9-9-9");
+    expect(said).not.toContain("+1");
+  });
+
+  it("leaves a genuinely different number alone", () => {
+    const said = guard().apply("Got it, so the best number is 2-0-6-5-5-5-0-1-4-7.");
+    expect(said).toContain("2-0-6-5-5-5-0-1-4-7");
+  });
+
+  it("leaves house numbers and ZIP codes alone", () => {
+    const said = guard().apply("That's 1-7-4-8 Northwest 60th Street, ZIP 9-8-1-0-7.");
+    expect(said).toContain("1-7-4-8");
+    expect(said).toContain("9-8-1-0-7");
+  });
+});
