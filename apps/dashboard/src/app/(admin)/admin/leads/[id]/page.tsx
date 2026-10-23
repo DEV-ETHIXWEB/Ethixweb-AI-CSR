@@ -41,6 +41,8 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
     ),
   ]);
 
+  const caller = callerSavedOn(lead);
+
   return (
     <div style={{ maxWidth: 640 }}>
       <Link
@@ -62,10 +64,11 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
       </div>
 
       <Section title="Customer">
-        {customer ? (
+        {customer || caller ? (
           <>
-            <Field label="Name" value={customer.name} />
-            <Field label="Phone" value={customer.phoneE164} />
+            <Field label="Name" value={caller?.name ?? customer?.name ?? "Unknown"} />
+            <Field label="Phone" value={customer?.phoneE164 ?? call?.fromNumber ?? "Unknown"} />
+            {caller?.address ? <Field label="Service address" value={caller.address} /> : null}
           </>
         ) : (
           <p style={{ color: "var(--ink-soft)", fontSize: "0.82rem" }}>
@@ -94,6 +97,30 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
       </Section>
     </div>
   );
+}
+
+/**
+ * The caller as they were when this lead was saved (core-api keeps a copy on
+ * the lead). The customer record is shared by everyone calling from one
+ * number, so a later caller can have changed its name and address since:
+ * 2026-10-23, an emergency lead showed a different caller's street.
+ */
+function callerSavedOn(lead: LeadSummary): { name: string; address: string | null } | null {
+  const caller = lead.qualificationData?.["caller"];
+  if (!caller || typeof caller !== "object") {
+    return null;
+  }
+  const { name, address } = caller as { name?: unknown; address?: unknown };
+  if (typeof name !== "string" || name.length === 0) {
+    return null;
+  }
+  const parts =
+    address && typeof address === "object"
+      ? ["street", "city", "state", "zip"]
+          .map((key) => (address as Record<string, unknown>)[key])
+          .filter((part): part is string => typeof part === "string" && part.length > 0)
+      : [];
+  return { name, address: parts.length > 0 ? parts.join(", ") : null };
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {

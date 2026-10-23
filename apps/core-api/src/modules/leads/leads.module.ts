@@ -10,6 +10,7 @@ import { GetLeadUseCase } from "./application/get-lead.use-case";
 import { HandleLeadConvertedFromCrmUseCase } from "./application/handle-lead-converted-from-crm.use-case";
 import { ListLeadsUseCase } from "./application/list-leads.use-case";
 import { TransitionLeadStatusUseCase } from "./application/transition-lead-status.use-case";
+import { RefreshLeadCallerUseCase } from "./application/refresh-lead-caller.use-case";
 import { UpdateLeadUseCase } from "./application/update-lead.use-case";
 import { LEAD_CLAIM_REPOSITORY } from "./domain/ports/lead-claim-repository.port";
 import { LEAD_REPOSITORY } from "./domain/ports/lead-repository.port";
@@ -49,6 +50,7 @@ import { LeadsToolController } from "./interfaces/leads-tool.controller";
     { provide: OUTBOX_WRITER_FACTORY, useClass: PrismaOutboxWriterFactory },
     CreateLeadUseCase,
     UpdateLeadUseCase,
+    RefreshLeadCallerUseCase,
     GetLeadUseCase,
     ListLeadsUseCase,
     ClaimLeadUseCase,

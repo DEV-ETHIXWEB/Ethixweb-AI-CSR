@@ -85,6 +85,9 @@ export class FakeLeadRepository implements LeadRepository {
       ...(patch.problemSummary !== undefined ? { problemSummary: patch.problemSummary } : {}),
       ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
       ...(patch.leadType !== undefined ? { leadType: patch.leadType } : {}),
+      ...(patch.qualificationData !== undefined
+        ? { qualificationData: patch.qualificationData }
+        : {}),
       updatedAt: new Date(),
     };
     this.leads.set(id, updated);

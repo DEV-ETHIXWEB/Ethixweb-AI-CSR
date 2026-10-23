@@ -14,6 +14,30 @@ export interface LookedUpCustomer {
   tenantId: string;
   businessId: string;
   crmCustomerId: string | null;
+  /** Copied onto each lead when it is saved; see callerOnLead. */
+  name?: string;
+  address?: Record<string, unknown> | null;
+}
+
+/**
+ * 2026-10-23, client calls: three different callers on one phone number
+ * share ONE customer row (phone is unique per business), and each call
+ * overwrote its name and address. The emergency lead from the first call
+ * ended up showing the third caller's name and street, which is where a
+ * technician would have gone. Each lead now keeps the caller as they were
+ * when it was saved, under `qualificationData.caller`.
+ */
+export function callerOnLead(
+  qualificationData: Record<string, unknown> | undefined,
+  customer: LookedUpCustomer,
+): Record<string, unknown> | undefined {
+  if (customer.name === undefined) {
+    return qualificationData;
+  }
+  return {
+    ...(qualificationData ?? {}),
+    caller: { name: customer.name, address: customer.address ?? null },
+  };
 }
 
 export interface CustomerLookupPort {

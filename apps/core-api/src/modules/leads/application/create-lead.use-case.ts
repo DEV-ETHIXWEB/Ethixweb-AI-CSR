@@ -18,6 +18,7 @@ import type { Lead } from "../domain/lead.entity";
 import { CRM_LEAD_SYNC_PORT, type CrmLeadSyncPort } from "../domain/ports/crm-lead-sync.port";
 import {
   CUSTOMER_LOOKUP_PORT,
+  callerOnLead,
   type CustomerLookupPort,
 } from "../domain/ports/customer-lookup.port";
 import {
@@ -137,7 +138,12 @@ export class CreateLeadUseCase {
       // `command.callId` (the telephony sid used only to look it up).
       // Passing `command.callId` straight through here was the second
       // half of the same bug `executeByTelephonyCallSid` fixes above.
-      const { lead, created } = await this.upsertByCallId(db, command, call.id, crmLeadId);
+      const { lead, created } = await this.upsertByCallId(
+        db,
+        { ...command, qualificationData: callerOnLead(command.qualificationData, customer) },
+        call.id,
+        crmLeadId,
+      );
 
       if (created) {
         await this.outboxWriterFactory.forDb(db).write({

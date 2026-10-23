@@ -21,15 +21,36 @@ export interface NotificationPayload {
 
 /** Shared by SendLeadNotificationUseCase and RequeueNotificationUseCase so a redriven dead-letter notification renders identically to the original send, not a second, drifting implementation. */
 export function buildNotificationPayload(lead: Lead, customer: Customer): NotificationPayload {
+  // The caller as they were when THIS lead was saved, not the shared customer
+  // row a later caller on the same number may have overwritten since. See
+  // callerOnLead in the leads module.
+  const caller = callerSavedOn(lead);
   return {
     leadId: lead.id,
     priority: lead.priority,
     leadType: lead.leadType,
-    customerName: customer.name,
+    customerName: caller?.name ?? customer.name,
     customerPhone: customer.phoneE164,
-    address: formatAddress(customer.address),
+    address: formatAddress(caller ? caller.address : customer.address),
     problemSummary: lead.problemSummary,
     transcriptLink: null,
+  };
+}
+
+function callerSavedOn(
+  lead: Lead,
+): { name: string; address: Record<string, unknown> | null } | null {
+  const caller = lead.qualificationData?.["caller"];
+  if (!caller || typeof caller !== "object") {
+    return null;
+  }
+  const { name, address } = caller as { name?: unknown; address?: unknown };
+  if (typeof name !== "string" || name.length === 0) {
+    return null;
+  }
+  return {
+    name,
+    address: address && typeof address === "object" ? (address as Record<string, unknown>) : null,
   };
 }
 

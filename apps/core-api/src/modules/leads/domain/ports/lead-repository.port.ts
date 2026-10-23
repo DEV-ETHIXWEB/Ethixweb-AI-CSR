@@ -21,6 +21,7 @@ export interface UpdateLeadFieldsInput {
   problemSummary?: string | undefined;
   priority?: string | undefined;
   leadType?: string | undefined;
+  qualificationData?: Record<string, unknown> | undefined;
 }
 
 export interface ListLeadsOptions {

@@ -34,6 +34,16 @@ export class CreateCustomerHandler implements ToolHandler<
       email: input.email,
       address: input.address,
     });
+    // A name or address corrected after this call's lead was saved: the lead
+    // keeps its own copy of the caller (see core-api callerOnLead), so it is
+    // re-copied here. Best effort: the customer is saved either way, and a
+    // call with no lead yet is a no-op on the other side.
+    await this.coreApiClient
+      .post("/internal/leads/refresh-caller", {
+        businessId: context.businessId,
+        callId: context.callId,
+      })
+      .catch(() => undefined);
     // `created: false` (docs/04 §3.2's race-dedup signal) isn't
     // distinguishable from the CustomerResponseDto alone — the REST
     // response shape is identical either way. Always `true`: the

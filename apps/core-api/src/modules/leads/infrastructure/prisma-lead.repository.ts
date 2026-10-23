@@ -128,6 +128,9 @@ export class PrismaLeadRepository implements LeadRepository {
     if (patch.leadType !== undefined) {
       data.leadType = patch.leadType;
     }
+    if (patch.qualificationData !== undefined) {
+      data.qualificationData = patch.qualificationData as Prisma.InputJsonValue;
+    }
 
     const { count } = await db.lead.updateMany({ where: { id, tenantId }, data });
     if (count === 0) {

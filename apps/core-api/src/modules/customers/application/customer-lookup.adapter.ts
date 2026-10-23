@@ -34,6 +34,8 @@ export class CustomerLookupAdapter implements CustomerLookupPort {
       tenantId: customer.tenantId,
       businessId: customer.businessId,
       crmCustomerId: customer.crmCustomerId,
+      name: customer.name,
+      address: customer.address,
     };
   }
 }

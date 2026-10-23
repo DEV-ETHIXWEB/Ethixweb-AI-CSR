@@ -73,4 +73,37 @@ describe("CreateCustomerHandler", () => {
 
     expect(client.postCalls[0]?.body).toMatchObject({ businessId: "business-2" });
   });
+
+  it("refreshes this call's lead with the caller just saved (2026-10-23: a shared number overwrote an earlier lead's caller)", async () => {
+    const client = new FakeCoreApiClient();
+    client.postResponses.set("/internal/customers", { id: "customer-1" });
+    const handler = new CreateCustomerHandler(client);
+    await handler.execute(
+      { name: { first: "Trevor", last: "Lindquist" }, phone: "+15551234567", source: "ai_csr" },
+      context,
+    );
+    expect(client.postCalls[1]).toEqual({
+      path: "/internal/leads/refresh-caller",
+      body: { businessId: "business-1", callId: "call-1" },
+    });
+  });
+
+  it("still returns the saved customer when the refresh fails", async () => {
+    const client = new FakeCoreApiClient();
+    client.postResponses.set("/internal/customers", { id: "customer-1" });
+    const realPost = client.post.bind(client);
+    client.post = async <T>(path: string, body: unknown): Promise<T> => {
+      if (path === "/internal/leads/refresh-caller") {
+        throw new Error("core-api 404");
+      }
+      return realPost<T>(path, body);
+    };
+    const handler = new CreateCustomerHandler(client);
+    await expect(
+      handler.execute(
+        { name: { first: "Trevor" }, phone: "+15551234567", source: "ai_csr" },
+        context,
+      ),
+    ).resolves.toEqual({ customer_id: "customer-1", created: true });
+  });
 });

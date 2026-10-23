@@ -3,8 +3,10 @@ import { ApiBearerAuth, ApiOperation, ApiResponse, ApiSecurity, ApiTags } from "
 import { CurrentPrincipal } from "../../../shared/auth/current-principal.decorator";
 import type { AuthPrincipal } from "../../../shared/auth/request-principal";
 import { CreateLeadUseCase } from "../application/create-lead.use-case";
+import { RefreshLeadCallerUseCase } from "../application/refresh-lead-caller.use-case";
 import { UpdateLeadUseCase } from "../application/update-lead.use-case";
 import { CreateLeadToolDto } from "./dto/create-lead-tool.dto";
+import { RefreshLeadCallerToolDto } from "./dto/refresh-lead-caller-tool.dto";
 import { LeadResponseDto } from "./dto/lead-response.dto";
 import { UpdateLeadToolDto } from "./dto/update-lead-tool.dto";
 
@@ -29,7 +31,25 @@ export class LeadsToolController {
   constructor(
     private readonly createLeadUseCase: CreateLeadUseCase,
     private readonly updateLeadUseCase: UpdateLeadUseCase,
+    private readonly refreshLeadCallerUseCase: RefreshLeadCallerUseCase,
   ) {}
+
+  @Post("refresh-caller")
+  @ApiOperation({
+    summary: "Re-copy the caller's current name and address onto the lead this call created",
+  })
+  @ApiResponse({ status: 201, description: "Refreshed, or nothing saved for this call yet" })
+  async refreshCaller(
+    @CurrentPrincipal() principal: AuthPrincipal,
+    @Body() dto: RefreshLeadCallerToolDto,
+  ): Promise<{ refreshed: boolean }> {
+    const lead = await this.refreshLeadCallerUseCase.execute({
+      tenantId: principal.tenantId,
+      businessId: dto.businessId,
+      callId: dto.callId,
+    });
+    return { refreshed: lead !== null };
+  }
 
   @Post()
   @ApiOperation({ summary: "docs/04 §3.3 createLead — tool-broker-facing, API-key auth only" })
