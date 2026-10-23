@@ -619,3 +619,74 @@ describe("UtteranceEnd delivers the words when speech_final is not coming", () =
     expect(handler).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * 2026-10-23 client calls: all 8 fallback firings that day happened while the
+ * caller was still talking (interim words still arriving), cutting a sentence
+ * every four seconds.
+ */
+describe("the speech_final fallback never fires while the caller is still talking", () => {
+  beforeEach(() => {
+    process.env["DEEPGRAM_API_KEY"] = "test-deepgram-key";
+    jest.useFakeTimers();
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  const chunk = (transcript: string, isFinal: boolean) => ({
+    type: "Results",
+    is_final: isFinal,
+    speech_final: false,
+    channel: { alternatives: [{ transcript, confidence: 0.9 }] },
+  });
+
+  async function open() {
+    const provider = new DeepgramSttProvider(createNoopLogger());
+    const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
+    const handler = jest.fn();
+    session.onFinalTranscript(handler);
+    return handler;
+  }
+
+  it("keeps waiting while new words keep arriving, then delivers the whole thing", async () => {
+    const handler = await open();
+    // The real shape: "hi my name is anya kessler" finalized, then the
+    // caller carries straight on for several seconds.
+    lastSocket!.simulateMessage(chunk("hi my name is anya kessler", true));
+    for (const words of [
+      "and i'm",
+      "and i'm calling because",
+      "and i'm calling because i have a slow drain",
+    ]) {
+      jest.advanceTimersByTime(1500);
+      lastSocket!.simulateMessage(chunk(words, false));
+    }
+    jest.advanceTimersByTime(3900);
+    expect(handler).not.toHaveBeenCalled();
+
+    lastSocket!.simulateMessage(chunk("and i'm calling because i have a slow drain", true));
+    jest.advanceTimersByTime(4000);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0][0].transcript).toBe(
+      "hi my name is anya kessler and i'm calling because i have a slow drain",
+    );
+  });
+
+  it("still delivers after four seconds with no new words", async () => {
+    const handler = await open();
+    lastSocket!.simulateMessage(chunk("my sink is leaking", true));
+    jest.advanceTimersByTime(4000);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("never holds a turn past the cap, even if the words never stop", async () => {
+    const handler = await open();
+    lastSocket!.simulateMessage(chunk("my sink is leaking", true));
+    for (let elapsed = 0; elapsed < 20_000; elapsed += 1000) {
+      jest.advanceTimersByTime(1000);
+      lastSocket!.simulateMessage(chunk(`noise ${elapsed}`, false));
+    }
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+});

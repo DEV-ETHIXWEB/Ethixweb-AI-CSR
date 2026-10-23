@@ -102,6 +102,22 @@ const ENDPOINTING_MS = 500;
 const SPEECH_FINAL_FALLBACK_MS = 4000;
 
 /**
+ * 2026-10-23, client calls: every one of the 8 times the fallback above fired
+ * that day, the caller was STILL TALKING. Interim results with growing text
+ * were arriving right up to the moment it fired, because the timer was only
+ * reset by `is_final` chunks, which Deepgram sends every few seconds of
+ * continuous speech, not by the words themselves. A long sentence was cut
+ * every four seconds; Grace answered half of it and was talked over. So
+ * recognized words, interim or final, now reset it: it fires after four
+ * seconds with NO new words, which is what it was always meant to mean.
+ *
+ * The cap keeps the original reason for the fallback intact: words that never
+ * stop (noise that Deepgram keeps turning into text) can hold a turn for at
+ * most this long before it is delivered anyway.
+ */
+const SPEECH_FINAL_MAX_WAIT_MS = 12_000;
+
+/**
  * 2026-10-23, client: "it usually takes 5 full seconds to answer". On a line
  * with background noise, the noise keeps Deepgram's VAD busy, speech_final
  * is late or never comes, and the caller waited out the whole
@@ -183,6 +199,18 @@ class DeepgramSttSession implements SpeechToTextSession {
   /** See `SPEECH_FINAL_FALLBACK_MS`'s own comment for why this exists. */
   private pendingFallback: { transcript: string; confidence: number } | null = null;
   private pendingFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  /** When the words now waiting on a speech_final started waiting; see SPEECH_FINAL_MAX_WAIT_MS. */
+  private pendingFallbackSince = 0;
+
+  private armFallbackTimer(): void {
+    if (this.pendingFallbackTimer) {
+      clearTimeout(this.pendingFallbackTimer);
+    }
+    this.pendingFallbackTimer = setTimeout(
+      () => this.deliverPendingWithoutSpeechFinal("fallback_timer"),
+      SPEECH_FINAL_FALLBACK_MS,
+    );
+  }
 
   constructor(
     private readonly socket: WebSocket,
@@ -458,14 +486,19 @@ class DeepgramSttSession implements SpeechToTextSession {
           transcript !== this.pendingFallback?.transcript
         ) {
           this.accumulateSegment(transcript, confidence);
-          this.pendingFallback = { transcript, confidence };
-          if (this.pendingFallbackTimer) {
-            clearTimeout(this.pendingFallbackTimer);
+          if (!this.pendingFallback) {
+            this.pendingFallbackSince = Date.now();
           }
-          this.pendingFallbackTimer = setTimeout(
-            () => this.deliverPendingWithoutSpeechFinal("fallback_timer"),
-            SPEECH_FINAL_FALLBACK_MS,
-          );
+          this.pendingFallback = { transcript, confidence };
+          this.armFallbackTimer();
+        } else if (
+          message["is_final"] !== true &&
+          transcript.trim().length > 0 &&
+          this.pendingFallback &&
+          Date.now() - this.pendingFallbackSince < SPEECH_FINAL_MAX_WAIT_MS
+        ) {
+          // Still talking: see SPEECH_FINAL_MAX_WAIT_MS.
+          this.armFallbackTimer();
         }
         return;
       }
