@@ -929,6 +929,45 @@ const NOT_A_NAME_EXTRA = new Set([
   "state",
   "city",
   "wrong",
+  // QA 2026-10-23 (v38-02): "it's actively leaking" gave the name Actively,
+  // which then kept Grace from ever asking for the real one. Adverbs that
+  // describe a leak; none of them is anyone's name.
+  "actively",
+  "constantly",
+  "continuously",
+  "slowly",
+  "quickly",
+  "suddenly",
+  "badly",
+  "barely",
+  "mostly",
+  "partly",
+  "slightly",
+  "heavily",
+  "randomly",
+  "rapidly",
+  "steadily",
+  "nearly",
+  "occasionally",
+  "frequently",
+  "usually",
+  "finally",
+  "recently",
+  // The same replay of every prefix of every call: "if i'm unhappy do you
+  // care", "it's somewhat wet", "as long as it's upfront", and a tester
+  // playing the receptionist ("hi this is grace at all phase plumbing").
+  "unhappy",
+  "somewhat",
+  "upfront",
+  "grace",
+  "nervous",
+  "scared",
+  "annoyed",
+  "angry",
+  "mad",
+  "sad",
+  "aware",
+  "certain",
   "are",
   "were",
   "be",
@@ -1058,6 +1097,16 @@ function statedNameAt(callerTexts: readonly string[]): { value: string; index: n
         const second = match[2] ?? "";
         const firstEnd = second ? at + lower.slice(at, end - second.length).trimEnd().length : end;
         if (LOOSE_CUE.test(match[0]) && NOT_AFTER_A_NAME.test(lower.slice(firstEnd))) {
+          continue;
+        }
+        // "it's steadily dripping": an -ly word straight before a verb is
+        // describing the problem. Emily, Kelly and Kimberly are names; they
+        // are only refused here, in front of an -ing or -ed word.
+        if (
+          LOOSE_CUE.test(match[0]) &&
+          /ly$/.test(match[1] ?? "") &&
+          /^\s+[a-z]+(?:ing|ed)\b/.test(lower.slice(firstEnd))
+        ) {
           continue;
         }
         said.push({ index, at, first: match[1] ?? "", second });

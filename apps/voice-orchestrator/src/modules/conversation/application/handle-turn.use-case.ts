@@ -614,6 +614,13 @@ export class HandleTurnUseCase {
       !nameDisputed &&
       !nameUpdated &&
       !addressDisputed &&
+      // QA 2026-10-23 (vendor-01): "Sure, it's Renata, r e n a t a, last name
+      // Kowal" was in the call notes as Renata Kowal while this nudge, which
+      // has its own narrower pattern, said "you still do not have this
+      // caller's name" in the same message, and Grace asked for it again.
+      // The call notes are the one reading of the name; the nudge defers to it.
+      !notes.statedName &&
+      !notes.spelledName &&
       shouldNudgeForName(conversation);
     // See zipMissingNote. Before the closing confirmation, which waits for it.
     const zipNeeded =

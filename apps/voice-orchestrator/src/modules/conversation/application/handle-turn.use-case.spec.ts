@@ -4859,3 +4859,43 @@ describe("the closing confirmation runs as two questions", () => {
     expect(sent).not.toContain("ONLY the first");
   });
 });
+
+/** QA 2026-10-23 (vendor-01): the name nudge said "you do not have the name" while the call notes had it. */
+describe("the name nudge never contradicts the call notes", () => {
+  it("does not ask for a name the caller has already spelled", async () => {
+    const at = new Date().toISOString();
+    const lines: Array<[string, string]> = [
+      ["caller", "Hi, I want a new water filtration system put in under my kitchen sink."],
+      ["agent", "Got it. Is this for your home?"],
+      ["caller", "Sure, it's Renata, r e n a t a, last name Kowal, k o w a l."],
+      ["agent", "Thanks, Renata. What's your address?"],
+    ];
+    const repository = new FakeConversationRepository();
+    repository.seed(
+      baseConversation({
+        transcript: lines.map(([speaker, text], turnIndex) => ({
+          turnIndex,
+          speaker: speaker as "caller" | "agent",
+          text,
+          confidence: null,
+          offsetMs: 0,
+          at,
+        })),
+      }),
+    );
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "Okay." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+    await useCase.execute(
+      baseCommand({ transcript: "It's 14210 196th Avenue East, Bonney Lake, 98391." }),
+    );
+    const sent = aiProvider.requests[0]!.messages.find((m) => m.role === "user")!.content;
+    expect(sent).toContain("R-E-N-A-T-A K-O-W-A-L");
+    expect(sent).not.toContain("you still do not have this caller's name");
+  });
+});

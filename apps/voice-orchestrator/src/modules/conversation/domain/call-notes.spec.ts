@@ -986,3 +986,28 @@ describe("addresses from the 2026-10-23 afternoon calls", () => {
     ).toBe("1748 westlake avenue unit 412");
   });
 });
+
+/**
+ * QA 2026-10-23: since the name nudge now defers to these notes, a false name
+ * here would stop Grace ever asking for the real one. Found by replaying every
+ * prefix of every call of the last ten days.
+ */
+describe("describing words after 'it's' or 'i'm' are never a name", () => {
+  it.each([
+    ["It's actively leaking."],
+    ["it's constantly dripping"],
+    ["it's steadily getting worse"],
+    ["well it's an underground thing and it's somewhat wet"],
+    ["if i'm unhappy do you care"],
+    ["as long as it's upfront before anything starts"],
+    ["hi this is grace at all phase plumbing"],
+  ])("%p", (said) => {
+    expect(buildCallNotes([said]).statedName).toBeNull();
+  });
+
+  it("still keeps names that end in -ly", () => {
+    expect(buildCallNotes(["hi it's emily"]).statedName).toBe("Emily");
+    expect(buildCallNotes(["this is kelly and my sink is clogged"]).statedName).toBe("Kelly");
+    expect(buildCallNotes(["my name is kimberly"]).statedName).toBe("Kimberly");
+  });
+});
