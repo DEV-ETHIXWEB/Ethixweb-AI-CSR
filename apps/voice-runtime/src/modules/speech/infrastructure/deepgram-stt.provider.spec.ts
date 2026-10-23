@@ -101,7 +101,7 @@ describe("DeepgramSttProvider", () => {
 
     expect(lastSocket).toBeDefined();
     expect(lastSocket!.url).toBe(
-      "wss://api.deepgram.com/v1/listen?encoding=mulaw&sample_rate=8000&channels=1&interim_results=true&vad_events=true&endpointing=500&model=nova-2&language=multi",
+      "wss://api.deepgram.com/v1/listen?encoding=mulaw&sample_rate=8000&channels=1&interim_results=true&vad_events=true&endpointing=500&model=nova-2&language=multi&utterance_end_ms=1000",
     );
     expect(lastSocket!.options).toEqual({ headers: { Authorization: "token test-deepgram-key" } });
   });
@@ -563,5 +563,59 @@ describe("DeepgramSttProvider", () => {
     });
 
     expect(finals.map((f) => f.transcript)).toEqual(["first thing", "second thing"]);
+  });
+});
+
+/** 2026-10-23, client: "it usually takes 5 full seconds to answer". Noise kept speech_final from arriving. */
+describe("UtteranceEnd delivers the words when speech_final is not coming", () => {
+  beforeEach(() => {
+    process.env["DEEPGRAM_API_KEY"] = "test-deepgram-key";
+    jest.useFakeTimers();
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  const finalChunk = (transcript: string) => ({
+    type: "Results",
+    is_final: true,
+    speech_final: false,
+    channel: { alternatives: [{ transcript, confidence: 0.9 }] },
+  });
+
+  it("delivers on UtteranceEnd instead of waiting out the 4 s fallback", async () => {
+    const provider = new DeepgramSttProvider(createNoopLogger());
+    const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
+    const handler = jest.fn();
+    session.onFinalTranscript(handler);
+
+    lastSocket!.simulateMessage(finalChunk("my kitchen sink is leaking"));
+    jest.advanceTimersByTime(1000);
+    expect(handler).not.toHaveBeenCalled();
+    lastSocket!.simulateMessage({ type: "UtteranceEnd", last_word_end: 2.1 });
+    expect(handler).toHaveBeenCalledWith({
+      transcript: "my kitchen sink is leaking",
+      confidence: 0.9,
+    });
+
+    // ...and the fallback timer does not deliver it a second time.
+    jest.advanceTimersByTime(4000);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing after speech_final already delivered the utterance", async () => {
+    const provider = new DeepgramSttProvider(createNoopLogger());
+    const session = await provider.openSession({ sampleRateHz: 8000, encoding: "mulaw" });
+    const handler = jest.fn();
+    session.onFinalTranscript(handler);
+
+    lastSocket!.simulateMessage({
+      type: "Results",
+      is_final: true,
+      speech_final: true,
+      channel: { alternatives: [{ transcript: "yes that's right", confidence: 0.95 }] },
+    });
+    lastSocket!.simulateMessage({ type: "UtteranceEnd", last_word_end: 1.2 });
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 });

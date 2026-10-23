@@ -101,6 +101,19 @@ const ENDPOINTING_MS = 500;
  */
 const SPEECH_FINAL_FALLBACK_MS = 4000;
 
+/**
+ * 2026-10-23, client: "it usually takes 5 full seconds to answer". On a line
+ * with background noise, the noise keeps Deepgram's VAD busy, speech_final
+ * is late or never comes, and the caller waited out the whole
+ * SPEECH_FINAL_FALLBACK_MS above. UtteranceEnd is Deepgram's own answer to
+ * exactly that: it is decided from the gap after the last recognized WORD,
+ * so noise does not hold it up. Measured from the production server with our
+ * own TTS voice as the caller: speech_final at 0.87 s after the audio ended,
+ * UtteranceEnd at 1.86 s. So on a clean line it never fires first, and on a
+ * noisy one it turns a 4 s wait into about 2.
+ */
+const UTTERANCE_END_MS = 1000;
+
 @Injectable()
 export class DeepgramSttProvider implements SpeechToTextProvider {
   constructor(@Inject(APP_LOGGER) private readonly logger: StructuredLogger) {}
@@ -122,7 +135,7 @@ export class DeepgramSttProvider implements SpeechToTextProvider {
     const url =
       `${DEEPGRAM_LISTEN_URL}?encoding=${encoding}&sample_rate=${options.sampleRateHz}` +
       `&channels=1&interim_results=true&vad_events=true&endpointing=${ENDPOINTING_MS}` +
-      `&model=${model}&language=${language}`;
+      `&model=${model}&language=${language}&utterance_end_ms=${UTTERANCE_END_MS}`;
 
     const socket = new WebSocket(url, { headers: { Authorization: `token ${apiKey}` } });
 
@@ -328,6 +341,27 @@ class DeepgramSttSession implements SpeechToTextSession {
     };
   }
 
+  /**
+   * Delivers the recognized words still waiting on a speech_final that is
+   * not coming: either the fallback timer ran out, or Deepgram said the
+   * utterance ended (UtteranceEnd). A no-op when nothing is pending.
+   */
+  private deliverPendingWithoutSpeechFinal(reason: "fallback_timer" | "utterance_end"): void {
+    if (!this.pendingFallback) {
+      return;
+    }
+    const accumulated = this.takeAccumulatedUtterance();
+    const pending = accumulated
+      ? { transcript: accumulated.transcript, confidence: accumulated.confidence }
+      : this.pendingFallback;
+    this.clearPendingFallback();
+    this.logger.warn(
+      "speech_final never arrived — falling back to the recognized transcript so far",
+      { reason, transcriptLength: pending.transcript.length, confidence: pending.confidence },
+    );
+    this.finalHandler?.(pending);
+  }
+
   private clearPendingFallback(): void {
     if (this.pendingFallbackTimer) {
       clearTimeout(this.pendingFallbackTimer);
@@ -382,6 +416,12 @@ class DeepgramSttSession implements SpeechToTextSession {
     // length/confidence, never the raw transcript text itself (this
     // logger has no PII-redaction pipeline downstream, unlike
     // tool_calls.input's documented redaction path).
+    // See UTTERANCE_END_MS. Normally speech_final has already delivered the
+    // utterance and nothing is pending, so this does nothing.
+    if (message["type"] === "UtteranceEnd") {
+      this.deliverPendingWithoutSpeechFinal("utterance_end");
+      return;
+    }
     if (message["type"] === "Results") {
       const channel = message["channel"] as
         { alternatives?: Array<Record<string, unknown>> } | undefined;
@@ -422,20 +462,10 @@ class DeepgramSttSession implements SpeechToTextSession {
           if (this.pendingFallbackTimer) {
             clearTimeout(this.pendingFallbackTimer);
           }
-          this.pendingFallbackTimer = setTimeout(() => {
-            const accumulated = this.takeAccumulatedUtterance();
-            const pending = accumulated
-              ? { transcript: accumulated.transcript, confidence: accumulated.confidence }
-              : this.pendingFallback;
-            this.clearPendingFallback();
-            if (pending) {
-              this.logger.warn(
-                "speech_final never arrived — falling back to the recognized transcript so far",
-                { transcriptLength: pending.transcript.length, confidence: pending.confidence },
-              );
-              this.finalHandler?.(pending);
-            }
-          }, SPEECH_FINAL_FALLBACK_MS);
+          this.pendingFallbackTimer = setTimeout(
+            () => this.deliverPendingWithoutSpeechFinal("fallback_timer"),
+            SPEECH_FINAL_FALLBACK_MS,
+          );
         }
         return;
       }
