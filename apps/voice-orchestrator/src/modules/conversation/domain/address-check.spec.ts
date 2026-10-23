@@ -86,3 +86,22 @@ describe("checkAddress against the bundled Census index", () => {
     expect(addressCheckKey(null)).toBe("");
   });
 });
+
+/** 2026-10-23 client call: a real Westlake Avenue address was flagged ADDRESS NOT VERIFIED. */
+describe("a one-word street heard as two words", () => {
+  const index = loadStreetIndex()!;
+
+  it("finds Westlake Avenue when it is heard as 'west lake avenue'", () => {
+    const check = checkAddress(
+      "two two zero zero west lake avenue unit four one two seattle washington nine eight one two one",
+      "98121",
+      index,
+    );
+    expect(check).toMatchObject({ kind: "found", street: "westlake" });
+  });
+
+  it("still checks a real direction plus street as it was heard", () => {
+    expect(checkAddress("1200 Pine Street", "98101", index)?.kind).toBe("found");
+    expect(checkAddress("4471 West Zorblax Boulevard", "98101", index)?.kind).not.toBe("found");
+  });
+});

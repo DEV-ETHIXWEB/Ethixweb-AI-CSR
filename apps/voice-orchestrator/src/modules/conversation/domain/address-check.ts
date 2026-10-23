@@ -91,10 +91,23 @@ export function checkAddress(
   zip: string | null,
   index: StreetIndex,
 ): AddressCheck | null {
-  const street = extractStreet(callerText);
-  if (!street) {
+  const heard = extractStreet(callerText);
+  if (!heard) {
     return null;
   }
+  // 2026-10-23 client call: "West Lake Avenue" is Westlake Avenue, heard as
+  // two words, and "west" was then read as a direction, leaving "lake", which
+  // is not a street in 98121; the lead was flagged ADDRESS NOT VERIFIED. When
+  // the name heard as separate words is a real street written as one, that
+  // is the street.
+  const joined = heard.name.replace(/\s+/g, "");
+  const knownAs = (names: readonly string[]): boolean => names.includes(joined);
+  const street =
+    joined !== heard.core &&
+    heard.name.includes(" ") &&
+    (zip === null ? Object.values(index.zips).some(knownAs) : knownAs(index.zips[zip] ?? []))
+      ? { ...heard, core: joined }
+      : heard;
   if (zip === null) {
     const anywhere = Object.values(index.zips).some((names) => names.includes(street.core));
     return anywhere
