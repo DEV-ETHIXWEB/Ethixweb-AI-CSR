@@ -64,9 +64,57 @@ import {
 const MAX_CACHEABLE_TEXT_CHARS = 240;
 const MAX_CACHED_UTTERANCES = 64;
 
+/**
+ * 2026-10-23, client: "it usually takes 5 full seconds to answer". Every
+ * reply opened a NEW ElevenLabs socket before it could start, and opening
+ * it is the slow part. Measured from the production server: about 300 ms
+ * to connect, then about 270 ms to the first audio. So one socket is always
+ * opened ahead of time, and a reply starts on it.
+ *
+ * ElevenLabs closes an idle socket after 20 s by default (measured: closed
+ * at 21 s), which is shorter than many callers talk for. `inactivity_timeout`
+ * raises that, and a spare is only used while it is younger than the
+ * server's own limit, with room to spare. Measured with it set: still open
+ * after 70 s idle, first audio 269 ms.
+ */
+const INACTIVITY_TIMEOUT_S = 120;
+const SPARE_MAX_AGE_MS = 100_000;
+
 @Injectable()
 export class ElevenLabsTtsProvider implements TextToSpeechProvider {
   private readonly audioCache = new Map<string, Buffer[]>();
+  private spare: { url: string; socket: WebSocket; openedAt: number } | null = null;
+
+  /** The socket opened ahead of time, if it still suits; otherwise a new one. */
+  private takeSocket(url: string): WebSocket {
+    const spare = this.spare;
+    this.spare = null;
+    if (
+      spare &&
+      spare.url === url &&
+      (spare.socket.readyState === WebSocket.OPEN ||
+        spare.socket.readyState === WebSocket.CONNECTING) &&
+      Date.now() - spare.openedAt < SPARE_MAX_AGE_MS
+    ) {
+      return spare.socket;
+    }
+    if (spare && spare.socket.readyState === WebSocket.OPEN) {
+      spare.socket.close();
+    }
+    return new WebSocket(url);
+  }
+
+  /** Opens the socket the NEXT reply will start on, unless one is already waiting. */
+  private prepareSpare(url: string): void {
+    if (this.spare) {
+      return;
+    }
+    const socket = new WebSocket(url);
+    // A spare that fails is simply not used (see takeSocket); its error must
+    // not surface as an unhandled event.
+    socket.on("error", () => undefined);
+    this.spare = { url, socket, openedAt: Date.now() };
+  }
 
   async *synthesize(
     text: string,
@@ -95,8 +143,12 @@ export class ElevenLabsTtsProvider implements TextToSpeechProvider {
             text,
           ].join("|")
         : null;
+    const url = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?output_format=ulaw_8000&model_id=${modelId}&inactivity_timeout=${INACTIVITY_TIMEOUT_S}`;
     const cached = cacheKey ? this.audioCache.get(cacheKey) : undefined;
     if (cacheKey && cached) {
+      // A replayed clip (the greeting, mostly) is where a call starts, so the
+      // caller's first answer gets a socket that is already open.
+      this.prepareSpare(url);
       // Refresh recency for LRU eviction.
       this.audioCache.delete(cacheKey);
       this.audioCache.set(cacheKey, cached);
@@ -109,15 +161,14 @@ export class ElevenLabsTtsProvider implements TextToSpeechProvider {
       return;
     }
 
-    const url = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?output_format=ulaw_8000&model_id=${modelId}`;
-    const socket = new WebSocket(url);
+    const socket = this.takeSocket(url);
     const recorded: Buffer[] = [];
     let renderCompleted = false;
 
     const queue = new AudioChunkQueue();
     let opened = false;
 
-    socket.on("open", () => {
+    const start = (): void => {
       opened = true;
       socket.send(
         JSON.stringify({
@@ -136,7 +187,12 @@ export class ElevenLabsTtsProvider implements TextToSpeechProvider {
       // ElevenLabs no more input is coming, so it finalizes and closes
       // rather than this adapter guessing a fixed timeout.
       socket.send(JSON.stringify({ text: "" }));
-    });
+    };
+    if (socket.readyState === WebSocket.OPEN) {
+      start();
+    } else {
+      socket.on("open", start);
+    }
 
     socket.on("message", (data: WebSocket.RawData) => {
       // Same reasoning as DeepgramSttSession.handleMessage: ElevenLabs'
@@ -200,6 +256,7 @@ export class ElevenLabsTtsProvider implements TextToSpeechProvider {
       if (opened && socket.readyState === WebSocket.OPEN) {
         socket.close();
       }
+      this.prepareSpare(url);
     }
   }
 }

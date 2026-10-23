@@ -109,7 +109,7 @@ describe("ElevenLabsTtsProvider", () => {
 
     expect(lastSocket).toBeDefined();
     expect(lastSocket!.url).toBe(
-      "wss://api.elevenlabs.io/v1/text-to-speech/test-voice-id/stream-input?output_format=ulaw_8000&model_id=eleven_turbo_v2_5",
+      "wss://api.elevenlabs.io/v1/text-to-speech/test-voice-id/stream-input?output_format=ulaw_8000&model_id=eleven_turbo_v2_5&inactivity_timeout=120",
     );
 
     lastSocket!.simulateOpen();
@@ -218,27 +218,29 @@ describe("ElevenLabsTtsProvider", () => {
     const provider = new ElevenLabsTtsProvider();
     const iterator = provider.synthesize("hello", controller.signal)[Symbol.asyncIterator]();
     const next = iterator.next();
-    lastSocket!.simulateOpen();
+    const socket = lastSocket!;
+    socket.simulateOpen();
 
     controller.abort();
 
     await expect(next).resolves.toEqual({ value: undefined, done: true });
-    expect(lastSocket!.closeCallCount).toBeGreaterThanOrEqual(1);
+    expect(socket.closeCallCount).toBeGreaterThanOrEqual(1);
   });
 
   it("closes the socket in the finally block once the stream ends normally, since it was left OPEN", async () => {
     const provider = new ElevenLabsTtsProvider();
     const iterator = provider.synthesize("hello")[Symbol.asyncIterator]();
     const next = iterator.next();
-    lastSocket!.simulateOpen();
-    lastSocket!.simulateFinal();
+    const socket = lastSocket!;
+    socket.simulateOpen();
+    socket.simulateFinal();
     await next;
 
     // Drain the for-await loop in synthesize() to its finally block —
     // AudioChunkQueue is already ended, so this resolves immediately.
     await iterator.next();
 
-    expect(lastSocket!.closeCallCount).toBe(1);
+    expect(socket.closeCallCount).toBe(1);
   });
 
   describe("replay cache for recurring short utterances (pickup latency)", () => {
@@ -290,12 +292,15 @@ describe("ElevenLabsTtsProvider", () => {
       while (!step.done) {
         step = await iterator.next();
       }
-      lastSocket = undefined;
+      const spare = lastSocket!;
 
       const again = provider.synthesize("Sounds good, take care.")[Symbol.asyncIterator]();
       void again.next();
+      spare.simulateOpen();
 
-      expect(lastSocket).toBeDefined();
+      expect(spare.sent).toContain(
+        JSON.stringify({ text: "Sounds good, take care. ", flush: true }),
+      );
     });
 
     it("never caches a render cut short by barge-in", async () => {
@@ -313,18 +318,21 @@ describe("ElevenLabsTtsProvider", () => {
       while (!step.done) {
         step = await iterator.next();
       }
-      lastSocket = undefined;
+      const spare = lastSocket!;
 
       const again = provider.synthesize("Let me know if anything changes.")[Symbol.asyncIterator]();
       void again.next();
+      spare.simulateOpen();
 
-      expect(lastSocket).toBeDefined();
+      expect(spare.sent).toContain(
+        JSON.stringify({ text: "Let me know if anything changes. ", flush: true }),
+      );
     });
 
     it("treats a different emotional delivery of the same words as a different clip", async () => {
       const provider = new ElevenLabsTtsProvider();
       await renderFully(provider, "I'm sorry to hear that.");
-      lastSocket = undefined;
+      const spare = lastSocket!;
 
       const iterator = provider
         .synthesize("I'm sorry to hear that.", undefined, {
@@ -335,7 +343,75 @@ describe("ElevenLabsTtsProvider", () => {
         })
         [Symbol.asyncIterator]();
       void iterator.next();
+      spare.simulateOpen();
 
+      expect(spare.sent).toContain(
+        JSON.stringify({ text: "I'm sorry to hear that. ", flush: true }),
+      );
+    });
+  });
+
+  /** 2026-10-23, client: "it usually takes 5 full seconds to answer". About 300 ms of each reply was opening a socket. */
+  describe("a socket opened ahead of time", () => {
+    it("starts the next reply on the socket opened after the last one, with no new connection", async () => {
+      const provider = new ElevenLabsTtsProvider();
+      const first = provider.synthesize("Okay.")[Symbol.asyncIterator]();
+      const step = first.next();
+      const replySocket = lastSocket!;
+      replySocket.simulateOpen();
+      replySocket.simulateFinal();
+      await step;
+      await first.next();
+      const spare = lastSocket!;
+      expect(spare).not.toBe(replySocket);
+      spare.simulateOpen(); // connected while the caller was talking
+
+      const second = provider.synthesize("What's the address?")[Symbol.asyncIterator]();
+      void second.next();
+
+      // Sent at once, on the open spare: no connect on the reply's path.
+      expect(lastSocket).toBe(spare);
+      expect(spare.sent).toContain(JSON.stringify({ text: "What's the address? ", flush: true }));
+    });
+
+    it("never uses a spare the server has closed", async () => {
+      const provider = new ElevenLabsTtsProvider();
+      const first = provider.synthesize("Okay.")[Symbol.asyncIterator]();
+      const step = first.next();
+      lastSocket!.simulateOpen();
+      lastSocket!.simulateFinal();
+      await step;
+      await first.next();
+      const spare = lastSocket!;
+      spare.close(); // the server timed it out
+
+      const second = provider.synthesize("What's the address?")[Symbol.asyncIterator]();
+      void second.next();
+
+      expect(lastSocket).not.toBe(spare);
+      expect(spare.sent).toEqual([]);
+    });
+
+    it("opens a spare when the greeting is replayed from cache, so the first answer is fast too", async () => {
+      const provider = new ElevenLabsTtsProvider();
+      const greeting = "Hi, this is Grace. What can I help you with?";
+      const first = provider.synthesize(greeting)[Symbol.asyncIterator]();
+      const step = first.next();
+      lastSocket!.simulateOpen();
+      lastSocket!.simulateAudioChunk(Buffer.from("hi").toString("base64"));
+      lastSocket!.simulateFinal();
+      let result = await step;
+      while (!result.done) {
+        result = await first.next();
+      }
+      // A later call: its spare was used up by another reply in between.
+      const used = provider.synthesize("Okay.")[Symbol.asyncIterator]();
+      void used.next();
+      lastSocket = undefined;
+
+      for await (const chunk of provider.synthesize(greeting)) {
+        void chunk;
+      }
       expect(lastSocket).toBeDefined();
     });
   });
