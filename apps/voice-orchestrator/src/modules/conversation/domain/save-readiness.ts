@@ -263,9 +263,60 @@ export function readsBackStreet(text: string, street: string, zip: string | null
     return false;
   }
   const name = tokens.slice(1).find((token) => token.length >= 3 && !STREET_DIRECTIONS.has(token));
-  const saysName = name !== undefined && text.toLowerCase().includes(name);
+  const ordinal = spokenOrdinal(tokens.slice(1));
+  const saysName =
+    (name !== undefined && text.toLowerCase().includes(name)) ||
+    (ordinal !== null && new RegExp(`\\b${ordinal}(?:st|nd|rd|th)\\b`, "i").test(text));
   const saysZip = zip !== null && zip.length === 5 && digits.includes(zip);
   return saysName || saysZip;
+}
+
+const TENS: Record<string, number> = {
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
+};
+const ORDINAL_WORDS = [
+  "first",
+  "second",
+  "third",
+  "fourth",
+  "fifth",
+  "sixth",
+  "seventh",
+  "eighth",
+  "ninth",
+  "tenth",
+  "eleventh",
+  "twelfth",
+  "thirteenth",
+  "fourteenth",
+  "fifteenth",
+  "sixteenth",
+  "seventeenth",
+  "eighteenth",
+  "nineteenth",
+];
+
+/**
+ * "ninety second" in the notes, read back as "92nd": the caller says the
+ * street in words and Grace reads it in digits. Without this a correct
+ * readback did not count, and the save sent Grace back to confirm it again.
+ */
+function spokenOrdinal(tokens: readonly string[]): number | null {
+  for (const [at, token] of tokens.entries()) {
+    const ones = ORDINAL_WORDS.indexOf(token) + 1;
+    if (ones > 0) {
+      const tens = TENS[tokens[at - 1] ?? ""] ?? 0;
+      return ones < 10 || tens === 0 ? tens + ones : null;
+    }
+  }
+  return null;
 }
 
 function addressBlockedReason({ callerTexts, agentTexts, address }: Args) {

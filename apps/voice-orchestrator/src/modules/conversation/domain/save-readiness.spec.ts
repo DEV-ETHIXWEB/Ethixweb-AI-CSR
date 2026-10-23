@@ -582,6 +582,14 @@ describe("the closing confirmation holds whatever order Grace takes it in", () =
     ).toBe(true);
   });
 
+  it("a numbered street said in words counts when read back in digits", () => {
+    const street = "1250 north ninety second street";
+    expect(readsBackStreet("Got it, 1-2-5-0 North 92nd Street.", street, null)).toBe(true);
+    expect(readsBackStreet("Got it, 1-2-5-0 North 45th Street.", street, null)).toBe(false);
+    expect(readsBackStreet("Got it, 1-2-1-5 North 92nd Street.", street, null)).toBe(false);
+    expect(readsBackStreet("So 4-4-1-0 23rd Avenue?", "4410 twenty third avenue", null)).toBe(true);
+  });
+
   it("Mary Jane: asking for the number first does not skip the name and address", () => {
     const args = {
       callerTexts: [
