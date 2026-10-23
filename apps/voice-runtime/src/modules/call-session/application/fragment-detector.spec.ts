@@ -1,4 +1,5 @@
 import {
+  addressStillComing,
   fragmentStrength,
   isPartialNumberUtterance,
   looksLikeIncompleteFragment,
@@ -300,5 +301,85 @@ describe("a complete sentence that ends on a particle is not held", () => {
     ["by the way do you know that my full name is"],
   ])("still holds %p, which is unfinished", (said) => {
     expect(fragmentStrength(said)).toBe("strong");
+  });
+});
+
+/**
+ * 2026-10-23 client call: an address read in six pieces, each answered by
+ * Grace and talked over, heard as her voice "getting broken again and again".
+ */
+describe("addressStillComing", () => {
+  const asked = "Could you also let me know your service address, please?";
+
+  it.each([
+    ["yes my address is one"],
+    ["yes my address is one triple four"],
+    ["yes my address is one triple four north avenue"],
+    ["yes my address is one triple four north avenue sixtieth street"],
+    ["westlake avenue unit four"],
+    ["well the house number is one seven four eight and it's"],
+  ])("waits for the rest after %p", (said) => {
+    expect(addressStillComing(said, asked)).toBe(true);
+  });
+
+  it.each([
+    // A ZIP closes the address: answered at once.
+    ["yes my address is one triple four north sixtieth street nine eight two zero one"],
+    ["it's 4512 maple street 98032"],
+    // Nothing address-like yet.
+    ["okay give me a second"],
+    ["yes"],
+  ])("does not wait after %p", (said) => {
+    expect(addressStillComing(said, asked)).toBe(false);
+  });
+
+  it("does not hold a yes to Grace's own readback, even one that repeats the street", () => {
+    const readback = "Is that 2210 Queen Anne Avenue North, 98109? Is that correct?";
+    expect(addressStillComing("oh yes", readback)).toBe(false);
+    expect(
+      addressStillComing("yeah that's correct twenty two ten queen anne avenue north", readback),
+    ).toBe(false);
+  });
+
+  it("does not hold a whole street given in answer to a street-only question", () => {
+    expect(
+      addressStillComing(
+        "one four one zero one interurban avenue south",
+        "What's the house number and street name?",
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    [
+      "it's four thousand five hundred twelve fremont place north seattle washington ninety eight one oh three",
+    ],
+    [
+      "it's eleven thirty three east pike street seattle washington ninety eight thousand one hundred twenty two",
+    ],
+    ["thirty three ninety fremont avenue north seattle washington nine eight one oh three"],
+  ])("treats %p as finished: it ends on a ZIP, however the ZIP was said", (said) => {
+    expect(addressStillComing(said, "What's the address for the kitchen sink issue?")).toBe(false);
+  });
+
+  it("does not hold 'okay yes' to a readback", () => {
+    expect(
+      addressStillComing(
+        "okay yes that is the right way",
+        "Barry, at 4 North Avenue, 98201. Is that all correct?",
+      ),
+    ).toBe(false);
+  });
+
+  it("only applies when an address is what is being given", () => {
+    expect(addressStillComing("it started about two weeks ago", "When did this start?")).toBe(
+      false,
+    );
+    expect(addressStillComing("i live at four five one two", "Anything else?")).toBe(true);
+  });
+
+  it("reads 'triple four' as digits, so it holds like any partial number", () => {
+    expect(fragmentStrength("triple four")).toBe("strong");
+    expect(isPartialNumberUtterance("one triple four")).toBe(true);
   });
 });

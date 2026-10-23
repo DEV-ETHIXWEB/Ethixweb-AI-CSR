@@ -2663,3 +2663,79 @@ describe("joinFragments", () => {
     expect(joinFragments("unit 4", "Maple Street")).toBe("unit 4 Maple Street");
   });
 });
+
+/**
+ * 2026-10-23 client call, replayed with its real timing: asked for the
+ * address, the caller read it in pieces about two seconds apart, and every
+ * piece became its own turn that Grace answered and was talked over.
+ */
+describe("an address read out in pieces becomes one turn", () => {
+  const originalSilenceTimeout = process.env["SILENCE_CHECK_IN_TIMEOUT_MS"];
+  beforeEach(() => {
+    process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = "60000";
+  });
+  afterEach(() => {
+    if (originalSilenceTimeout === undefined) {
+      delete process.env["SILENCE_CHECK_IN_TIMEOUT_MS"];
+    } else {
+      process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = originalSilenceTimeout;
+    }
+  });
+
+  const reply = (responseText: string) => ({
+    conversationId: "conv-1",
+    responseText,
+    toolCallsExecuted: [],
+    interrupted: false,
+    state: "qualifying" as const,
+  });
+
+  it("waits through the pauses and sends the whole address once", async () => {
+    jest.useFakeTimers();
+    try {
+      const { orchestrator, orchestratorClient, stt, sink } = buildOrchestratorWithSink();
+      orchestratorClient.turnResponses = [
+        reply("Could you let me know your service address, please?"),
+        reply("Got it, 1444 North 60th Street. Is that right?"),
+      ];
+      await orchestrator.onCallStart(baseParams(), sink);
+      stt.sessions[0]!.emitFinalTranscript("there is a leak in the underground pipe", 0.95);
+      await jest.advanceTimersByTimeAsync(100);
+      expect(orchestratorClient.turnCalls).toHaveLength(1);
+
+      for (const piece of ["yes my address is one", "triple four", "north sixtieth street"]) {
+        stt.sessions[0]!.emitFinalTranscript(piece, 0.95);
+        await jest.advanceTimersByTimeAsync(1800); // the caller's real pause
+        expect(orchestratorClient.turnCalls).toHaveLength(1);
+      }
+      stt.sessions[0]!.emitFinalTranscript("nine eight one zero three", 0.95);
+      await jest.advanceTimersByTimeAsync(100);
+
+      expect(orchestratorClient.turnCalls).toHaveLength(2);
+      expect(orchestratorClient.turnCalls[1]?.req.transcript).toBe(
+        "yes my address is one triple four north sixtieth street nine eight one zero three",
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("still answers straight away when the address arrives whole", async () => {
+    jest.useFakeTimers();
+    try {
+      const { orchestrator, orchestratorClient, stt, sink } = buildOrchestratorWithSink();
+      orchestratorClient.turnResponses = [
+        reply("Could you let me know your service address, please?"),
+        reply("Got it."),
+      ];
+      await orchestrator.onCallStart(baseParams(), sink);
+      stt.sessions[0]!.emitFinalTranscript("my sink is leaking", 0.95);
+      await jest.advanceTimersByTimeAsync(100);
+      stt.sessions[0]!.emitFinalTranscript("it's 4512 maple street 98032", 0.95);
+      await jest.advanceTimersByTimeAsync(0);
+      expect(orchestratorClient.turnCalls).toHaveLength(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});

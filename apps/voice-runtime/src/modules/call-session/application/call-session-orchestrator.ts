@@ -37,7 +37,11 @@ import {
   silenceBuffer,
   type DeliverySegment,
 } from "./emotional-delivery";
-import { fragmentStrength, isPartialNumberUtterance } from "./fragment-detector";
+import {
+  addressStillComing,
+  fragmentStrength,
+  isPartialNumberUtterance,
+} from "./fragment-detector";
 
 /**
  * H1 — how long to wait, for a SHORT finalized transcript that
@@ -96,6 +100,15 @@ const STRONG_FRAGMENT_HOLD_MS = 3000;
  * half seconds on the turn a caller notices most.
  */
 const PARTIAL_NUMBER_HOLD_MS = 1500;
+
+/**
+ * The hold while a caller is still reading out an address; see
+ * `addressStillComing`. Measured on the 2026-10-23 call that prompted it: the
+ * gaps between pieces, from one turn being finalized to the caller speaking
+ * again, ran about one to two seconds. Never applied once a ZIP closes the
+ * address, so the turn that matters most is not slowed at all.
+ */
+const ADDRESS_HOLD_MS = 2000;
 
 /** Bounds a capacity-429 wait loop — a caller genuinely on hold this long has almost certainly already hung up or should hit the tenant's configured overflowNumber instead of waiting forever. Not a documented constant, an INFERRED safety limit (same honesty convention as voice-orchestrator's own MAX_TOOL_ITERATIONS). */
 const MAX_CAPACITY_RETRY_ATTEMPTS = 3;
@@ -402,6 +415,8 @@ export class CallSessionOrchestrator {
    * one byte per sample, so 8 bytes is exactly 1ms of audio.
    */
   private playbackEndsAt = 0;
+  /** What Grace said last, so a hold can tell what the caller is answering; see addressStillComing. */
+  private lastSpokenText = "";
   /** When Deepgram last delivered finished words; see turnLatency. */
   private lastFinalTranscriptAt: number | null = null;
   /** The reply being waited for, until its first audio goes out; see recordSentAudio. */
@@ -713,16 +728,20 @@ export class CallSessionOrchestrator {
     // whether the caller's latest words sound unfinished, not how long
     // the conversation-so-far has gotten.
     const strength = fragmentStrength(result.transcript);
-    if (strength === "none") {
+    const addressComing = addressStillComing(this.pendingFragment.transcript, this.lastSpokenText);
+    if (strength === "none" && !addressComing) {
       this.commitPendingFragment(params, sink, log);
       return;
     }
-    const holdMs =
+    const fragmentHoldMs =
       strength === "strong"
         ? isPartialNumberUtterance(result.transcript)
           ? PARTIAL_NUMBER_HOLD_MS
           : STRONG_FRAGMENT_HOLD_MS
-        : FRAGMENT_COALESCE_WINDOW_MS;
+        : strength === "weak"
+          ? FRAGMENT_COALESCE_WINDOW_MS
+          : 0;
+    const holdMs = Math.max(fragmentHoldMs, addressComing ? ADDRESS_HOLD_MS : 0);
     this.fragmentCoalesceTimer = setTimeout(() => {
       this.fragmentCoalesceTimer = null;
       this.commitPendingFragment(params, sink, log);
@@ -1683,6 +1702,7 @@ export class CallSessionOrchestrator {
    * talked over callers who were still speaking.
    */
   private async speak(text: string, sink: MediaStreamSink, silentOk = false): Promise<void> {
+    this.lastSpokenText = text;
     const { voiceSettings, segments: parsedSegments } = parseDelivery(text);
     // C1, found live on a real call, source-confirmed: a turn's ENTIRE
     // LLM output was the literal 7-character string "[pause]" — no words

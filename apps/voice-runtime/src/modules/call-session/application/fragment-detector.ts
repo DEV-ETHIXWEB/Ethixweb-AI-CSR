@@ -198,20 +198,239 @@ const SPOKEN_DIGITS: Record<string, string> = {
  */
 function spokenDigitsOnly(words: readonly string[]): string | null {
   let digits = "";
+  // 2026-10-23 client call: "triple four" was not read as digits at all, so
+  // the house number became "4" and nothing held for the rest of it.
+  let repeat = 1;
   for (const raw of words) {
     const word = raw.toLowerCase().replace(/[^a-z0-9]/g, "");
     if (word.length === 0) {
       continue;
     }
+    if (REPEATERS[word]) {
+      repeat = REPEATERS[word];
+      continue;
+    }
     if (/^\d+$/.test(word)) {
-      digits += word;
+      digits += word.repeat(word.length === 1 ? repeat : 1);
     } else if (SPOKEN_DIGITS[word]) {
-      digits += SPOKEN_DIGITS[word];
+      digits += SPOKEN_DIGITS[word].repeat(repeat);
     } else {
       return null;
     }
+    repeat = 1;
   }
-  return digits.length > 0 ? digits : null;
+  return digits.length > 0 && repeat === 1 ? digits : null;
+}
+
+const REPEATERS: Record<string, number> = { double: 2, triple: 3 };
+/** Spoken numbers that are not single digits ("fifty three one two", "eleven hundred"). */
+const NUMBER_WORDS = new Set([
+  "ten",
+  "eleven",
+  "twelve",
+  "thirteen",
+  "fourteen",
+  "fifteen",
+  "sixteen",
+  "seventeen",
+  "eighteen",
+  "nineteen",
+  "twenty",
+  "thirty",
+  "forty",
+  "fifty",
+  "sixty",
+  "seventy",
+  "eighty",
+  "ninety",
+  "hundred",
+  "thousand",
+]);
+
+/** The digits the caller said last, as one run ("... nine eight one two one" gives "98121"). */
+function trailingDigits(words: readonly string[]): string {
+  let start = words.length;
+  while (start > 0 && isNumberWord(words[start - 1]!)) {
+    start -= 1;
+  }
+  return start < words.length ? spokenNumber(words.slice(start)) : "";
+}
+
+const TEENS: Record<string, number> = {
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+};
+const TENS: Record<string, number> = {
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
+};
+
+function isNumberWord(word: string): boolean {
+  return (
+    /^\d+$/.test(word) ||
+    SPOKEN_DIGITS[word] !== undefined ||
+    REPEATERS[word] !== undefined ||
+    TEENS[word] !== undefined ||
+    TENS[word] !== undefined ||
+    word === "hundred" ||
+    word === "thousand" ||
+    word === "and"
+  );
+}
+
+/**
+ * The digits a run of spoken number words stands for, the way people say a
+ * ZIP or a house number: "nine eight one oh three", "ninety eight one oh
+ * three" and "ninety eight thousand one hundred three" are all 98103. With
+ * "hundred" or "thousand" in it the run is read as one quantity; without,
+ * each piece is its own group of digits. Empty when it does not parse.
+ */
+function spokenNumber(words: readonly string[]): string {
+  const run = words.filter((word, index) => word !== "and" || index > 0);
+  if (run.includes("hundred") || run.includes("thousand")) {
+    let total = 0;
+    let current = 0;
+    for (const word of run) {
+      if (word === "and") {
+        continue;
+      }
+      if (word === "thousand") {
+        total += (current || 1) * 1000;
+        current = 0;
+      } else if (word === "hundred") {
+        current = (current || 1) * 100;
+      } else if (TENS[word] !== undefined) {
+        current += TENS[word];
+      } else if (TEENS[word] !== undefined) {
+        current += TEENS[word];
+      } else if (SPOKEN_DIGITS[word] !== undefined) {
+        current += Number(SPOKEN_DIGITS[word]);
+      } else if (/^\d+$/.test(word)) {
+        current += Number(word);
+      } else {
+        return "";
+      }
+    }
+    return String(total + current);
+  }
+  let digits = "";
+  for (let i = 0; i < run.length; i += 1) {
+    const word = run[i]!;
+    const next = run[i + 1] ?? "";
+    if (TENS[word] !== undefined) {
+      const unit = SPOKEN_DIGITS[next];
+      if (unit !== undefined && next !== "oh" && next !== "o" && next !== "zero") {
+        digits += String(TENS[word] + Number(unit));
+        i += 1;
+      } else {
+        digits += String(TENS[word]);
+      }
+    } else if (TEENS[word] !== undefined) {
+      digits += String(TEENS[word]);
+    } else if (word === "and") {
+      continue;
+    } else {
+      const piece = spokenDigitsOnly(run.slice(i, i + (REPEATERS[word] ? 2 : 1)));
+      if (piece === null) {
+        return "";
+      }
+      digits += piece;
+      if (REPEATERS[word]) {
+        i += 1;
+      }
+    }
+  }
+  return digits;
+}
+
+/** Grace's question was about where the job is. */
+const ADDRESS_ASKED =
+  /\b(address|street|house number|zip|zip code|postal code|unit number|apartment number|where (?:is|are) (?:the|your) (?:home|house|property))\b/i;
+/** The caller announced an address in their own words. */
+const ADDRESS_ANNOUNCED = /\b(my address|address is|i live (?:at|on)|located (?:at|on)|i'?m at)\b/i;
+/** A question about the whole address, not only the street. */
+const WHOLE_ADDRESS_ASKED = /\b(address|zip|city|postal code)\b/i;
+/** The street-type word that completes "<number> <name> <type>". */
+const STREET_TYPE =
+  /\b(street|st|avenue|ave|road|rd|drive|dr|lane|ln|way|place|pl|court|ct|boulevard|blvd|circle|terrace|parkway|highway|hwy)\b/i;
+/** Grace reading something back for a yes or no: our own hyphenated digits, or an "is that right?". */
+const READBACK = /\d-\d|\b(is that (?:right|correct)|right\?|correct\?|all correct)/i;
+/** The caller answering that readback. */
+const CONFIRMS =
+  /^\s*(?:(?:oh|okay|ok|um|uh|well)\s+)?(?:yes|yeah|yep|yup|sure|okay|ok|correct|right|that'?s (?:right|correct)|exactly|no|nope)\b/i;
+/** Words that only make sense as part of an address. */
+const ADDRESS_WORDS =
+  /\b(street|st|avenue|ave|road|rd|drive|dr|lane|ln|way|place|pl|court|ct|boulevard|blvd|circle|terrace|parkway|highway|hwy|north|south|east|west|northeast|northwest|southeast|southwest|unit|apartment|apt|suite|seattle|washington|wa)\b/i;
+
+/**
+ * The caller is part-way through giving an address, and the rest is coming.
+ *
+ * 2026-10-23 client call: asked for the address, the caller read it in six
+ * pieces with a pause of a second or two between each ("yes my address is
+ * one", "triple four", "north avenue", "sixtieth street", "nine eight two
+ * zero one", "seattle washington"). Each pause ended a turn. Grace answered
+ * every piece ("What's the complete street address?") and was talked over
+ * every time, which the caller heard as her voice "getting broken again and
+ * again", and the address saved was wrong.
+ *
+ * Held while: the address was asked for (or announced), what has arrived so
+ * far carries address material (a number or an address word), and it does
+ * not yet END on a ZIP. A ZIP at the end is the natural close of an address,
+ * so that turn goes through at once, with no added wait.
+ */
+export function addressStillComing(saidSoFar: string, lastAgentText: string): boolean {
+  if (!ADDRESS_ASKED.test(lastAgentText) && !ADDRESS_ANNOUNCED.test(saidSoFar)) {
+    return false;
+  }
+  // A yes or no to Grace's own readback is an answer, not an address being
+  // read out, even when the caller repeats some of it.
+  if (READBACK.test(lastAgentText) && CONFIRMS.test(saidSoFar)) {
+    return false;
+  }
+  const words = saidSoFar
+    .toLowerCase()
+    .split(/\s+/)
+    .map((word) => word.replace(/[^a-z0-9']/g, ""))
+    .filter((word) => word.length > 0);
+  if (words.length === 0) {
+    return false;
+  }
+  // "oh" and "o" are digits only inside a run of numbers; alone they are the
+  // filler that opens half of all answers ("oh yes").
+  const hasNumber = words.some(
+    (word) =>
+      /^\d+$/.test(word) ||
+      (SPOKEN_DIGITS[word] !== undefined && word !== "oh" && word !== "o") ||
+      REPEATERS[word] !== undefined ||
+      NUMBER_WORDS.has(word),
+  );
+  if (!hasNumber && !ADDRESS_WORDS.test(saidSoFar)) {
+    return false;
+  }
+  if (trailingDigits(words).length === 5) {
+    return false;
+  }
+  // A number and a street type is a whole street, which is the whole answer
+  // to "what's the house number and street name?": holding it would only add
+  // a wait. Asked for the ADDRESS (or the ZIP or city), the caller goes on to
+  // the ZIP, which is what the hold is for.
+  const wholeAddressAsked =
+    WHOLE_ADDRESS_ASKED.test(lastAgentText) || ADDRESS_ANNOUNCED.test(saidSoFar);
+  return wholeAddressAsked || !(hasNumber && STREET_TYPE.test(saidSoFar));
 }
 
 function isPartialNumber(words: readonly string[]): boolean {
