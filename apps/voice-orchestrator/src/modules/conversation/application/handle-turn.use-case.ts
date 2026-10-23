@@ -1088,6 +1088,14 @@ export class HandleTurnUseCase {
           escalation = toolEscalation;
           escalatedThisIteration = true;
         }
+        if (
+          toolCall.name === "escalateEmergency" &&
+          isRecord(ran.output) &&
+          (ran.output["action"] === "forward_call" || ran.output["action"] === "priority_notify") &&
+          conversation.strongestEmergencyAction !== "forward_call"
+        ) {
+          conversation.strongestEmergencyAction = ran.output["action"];
+        }
         if (toolHumanTransfer) {
           humanTransfer = toolHumanTransfer;
           humanTransferredThisIteration = true;
@@ -1873,6 +1881,7 @@ export class HandleTurnUseCase {
     // wording fixes it. docs/04 §3.8's own rule applies: the model decides,
     // infrastructure acts.
     toolCall = this.withOwnIdentifiers(conversation, toolCall);
+    toolCall = this.withRulePriority(conversation, toolCall);
 
     try {
       const result = await this.executeTool.execute({
@@ -1948,6 +1957,42 @@ export class HandleTurnUseCase {
    * Replaces a model-supplied `customer_id`/`lead_id` with the one this
    * service actually created. See the call site for the real-call evidence.
    */
+  /**
+   * 2026-10-23 client calls: the prompt says escalateEmergency's answer sets
+   * createLead's priority ("forward_call" is emergency, "priority_notify" is
+   * urgent), and the model did not follow it: a rule said urgent and the lead
+   * was saved as emergency, and an ordinary slow drain that matched no rule at
+   * all was saved as emergency too. The rules decide now. The model may still
+   * raise a lead to urgent on its own judgement, but "emergency" needs a rule
+   * that says so, and a lead is never saved below what a rule said.
+   */
+  private withRulePriority(
+    conversation: Conversation,
+    toolCall: AiToolCallRequest,
+  ): AiToolCallRequest {
+    if (toolCall.name !== "createLead") {
+      return toolCall;
+    }
+    const fromRules =
+      conversation.strongestEmergencyAction === "forward_call"
+        ? "emergency"
+        : conversation.strongestEmergencyAction === "priority_notify"
+          ? "urgent"
+          : null;
+    const asked = toolCall.arguments["priority"];
+    let priority = typeof asked === "string" ? asked : "routine";
+    if (fromRules === "emergency") {
+      priority = "emergency";
+    } else if (priority === "emergency") {
+      priority = "urgent";
+    } else if (fromRules === "urgent" && priority !== "urgent") {
+      priority = "urgent";
+    }
+    return priority === asked
+      ? toolCall
+      : { ...toolCall, arguments: { ...toolCall.arguments, priority } };
+  }
+
   private withOwnIdentifiers(
     conversation: Conversation,
     toolCall: AiToolCallRequest,

@@ -71,6 +71,12 @@ export interface Conversation {
    */
   emergencyEverChecked?: boolean;
   /**
+   * The strongest action the business's emergency rules returned this call
+   * (forward_call over priority_notify). Sets the saved lead's priority; see
+   * HandleTurnUseCase.withRulePriority.
+   */
+  strongestEmergencyAction?: "forward_call" | "priority_notify";
+  /**
    * The exact caller transcript that most recently triggered an
    * escalateEmergency check (real or backstop) — set alongside
    * `emergencyEverChecked`. Found live: a caller turn whose transcript

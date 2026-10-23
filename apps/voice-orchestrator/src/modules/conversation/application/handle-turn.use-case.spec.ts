@@ -4713,3 +4713,88 @@ describe("Grace's replies are stored with straight apostrophes", () => {
     expect(agentText).not.toContain("’");
   });
 });
+
+/**
+ * 2026-10-23 client calls: a rule said urgent and the lead was saved as
+ * emergency; a slow drain that matched no rule was saved as emergency too.
+ */
+describe("the emergency rules, not the model, set the lead's priority", () => {
+  type WithPriority = {
+    withRulePriority: (
+      conversation: Conversation,
+      call: { id: string; name: string; arguments: Record<string, unknown> },
+    ) => { arguments: Record<string, unknown> };
+  };
+  const priorityFor = (asked: string, rule?: "forward_call" | "priority_notify") => {
+    const { useCase } = buildUseCase();
+    return (useCase as unknown as WithPriority).withRulePriority(
+      baseConversation(rule ? { strongestEmergencyAction: rule } : {}),
+      { id: "t1", name: "createLead", arguments: { priority: asked, problem_summary: "x" } },
+    ).arguments["priority"];
+  };
+
+  it("a drain with no rule behind it cannot be an emergency", () => {
+    expect(priorityFor("emergency")).toBe("urgent");
+  });
+
+  it("a 'notify' rule makes it urgent, whatever the model said", () => {
+    expect(priorityFor("emergency", "priority_notify")).toBe("urgent");
+    expect(priorityFor("routine", "priority_notify")).toBe("urgent");
+  });
+
+  it("a 'transfer' rule makes it an emergency, whatever the model said", () => {
+    expect(priorityFor("routine", "forward_call")).toBe("emergency");
+  });
+
+  it("otherwise leaves the model's own call alone", () => {
+    expect(priorityFor("routine")).toBe("routine");
+    expect(priorityFor("urgent")).toBe("urgent");
+    expect(priorityFor("estimate")).toBe("estimate");
+  });
+
+  it("remembers the strongest rule result across the call", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        {
+          type: "tool_call",
+          toolCall: {
+            id: "e1",
+            name: "escalateEmergency",
+            arguments: { description: "no hot water" },
+          },
+        },
+        { type: "done", stopReason: "tool_use" },
+      ],
+      [
+        { type: "text_delta", text: "Let me get that to the team." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [
+        {
+          name: "escalateEmergency",
+          handler: {
+            execute: async () => ({
+              isEmergency: true,
+              severity: "high",
+              action: "priority_notify",
+              matchedPattern: "no hot water",
+              transferDestination: null,
+            }),
+          },
+        },
+      ],
+    });
+    await useCase.execute(
+      baseCommand({ transcript: "no hot water at all", allowedTools: ["escalateEmergency"] }),
+    );
+    const saved = await repository.findById("tenant-1", "conv-1");
+    expect(saved?.strongestEmergencyAction).toBe("priority_notify");
+  });
+});
