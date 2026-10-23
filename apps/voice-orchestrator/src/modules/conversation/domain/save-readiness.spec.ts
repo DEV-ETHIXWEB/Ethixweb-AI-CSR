@@ -620,3 +620,16 @@ describe("the closing confirmation holds whatever order Grace takes it in", () =
     expect(note).not.toContain("Then save");
   });
 });
+
+/** 2026-10-23 live call: a missed appointment could not be saved, "the caller never said what was wrong". */
+describe("a missed appointment is a reason to call", () => {
+  it.each([
+    [
+      "hi this is victor and i'm calling back because i had a technician scheduled for yesterday afternoon and nobody showed up or called",
+    ],
+    ["the plumber never came"],
+    ["no one showed up yesterday"],
+  ])("%p", (said) => {
+    expect(leadProblemBlockedReason({ callerTexts: [said], agentTexts: [] })).toBeNull();
+  });
+});
