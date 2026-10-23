@@ -830,6 +830,54 @@ export class HandleTurnUseCase {
     /** Save-gate errors already handed back this turn — see `SOFT_SAVE_GATES`. */
     const gateRejections = new Set<string>();
 
+    // 2026-10-23, end-to-end test through the live pipeline on the production
+    // model: the first reply to "my water heater stopped heating water" took
+    // 4.4 s, because gpt-4o-mini first spent a whole completion (2.4 s) asking
+    // for escalateEmergency, and only then a second one writing the reply.
+    // The check itself is a 6 ms pattern match on the caller's words, which
+    // is exactly what the backstop further down already runs when the model
+    // skips it. It now runs here, BEFORE the first completion, under the same
+    // condition and recorded the same way, so the model starts out with the
+    // result, and the tool is not offered again for this turn. Same safety
+    // guarantee, one round trip less.
+    let emergencyPreChecked = false;
+    let emergencyPreCheckOutput: unknown;
+    if (
+      command.allowedTools.includes("escalateEmergency") &&
+      (!hasCalledEscalateEmergency(conversation) ||
+        (looksEmergencyAdjacent(command.transcript) &&
+          conversation.lastEmergencyCheckedTranscript !== command.transcript))
+    ) {
+      const call = buildEscalationBackstopCall(command.transcript);
+      conversation.emergencyEverChecked = true;
+      conversation.lastEmergencyCheckedTranscript = command.transcript;
+      toolCallsExecuted.push(call.name);
+      pushMessage({ role: "assistant", content: "", toolCalls: [call] });
+      const ran = await this.runTool(
+        conversation,
+        call,
+        command.allowedTools,
+        responseText,
+        gateRejections,
+      );
+      pushMessage({ role: "tool", toolCallId: call.id, content: JSON.stringify(ran.output) });
+      emergencyPreCheckOutput = ran.output;
+      if (ran.escalation) {
+        escalation = ran.escalation;
+      }
+      if (
+        isRecord(ran.output) &&
+        (ran.output["action"] === "forward_call" || ran.output["action"] === "priority_notify") &&
+        conversation.strongestEmergencyAction !== "forward_call"
+      ) {
+        conversation.strongestEmergencyAction = ran.output["action"];
+      }
+      emergencyPreChecked = true;
+    }
+    const toolsThisTurn = emergencyPreChecked
+      ? tools.filter((tool) => tool.name !== "escalateEmergency")
+      : tools;
+
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       // See SILENT_TURN_BUDGET_MS: a turn that has run this long without
       // producing a single spoken word is the shape voice-runtime turns
@@ -852,7 +900,7 @@ export class HandleTurnUseCase {
       try {
         turn = await this.streamOneCompletion(
           conversation,
-          tools,
+          toolsThisTurn,
           command.signal,
           iteration,
           guardFacts,
@@ -1028,7 +1076,10 @@ export class HandleTurnUseCase {
           !looksLikeSignOff(command.transcript) &&
           !isHoldRequest(command.transcript) &&
           !trailsOff(command.transcript) &&
-          (isStalledReply(responseText) || (!responseText.trim() && turn.onlyRepeated))
+          // The model said nothing at all after the emergency pre-check: one
+          // more pass speaks, exactly as the post-reply backstop used to give.
+          (isStalledReply(responseText) ||
+            (!responseText.trim() && (turn.onlyRepeated || emergencyPreChecked)))
         ) {
           keptCallMoving = true;
           continuingStalledReply = true;
@@ -1047,6 +1098,16 @@ export class HandleTurnUseCase {
       let escalatedThisIteration = false;
       let humanTransferredThisIteration = false;
       for (const toolCall of toolCalls) {
+        // Already checked before the first completion this turn: the model
+        // asking again gets the same answer, without a second check.
+        if (toolCall.name === "escalateEmergency" && emergencyPreChecked) {
+          pushMessage({
+            role: "tool",
+            toolCallId: toolCall.id,
+            content: JSON.stringify(emergencyPreCheckOutput),
+          });
+          continue;
+        }
         toolCallsExecuted.push(toolCall.name);
         if (toolCall.name === "escalateEmergency") {
           conversation.emergencyEverChecked = true;

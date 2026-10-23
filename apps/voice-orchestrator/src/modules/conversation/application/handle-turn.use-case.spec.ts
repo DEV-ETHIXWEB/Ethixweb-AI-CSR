@@ -1917,7 +1917,15 @@ describe("HandleTurnUseCase", () => {
       action: "forward_call",
       transferDestination: "+15559876543",
     });
-    expect(result.responseText).toBe("Let's get you help right away. Connecting you now.");
+    // 2026-10-23: the check now runs BEFORE the first completion, so the
+    // model replies once, already knowing it is an emergency, instead of a
+    // second time after a post-reply backstop.
+    expect(
+      aiProvider.requests[0]?.messages.some(
+        (m) => m.role === "tool" && m.content.includes("forward_call"),
+      ),
+    ).toBe(true);
+    expect(result.responseText).toBe("Let's get you help right away.");
   });
 
   /**
@@ -2164,11 +2172,17 @@ describe("HandleTurnUseCase", () => {
         }),
       );
 
-      expect(aiProvider.requests).toHaveLength(2);
+      // 2026-10-23: the emergency result is in front of the model before its
+      // first word, so the one reply the caller hears is already made with
+      // it; the transfer still fires.
+      expect(aiProvider.requests).toHaveLength(1);
+      expect(
+        aiProvider.requests[0]?.messages.some(
+          (m) => m.role === "tool" && m.content.includes("forward_call"),
+        ),
+      ).toBe(true);
       expect(result.escalation?.action).toBe("forward_call");
-      expect(result.responseText).toBe(
-        "Okay, let's get that handled. I'm getting you connected to someone right now.",
-      );
+      expect(result.responseText).toBe("Okay, let's get that handled.");
     });
 
     it("STILL speaks again when the model said nothing before the backstop, so the caller is never left in silence", async () => {
@@ -2663,7 +2677,8 @@ describe("HandleTurnUseCase", () => {
 
     expect(searchHandler.execute).toHaveBeenCalledTimes(1);
     expect(escalateHandler.execute).toHaveBeenCalledTimes(1);
-    expect(result.toolCallsExecuted).toEqual(["searchCustomer", "escalateEmergency"]);
+    // The emergency check runs first now, before the first completion.
+    expect(result.toolCallsExecuted).toEqual(["escalateEmergency", "searchCustomer"]);
   });
 
   /**
