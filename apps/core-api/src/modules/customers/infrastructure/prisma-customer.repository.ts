@@ -113,7 +113,9 @@ export class PrismaCustomerRepository implements CustomerRepository {
     if (patch.email !== undefined) {
       data.email = patch.email;
     }
-    if (patch.address !== undefined) {
+    if (patch.address === null) {
+      data.address = Prisma.DbNull;
+    } else if (patch.address !== undefined) {
       data.address = patch.address as Prisma.InputJsonValue;
     }
     if (patch.crmRawCache !== undefined) {

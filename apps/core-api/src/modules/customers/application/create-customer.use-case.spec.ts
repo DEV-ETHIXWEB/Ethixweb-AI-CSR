@@ -141,4 +141,20 @@ describe("CreateCustomerUseCase", () => {
 
     expect(later.address).toEqual({ street: "1912 9th Ave W" });
   });
+
+  it("2026-10-23: a different caller on the same number saved without an address does not inherit the last one's", async () => {
+    const customerRepository = new FakeCustomerRepository();
+    const useCase = buildUseCase(customerRepository);
+    const base = { tenantId: "tenant-1", businessId: "business-1", phoneE164: "+18722784999" };
+    await useCase.execute({
+      ...base,
+      name: "Nora Kessler",
+      address: { street: "1748 westlake avenue unit 412", zip: "98121" },
+    });
+
+    const later = await useCase.execute({ ...base, name: "Omar Hadad" });
+
+    expect(later.name).toBe("Omar Hadad");
+    expect(later.address).toBeNull();
+  });
 });

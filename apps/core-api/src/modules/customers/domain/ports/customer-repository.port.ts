@@ -19,7 +19,8 @@ export interface UpdateCrmCacheInput {
   crmCustomerId?: string | undefined;
   name?: string | undefined;
   email?: string | undefined;
-  address?: Record<string, unknown> | undefined;
+  /** null clears it: see CreateCustomerUseCase. */
+  address?: Record<string, unknown> | null | undefined;
   crmRawCache?: unknown;
 }
 

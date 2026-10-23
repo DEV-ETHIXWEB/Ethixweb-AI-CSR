@@ -76,11 +76,24 @@ export class CreateCustomerUseCase {
       // later call was dropped. What the caller just confirmed is the newest
       // truth, so it fills in or replaces the stored name and address. CRM
       // data still wins for the name when a CRM answered.
+      //
+      // 2026-10-23 client call: a caller who gave no address got saved anyway
+      // (after three asks, by design), and the stored address, which belonged
+      // to the PREVIOUS caller on the same number, was copied onto their new
+      // lead as theirs. So a different person saved without an address clears
+      // it; the same person saved again without one keeps it. (Within one
+      // call, a re-save after a name correction cannot drop the address: the
+      // save gate refuses it without one once a street was given.)
+      const samePerson = firstWord(upserted.name) === firstWord(crmResult?.name ?? command.name);
       const customer = created
         ? upserted
         : await this.customerRepository.updateCrmCache(db, upserted.tenantId, upserted.id, {
             name: crmResult?.name ?? command.name,
-            ...(command.address !== undefined ? { address: command.address } : {}),
+            ...(command.address !== undefined
+              ? { address: command.address }
+              : samePerson
+                ? {}
+                : { address: null }),
           });
 
       if (created) {
@@ -158,4 +171,8 @@ export class CreateCustomerUseCase {
       return null;
     }
   }
+}
+
+function firstWord(name: string | null | undefined): string {
+  return (name ?? "").trim().split(/\s+/)[0]?.toLowerCase() ?? "";
 }
