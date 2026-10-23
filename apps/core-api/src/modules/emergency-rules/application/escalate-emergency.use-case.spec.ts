@@ -340,3 +340,31 @@ describe("EscalateEmergencyUseCase", () => {
     });
   });
 });
+
+/** 2026-10-23 client call: an underground leak was flagged as "no water". */
+describe("a 'no ...' rule means something is missing", () => {
+  const classify = (description: string) =>
+    buildUseCase().execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      callId: "call-1",
+      description,
+    });
+
+  it.each([
+    ["and there is no water line activated but still there is damp press"],
+    ["no the water is fine it's just the drain"],
+    ["no water damage that i can see"],
+    ["the water heater makes noise, no idea why"],
+  ])("does not flag %p", async (description) => {
+    expect((await classify(description)).matchedPattern).not.toBe("no water");
+  });
+
+  it.each([
+    ["we have no water in the whole house"],
+    ["there's no running water at all"],
+    ["water heater died and there is no hot water"],
+  ])("still flags %p", async (description) => {
+    expect((await classify(description)).isEmergency).toBe(true);
+  });
+});

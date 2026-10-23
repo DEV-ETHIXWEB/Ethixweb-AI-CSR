@@ -208,6 +208,68 @@ function matchesPattern(haystack: string, pattern: string): boolean {
   if (patternWords.length === 0) {
     return false;
   }
+  if (patternWords[0] === "no" && patternWords.length > 1) {
+    return matchesShortage(haystack.toLowerCase().match(/\w+/g) ?? [], patternWords.slice(1));
+  }
   const haystackWords = new Set(haystack.toLowerCase().match(/\w+/g) ?? []);
   return patternWords.every((word) => haystackWords.has(word));
+}
+
+/**
+ * A pattern that starts with "no" ("no water", "no hot water") is about
+ * something being MISSING, and the any-order word check above cannot tell
+ * that apart from any sentence that happens to contain "no" and "water".
+ * 2026-10-23 client call: "there is no water line activated but still the
+ * grass is damp" (an underground leak) was flagged as an outage, and "no,
+ * the water heater is fine" would have been too. So the words must come in
+ * order, with at most one describing word between "no" and the rest ("no
+ * running water"; not "no, the water..."), and not run on into a word that
+ * makes it about something else.
+ */
+const NOT_A_SHORTAGE = new Set([
+  "line",
+  "lines",
+  "leak",
+  "leaks",
+  "leaking",
+  "damage",
+  "bill",
+  "meter",
+  "softener",
+  "heater",
+  "heaters",
+  "pressure",
+]);
+
+/** The one word allowed between "no" and the rest: "no running water", "no hot water at all". */
+const SHORTAGE_GAP_WORDS = new Set([
+  "running",
+  "hot",
+  "cold",
+  "any",
+  "more",
+  "clean",
+  "drinking",
+  "fresh",
+]);
+
+function matchesShortage(words: readonly string[], rest: readonly string[]): boolean {
+  for (let at = 0; at < words.length; at += 1) {
+    if (words[at] !== "no") {
+      continue;
+    }
+    for (const gap of [0, 1]) {
+      if (gap === 1 && !SHORTAGE_GAP_WORDS.has(words[at + 1] ?? "")) {
+        continue;
+      }
+      const start = at + 1 + gap;
+      if (rest.every((word, offset) => words[start + offset] === word)) {
+        const next = words[start + rest.length] ?? "";
+        if (!NOT_A_SHORTAGE.has(next)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
 }
