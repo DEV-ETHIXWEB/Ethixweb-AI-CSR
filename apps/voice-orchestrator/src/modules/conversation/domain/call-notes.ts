@@ -56,7 +56,7 @@ export interface CallNotes {
  * an introduction PHRASE then the name, or the name then "here"/"speaking".
  */
 const NAME_STATEMENT =
-  /\b(?:my name is|my name's|name is|i go by|my first name is|first name is|i'?m|i am|this is|it'?s|it is|you'?re speaking (?:with|to)|speaking with|call me|(?:update|change|correct|fix) (?:my |the )?name to)\s+(?:actually\s+|really\s+|just\s+|gonna be\s+|going to be\s+)?([a-z][a-z'-]+)(?:\s+([a-z][a-z'-]+))?/gi;
+  /\b(?<!\b(?:last|family|second) )(?:my name is|my name's|name is|i go by|my first name is|first name is|i'?m|i am|this is|it'?s|it is|you'?re speaking (?:with|to)|speaking with|call me|(?:update|change|correct|fix) (?:my |the )?name to)\s+(?:actually\s+|really\s+|just\s+|gonna be\s+|going to be\s+)?([a-z][a-z'-]+)(?:\s+([a-z][a-z'-]+))?/gi;
 
 /** The trailing form: "Tom Harris here", "Dana speaking". */
 const NAME_FIRST_STATEMENT =
@@ -183,9 +183,11 @@ export function buildCallNotes(
   const spellingAsked = turns.some(
     (turn) => turn.speaker === "agent" && /\bspell\b/i.test(turn.text),
   );
-  const statedFound = statedNameAt(callerTexts);
-  const stated = statedFound?.value ?? answeredName(turns);
-  let spelledFound = spelledNameAt(callerTexts, spellingAsked);
+  const nameTexts = nameUtterances(callerTexts, turns);
+  const statedFound = statedNameAt(nameTexts);
+  let stated = statedFound?.value ?? answeredName(turns);
+  const spellings = spelledNamesIn(nameTexts, spellingAsked);
+  let spelledFound = spellings.at(-1) ?? null;
   // A three-letter spelled run with nothing to corroborate it is far more
   // often speech-recognition debris than a name. Found 2026-10-22 in a real
   // transcript: Grace said "Your name is S-S-K, spelled as you said it."
@@ -219,6 +221,27 @@ export function buildCallNotes(
       : (spelledFound?.words ?? null);
   if (spelled && spelled.length === 1 && stated) {
     spelled = splitSpelledByStated(spelled[0]!, stated);
+    if (spelled.length === 1) {
+      spelled = spelledIntoItsSlot(spelled[0]!, stated, spellings, statedFound?.index ?? -1);
+    }
+  }
+  // Grace asked for the LAST name, so what came back is the last name. Without
+  // this a spelled reply replaced the first name, and a spoken one was lost.
+  const answer = nameTexts.at(-1) ?? "";
+  if (stated && lastNameJustAsked(turns)) {
+    const first = stated.split(/\s+/)[0]!;
+    if (spelled?.length === 1 && spelledFound?.index === nameTexts.length - 1) {
+      const earlier = spellings
+        .slice(0, -1)
+        .filter((spelling) => spelling.words.length === 1)
+        .at(-1)?.words[0];
+      spelled = [earlier ?? first.toLowerCase(), spelled[0]!];
+    } else if (!spelledFound || spelledFound.index !== nameTexts.length - 1) {
+      const words = wordsOf(answer).filter((word) => !NAME_ANSWER_FILLER.has(word));
+      if (words.length === 1 && canBeName(words[0]!)) {
+        stated = `${first} ${capitalize(words[0]!)}`;
+      }
+    }
   }
   return {
     spellingAsked,
@@ -441,21 +464,198 @@ function neutralTiming(timing: string): string {
 }
 
 /**
- * The most recent spelled name and WHICH utterance it came from. The index
- * is what lets a later spoken correction win; see buildCallNotes.
+ * Every spelled name and WHICH utterance it came from, oldest first. The
+ * index is what lets a later spoken correction win; see buildCallNotes.
  * See spelled-letters.ts for the two spelling shapes this used to miss.
  */
-function spelledNameAt(
+function spelledNamesIn(
   callerTexts: readonly string[],
   spellingAsked: boolean,
-): { words: string[]; index: number } | null {
-  for (let i = callerTexts.length - 1; i >= 0; i -= 1) {
-    const words = spelledWordsIn(callerTexts[i] ?? "", spellingAsked);
+): Array<{ words: string[]; index: number }> {
+  const found: Array<{ words: string[]; index: number }> = [];
+  for (const [index, text] of callerTexts.entries()) {
+    const words = spelledWordsIn(text, spellingAsked);
     if (words.length > 0) {
-      return { words, index: i };
+      found.push({ words, index });
     }
   }
-  return null;
+  return found;
+}
+
+/**
+ * 2026-10-23, client call: "my name is Siobhan" / "Okonkwo", then each name
+ * spelled separately when asked. Only the LATEST spelling was kept, and as
+ * the whole name, so the customer was saved as first name "Okonkwo" with no
+ * last name, and Grace closed with "You're all set, Okonkwo".
+ *
+ * A single spelled word goes in the slot of the stated word it resembles,
+ * and the other slot keeps an earlier spelling of it, or the stated word.
+ * A spelling that resembles neither is left as it was, since then there is
+ * nothing to say which name it is.
+ */
+function spelledIntoItsSlot(
+  word: string,
+  stated: string,
+  spellings: ReadonlyArray<{ words: string[]; index: number }>,
+  statedIndex: number,
+): string[] {
+  const statedWords = stated.toLowerCase().split(/\s+/).filter(Boolean);
+  if (statedWords.length !== 2) {
+    return [word];
+  }
+  const slotOf = (candidate: string): 0 | 1 | null => {
+    const toFirst = likeness(candidate, statedWords[0]!);
+    const toLast = likeness(candidate, statedWords[1]!);
+    if (Math.max(toFirst, toLast) < SAME_NAME_LIKENESS) {
+      return null;
+    }
+    return toFirst >= toLast ? 0 : 1;
+  };
+  const slot = slotOf(word);
+  if (slot === null) {
+    return [word];
+  }
+  const other = slot === 0 ? 1 : 0;
+  const earlier = spellings
+    .slice(0, -1)
+    .filter((spelling) => spelling.index >= statedIndex && spelling.words.length === 1)
+    .map((spelling) => spelling.words[0]!)
+    .reverse()
+    .find((candidate) => slotOf(candidate) === other);
+  const result = ["", ""];
+  result[slot] = word;
+  result[other] = earlier ?? statedWords[other]!;
+  return result;
+}
+
+/** How alike two words are, from 0 to 1: one minus the edit distance over the longer length. */
+const SAME_NAME_LIKENESS = 0.5;
+function likeness(a: string, b: string): number {
+  const previous = Array.from({ length: b.length + 1 }, (_, k) => k);
+  for (let i = 1; i <= a.length; i += 1) {
+    let diagonal = previous[0]!;
+    previous[0] = i;
+    for (let k = 1; k <= b.length; k += 1) {
+      const above = previous[k]!;
+      previous[k] = Math.min(
+        above + 1,
+        previous[k - 1]! + 1,
+        diagonal + (a[i - 1] === b[k - 1] ? 0 : 1),
+      );
+      diagonal = above;
+    }
+  }
+  return 1 - previous[b.length]! / Math.max(a.length, b.length, 1);
+}
+
+/**
+ * The caller's words as they were said, for reading a NAME out of them.
+ *
+ * 2026-10-23, client calls: a name said with a pause in it arrives as two
+ * utterances, "yes my name is trevor" then "lindquist", and the last name was
+ * dropped because each was read on its own. Back-to-back caller utterances,
+ * with nothing from Grace between them, are one thing said, so they are read
+ * as one. Only possible when the transcript is at hand and matches.
+ *
+ * A spelling cut in half is joined too: "the last name is lindquist l i n d",
+ * then, after Grace talked over the pause, "q v i s t". Grace said "Your name
+ * is Qvist" and asked for the address. Only joined when the letters so far
+ * are the START of a word just said, so they cannot be a finished spelling,
+ * and the next utterance is nothing but letters.
+ */
+function nameUtterances(
+  callerTexts: readonly string[],
+  turns: ReadonlyArray<{ speaker: string; text: string }>,
+): string[] {
+  const fromTurns = turns.filter((turn) => turn.speaker === "caller").map((turn) => turn.text);
+  const matches =
+    fromTurns.length === callerTexts.length &&
+    fromTurns.every((text, index) => text === callerTexts[index]);
+  const said: string[] = [];
+  if (matches) {
+    let previousWasCaller = false;
+    for (const turn of turns) {
+      if (turn.speaker === "caller" && previousWasCaller && said.length > 0) {
+        said[said.length - 1] = `${said.at(-1)} ${turn.text}`;
+      } else if (turn.speaker === "caller") {
+        said.push(turn.text);
+      }
+      previousWasCaller = turn.speaker === "caller";
+    }
+  } else {
+    said.push(...callerTexts);
+  }
+  const joined: string[] = [];
+  for (const text of said) {
+    const before = joined.at(-1);
+    if (before !== undefined && endsMidSpelling(before) && isOnlyLetters(text)) {
+      joined[joined.length - 1] = `${before} ${text}`;
+    } else {
+      joined.push(text);
+    }
+  }
+  return joined;
+}
+
+const LAST_NAME_QUESTION = /\b(last name|surname|family name)\b/i;
+const NAME_ANSWER_FILLER = new Set([
+  "it",
+  "its",
+  "it's",
+  "is",
+  "yes",
+  "yeah",
+  "sure",
+  "oh",
+  "uh",
+  "um",
+  "my",
+  "last",
+  "name",
+  "s",
+]);
+
+/** Grace's latest words asked for the last name, and the caller has answered since. */
+function lastNameJustAsked(turns: ReadonlyArray<{ speaker: string; text: string }>): boolean {
+  let lastAgent = turns.length - 1;
+  while (lastAgent >= 0 && turns[lastAgent]!.speaker !== "agent") {
+    lastAgent -= 1;
+  }
+  return (
+    lastAgent >= 0 &&
+    lastAgent < turns.length - 1 &&
+    LAST_NAME_QUESTION.test(turns[lastAgent]!.text)
+  );
+}
+
+function wordsOf(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function isOnlyLetters(text: string): boolean {
+  const words = wordsOf(text);
+  return words.length > 0 && words.every((word) => word.length === 1);
+}
+
+/** "lindquist l i n d": the trailing letters begin a word said just before, and stop short of it. */
+function endsMidSpelling(text: string): boolean {
+  const words = wordsOf(text);
+  let letters = "";
+  let k = words.length - 1;
+  while (k >= 0 && words[k]!.length === 1) {
+    letters = words[k] + letters;
+    k -= 1;
+  }
+  if (letters.length < 2) {
+    return false;
+  }
+  return words
+    .slice(0, k + 1)
+    .some((word) => word.length > letters.length && word.startsWith(letters));
 }
 
 /**
@@ -591,6 +791,37 @@ const NOT_A_NAME_EXTRA = new Set([
   "someone",
   "somebody",
   "anyone",
+  // 2026-10-23, an emergency call: "i'm actually also smelling something
+  // burning" gave the name "Also". With a name on file Grace never asked for
+  // the real one, and saved the emergency lead under "Also". An earlier call
+  // had "hello, it's yours" saved as "Yours". Adverbs and possessives that
+  // follow "i'm" or "it's" in ordinary speech.
+  "also",
+  "too",
+  "even",
+  "only",
+  "yours",
+  "his",
+  "hers",
+  "ours",
+  "theirs",
+  "kinda",
+  "sorta",
+  "literally",
+  "basically",
+  "honestly",
+  "currently",
+  "already",
+  "always",
+  "never",
+  "little",
+  "bit",
+  "quite",
+  "super",
+  "totally",
+  "completely",
+  "glad",
+  "happy",
 ]);
 
 /**
@@ -625,24 +856,58 @@ function canBeName(token: string): boolean {
   return !new RegExp(`^(?:${FIXTURE.source})$`, "i").test(word);
 }
 
-/** The most recent stated name and which utterance it came from. */
+/** "the last name is Lindquist", "surname's Okonkwo". */
+const LAST_NAME_STATEMENT =
+  /\b(?:last name|surname|family name|second name)(?:\s+is|'s|\s+would be|\s+will be)?\s+([a-z][a-z'-]+)/gi;
+
+/**
+ * The most recent stated name and which utterance it came from.
+ *
+ * 2026-10-23, client call: "it's trevor and the last name is lindquist" made
+ * LINDQUIST the first name, since "name is X" was read as a whole name
+ * wherever it appeared. A last-name statement now sets the last name only,
+ * and a first name restated on its own keeps the last name it already had.
+ */
 function statedNameAt(callerTexts: readonly string[]): { value: string; index: number } | null {
-  let found: { value: string; index: number } | null = null;
+  type Said = { index: number; at: number; first?: string; second?: string; last?: string };
+  const said: Said[] = [];
   for (const [index, text] of callerTexts.entries()) {
     const lower = text.toLowerCase();
     for (const pattern of [NAME_STATEMENT, NAME_FIRST_STATEMENT]) {
       for (const match of lower.matchAll(pattern)) {
-        const first = match[1] ?? "";
-        if (!canBeName(first)) {
-          continue;
-        }
-        const second = match[2] ?? "";
-        const last = second && canBeName(second) ? ` ${capitalize(second)}` : "";
-        found = { value: `${capitalize(first)}${last}`, index };
+        said.push({ index, at: match.index ?? 0, first: match[1] ?? "", second: match[2] ?? "" });
       }
     }
+    for (const match of lower.matchAll(LAST_NAME_STATEMENT)) {
+      said.push({ index, at: match.index ?? 0, last: match[1] ?? "" });
+    }
   }
-  return found;
+  said.sort((a, b) => a.index - b.index || a.at - b.at);
+  let first: string | null = null;
+  let last: string | null = null;
+  let index = -1;
+  for (const item of said) {
+    if (item.last !== undefined) {
+      if (canBeName(item.last)) {
+        last = capitalize(item.last);
+        index = item.index;
+      }
+      continue;
+    }
+    const name = item.first ?? "";
+    if (!canBeName(name)) {
+      continue;
+    }
+    const second = item.second && canBeName(item.second) ? capitalize(item.second) : null;
+    if (second) {
+      last = second;
+    } else if (first?.toLowerCase() !== name.toLowerCase()) {
+      last = null;
+    }
+    first = capitalize(name);
+    index = item.index;
+  }
+  return first ? { value: last ? `${first} ${last}` : first, index } : null;
 }
 
 function answeredName(turns: ReadonlyArray<{ speaker: string; text: string }>): string | null {

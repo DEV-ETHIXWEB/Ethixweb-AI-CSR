@@ -668,3 +668,131 @@ describe("nameDisputeNote", () => {
     expect(nameDisputeNote(["that's not my name", "y a s h"], "Yash")).toBeNull();
   });
 });
+
+/**
+ * 2026-10-23, the client's last three calls, replayed line for line. Each
+ * case is what the caller actually said, in the pieces speech recognition
+ * cut it into, with Grace's replies where they fell.
+ */
+describe("names from the 2026-10-23 client calls", () => {
+  const at = "";
+  function said(...lines: Array<[string, string]>) {
+    const turns = lines.map(([speaker, text], turnIndex) => ({
+      turnIndex,
+      speaker,
+      text,
+      confidence: null,
+      offsetMs: 0,
+      at,
+    }));
+    const callerTexts = lines.filter(([who]) => who === "caller").map(([, text]) => text);
+    return buildCallNotes(callerTexts, turns);
+  }
+
+  it("emergency call: 'i'm actually also smelling' is not the name 'Also'", () => {
+    const notes = said(
+      ["caller", "hi guys actually my water heater just"],
+      [
+        "caller",
+        "died overnight and there is no hot water at all and i'm actually also smelling something like a burning smell near it so i'm actually a little worried",
+      ],
+    );
+    expect(notes.statedName).toBeNull();
+    expect(notes.spelledName).toBeNull();
+  });
+
+  it("'hello it's yours' is not the name 'Yours'", () => {
+    expect(
+      said(["agent", "What's your name?"], ["caller", "hello it's yours"]).statedName,
+    ).toBeNull();
+  });
+
+  it("a last name said after a pause is kept: 'my name is trevor' / 'lindquist'", () => {
+    const notes = said(
+      ["agent", "Could I get your name, please?"],
+      ["caller", "yes my name is trevor"],
+      ["caller", "lindquist"],
+    );
+    expect(notes.statedName).toBe("Trevor Lindquist");
+  });
+
+  it("'the last name is lindquist' sets the LAST name, never the first", () => {
+    const notes = said(["caller", "it's trevor and the last name is lindquist"]);
+    expect(notes.statedName).toBe("Trevor Lindquist");
+  });
+
+  it("first and last name spelled separately keeps both, each in its own place", () => {
+    const notes = said(
+      ["agent", "What's your name?"],
+      ["caller", "yes my name is siobhan"],
+      ["caller", "okonkwo"],
+      ["agent", "Just to confirm, that's Siobhan, spelled S-I-O-B-H-A-N?"],
+      ["caller", "s i p h a n"],
+      ["agent", "Got it, that's Siphan, S-I-P-H-A-N. What's the address?"],
+      ["caller", "o k o n k w o"],
+    );
+    expect(notes.spelledName).toEqual(["siphan", "okonkwo"]);
+  });
+
+  it("a spelling cut in half by Grace talking is read as one word, not 'Qvist'", () => {
+    const notes = said(
+      ["agent", "You're all set, Trevor. Take care!"],
+      [
+        "caller",
+        "also can you update my full name well it's trevor and the last name is lindquist l i n d",
+      ],
+      [
+        "agent",
+        "Your full name is Trevor Lindquist, spelled L-I-N-D, L-I-N-D-Q-U-I-S-T. Now, is there",
+      ],
+      ["caller", "q v i s t"],
+    );
+    expect(notes.spelledName).toEqual(["trevor", "lindqvist"]);
+  });
+
+  it("the caller's final correction, said in three pieces, gives first and last name", () => {
+    const notes = said(
+      ["agent", "Your name is Qvist, spelled Q-V-I-S-T. Now, can I get your street address?"],
+      ["caller", "well you got my name wrong my name is trevor"],
+      ["caller", "the first name is trevor t r e v o r the last name is lindquist l i n d"],
+      ["caller", "q v i s t"],
+    );
+    expect(notes.spelledName).toEqual(["trevor", "lindqvist"]);
+  });
+
+  it("still lets a later spoken name replace an earlier one", () => {
+    const notes = said(
+      ["caller", "my name is akash kumar"],
+      ["agent", "Thanks."],
+      ["caller", "update my name to prateek"],
+    );
+    expect(notes.statedName).toBe("Prateek");
+  });
+
+  it("a last name given out loud after Grace asks for it is kept", () => {
+    const notes = said(
+      ["caller", "my name is tom"],
+      ["agent", "And your last name?"],
+      ["caller", "harris"],
+    );
+    expect(notes.statedName).toBe("Tom Harris");
+  });
+
+  it("an answer to the last-name question that is not a name changes nothing", () => {
+    const notes = said(
+      ["caller", "my name is tom"],
+      ["agent", "And your last name?"],
+      ["caller", "why do you need that"],
+    );
+    expect(notes.statedName).toBe("Tom");
+  });
+
+  it("a finished spelling is never glued to the next answer", () => {
+    const notes = said(
+      ["caller", "my name is tom, t o m"],
+      ["agent", "And your last name?"],
+      ["caller", "h a r r i s"],
+    );
+    expect(notes.spelledName).toEqual(["tom", "harris"]);
+  });
+});
