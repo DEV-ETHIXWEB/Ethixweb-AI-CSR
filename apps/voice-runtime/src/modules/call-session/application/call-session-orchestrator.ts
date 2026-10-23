@@ -402,6 +402,10 @@ export class CallSessionOrchestrator {
    * one byte per sample, so 8 bytes is exactly 1ms of audio.
    */
   private playbackEndsAt = 0;
+  /** When Deepgram last delivered finished words; see turnLatency. */
+  private lastFinalTranscriptAt: number | null = null;
+  /** The reply being waited for, until its first audio goes out; see recordSentAudio. */
+  private turnLatency: { committedAt: number; heldMs: number; log: StructuredLogger } | null = null;
   private ended = false;
   /**
    * Set by `handleBargeIn` and checked by `handleFinalTranscript`'s
@@ -686,6 +690,7 @@ export class CallSessionOrchestrator {
     result: { transcript: string; confidence: number },
     log: StructuredLogger,
   ): void {
+    this.lastFinalTranscriptAt = Date.now();
     this.pendingFragment = this.pendingFragment
       ? {
           transcript: joinFragments(this.pendingFragment.transcript, result.transcript),
@@ -793,6 +798,12 @@ export class CallSessionOrchestrator {
     if (!this.conversationId || this.ended) {
       return;
     }
+    const committedAt = Date.now();
+    this.turnLatency = {
+      committedAt,
+      heldMs: this.lastFinalTranscriptAt === null ? 0 : committedAt - this.lastFinalTranscriptAt,
+      log: this.logger.child({ tenantId: params.tenantId, callId: params.callId }),
+    };
     // A real turn is starting — disarm (not re-arm) the silence check-in
     // for the duration of turn processing. handleInterimSpeech RESETS it
     // (arms a fresh window) once the caller's speech has real recognized
@@ -967,6 +978,9 @@ export class CallSessionOrchestrator {
     // chunk to actually finish playing before deciding whether to
     // transfer, never re-speaking the same text a second time.
     await speakQueue;
+    // A turn that ended in silence must not have its wait logged against
+    // whatever is spoken next (a check-in, say). See recordSentAudio.
+    this.turnLatency = null;
 
     if (turnResult.escalation?.action === "forward_call") {
       log.info("emergency escalation signaled — executing call transfer (docs/28 §M)", {
@@ -1620,6 +1634,18 @@ export class CallSessionOrchestrator {
    */
   private recordSentAudio(sink: MediaStreamSink, chunk: Buffer): void {
     sink.sendAudio(chunk);
+    // The first audio of a reply: how long the caller waited, in two parts.
+    // `heldMs` is this side holding the words in case more were coming (see
+    // fragmentStrength); `toFirstAudioMs` is the turn itself, AI and voice.
+    // Deepgram's own end-of-speech wait comes before both and is fixed by
+    // ENDPOINTING_MS. 2026-10-23: added after a "5 full seconds" report,
+    // so the next one can be read straight off the logs.
+    if (this.turnLatency) {
+      const { committedAt, heldMs, log } = this.turnLatency;
+      this.turnLatency = null;
+      const toFirstAudioMs = Date.now() - committedAt;
+      log.info("turn latency", { heldMs, toFirstAudioMs, totalMs: heldMs + toFirstAudioMs });
+    }
     this.playbackEndsAt =
       Math.max(Date.now(), this.playbackEndsAt) + chunk.length / MULAW_BYTES_PER_MS;
   }
