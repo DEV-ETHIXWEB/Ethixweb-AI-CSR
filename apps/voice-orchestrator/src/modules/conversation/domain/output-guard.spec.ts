@@ -512,3 +512,36 @@ describe("the callback number is read back exactly", () => {
     expect(said).toContain("9-8-1-0-7");
   });
 });
+
+/** 2026-10-23 live call: Grace said "Wait patiently for them to complete their thought." */
+describe("bracketed stage directions are never spoken", () => {
+  it("drops a direction that spans two sentences", () => {
+    const said = new OutputGuard().apply(
+      "[The caller is mid-sentence. Wait patiently for them to complete their thought.]",
+    );
+    expect(said.trim()).toBe("");
+  });
+
+  it("drops a direction that spans two streamed segments", () => {
+    const guard = new OutputGuard();
+    const first = guard.apply("[The caller is still talking. ");
+    const second = guard.apply("Wait patiently for them to complete their thought.] ");
+    const third = guard.apply("Mm-hm.");
+    expect(`${first}${second}`.trim()).toBe("");
+    expect(third).toContain("Mm-hm.");
+  });
+
+  it("drops what comes before a stray closing bracket", () => {
+    expect(
+      new OutputGuard().apply(" Wait patiently for them to complete their thought.]").trim(),
+    ).toBe("");
+  });
+
+  it("keeps delivery cues and the words around them", () => {
+    const said = new OutputGuard().apply(
+      "[softly] I'm sorry to hear that. What's going on with it?",
+    );
+    expect(said).toContain("[softly]");
+    expect(said).toContain("I'm sorry to hear that.");
+  });
+});

@@ -362,6 +362,9 @@ function plainSpoken(sentence: string): string {
   );
 }
 
+/** A delivery cue voice-runtime acts on: one or two plain words ("slowly", "pause", "softly"). */
+const DELIVERY_CUE = /^\s*[a-z]+(?:[ -][a-z]+)?\s*$/i;
+
 /** Sentences past this word count are dropped (complete sentences only). */
 const SOFT_WORD_LIMIT = 35;
 
@@ -502,6 +505,61 @@ export class OutputGuard {
    * second is the second. That is the order Grace says them in, and it is
    * the only mapping available once the letters themselves are wrong.
    */
+  /** Inside a bracketed stage direction that began in an earlier segment of this turn. */
+  private inStageDirection = false;
+
+  /**
+   * 2026-10-23, live call: Grace said "Wait patiently for them to complete
+   * their thought." The model had written its own stage direction in square
+   * brackets across two sentences ("[The caller is mid-sentence. Wait
+   * patiently for them to complete their thought.]"). Sentences are checked
+   * one at a time, so the first, which names "the caller", was dropped and
+   * the second was spoken. Brackets are now handled as spans, across
+   * sentences and across streamed segments: a short delivery cue such as
+   * [slowly] or [pause] stays for voice-runtime, anything else in brackets is
+   * dropped whole, and a closing bracket with no opening one drops what came
+   * before it.
+   */
+  private withoutStageDirections(segment: string): string {
+    let out = "";
+    let rest = segment;
+    if (this.inStageDirection) {
+      const close = rest.indexOf("]");
+      if (close === -1) {
+        return "";
+      }
+      this.inStageDirection = false;
+      rest = rest.slice(close + 1);
+    } else {
+      const firstClose = rest.indexOf("]");
+      const firstOpen = rest.indexOf("[");
+      if (firstClose !== -1 && (firstOpen === -1 || firstClose < firstOpen)) {
+        this.actions.push("meta_leak");
+        rest = rest.slice(firstClose + 1);
+      }
+    }
+    for (;;) {
+      const open = rest.indexOf("[");
+      if (open === -1) {
+        return out + rest;
+      }
+      out += rest.slice(0, open);
+      const close = rest.indexOf("]", open);
+      if (close === -1) {
+        this.inStageDirection = true;
+        this.actions.push("meta_leak");
+        return out;
+      }
+      const inside = rest.slice(open + 1, close);
+      if (DELIVERY_CUE.test(inside)) {
+        out += rest.slice(open, close + 1);
+      } else {
+        this.actions.push("meta_leak");
+      }
+      rest = rest.slice(close + 1);
+    }
+  }
+
   private withTheRealSpelling(sentence: string): string {
     if (this.nameWords.length === 0) {
       return sentence;
@@ -530,7 +588,8 @@ export class OutputGuard {
   }
 
   /** Returns the text to speak for this segment; an empty string means say nothing. */
-  apply(segment: string): string {
+  apply(rawSegment: string): string {
+    const segment = this.withoutStageDirections(rawSegment);
     const out: string[] = [];
     let slow = false;
     for (const sentence of splitSentences(segment)) {
