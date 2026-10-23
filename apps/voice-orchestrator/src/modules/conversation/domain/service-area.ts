@@ -120,6 +120,14 @@ function readNumberGroup(
   if (/^\d+$/.test(word)) {
     return { digits: word, consumed: 1 };
   }
+  // 2026-10-23 client call: "one triple four north sixtieth street" kept
+  // only the last "four" as the house number and saved "4 North Avenue".
+  const times = word === "double" ? 2 : word === "triple" ? 3 : 0;
+  if (times > 0) {
+    const next = cores[at + 1] ?? "";
+    const digit = /^\d$/.test(next) ? next : DIGIT_WORDS[next];
+    return digit === undefined ? null : { digits: digit.repeat(times), consumed: 2 };
+  }
   const tens = TENS_WORDS[word];
   if (tens !== undefined) {
     // "twenty fifth street" is a numbered STREET, not a number: street-name.ts
@@ -273,4 +281,13 @@ export function detectServiceAreaFromTranscript(
     return { zip, verdict };
   }
   return null;
+}
+
+/**
+ * Only straight after a house number: that is where they got in ("1748 and
+ * it's westlake"). Dropped anywhere else, "...forty four but seriously is
+ * there any way" turned into the street "44 but seriously there any way".
+ */
+export function withoutFillerAfterNumbers(text: string): string {
+  return text.replace(/\b(\d+)((?:\s+(?:and|its|it|is|um|uh|so|well|okay))+)\b/gi, "$1");
 }

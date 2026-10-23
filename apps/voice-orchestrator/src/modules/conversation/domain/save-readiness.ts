@@ -366,6 +366,10 @@ export function shouldNudgeForCallbackNumber(args: {
   if (!notes.statedName && !notes.spelledName && !nameAsked) {
     return false;
   }
+  // See zipMissingNote: the closing confirmation waits for the ZIP.
+  if (zipStillNeeded(args.callerTexts, args.agentTexts, notes.zip)) {
+    return false;
+  }
   // The QA 2026-10-13 version of this waited until Grace had already said
   // the house number back, because the address had to be read back before
   // the save. That precondition is gone with the mid-call readback it was
@@ -373,4 +377,61 @@ export function shouldNudgeForCallbackNumber(args: {
   // waiting for one would deadlock and the call would never reach a
   // confirmation at all.
   return !args.agentTexts.some((text) => NUMBER_ASKED.test(text));
+}
+
+/** Grace asking for the ZIP code. */
+const ZIP_ASKED = /\b(zip|zip code|postal code)\b/i;
+/** The caller saying they do not have it. */
+const ZIP_UNKNOWN =
+  /\b(don'?t|do not|can'?t|cannot) (know|remember|recall)\b[^.?!]{0,25}\bzip\b|\bzip\b[^.?!]{0,25}\b(don'?t|do not|can'?t) (know|remember)\b|\bno idea\b/i;
+const MAX_ZIP_ASKS = 2;
+
+function zipStillNeeded(
+  callerTexts: readonly string[],
+  agentTexts: readonly string[],
+  zip: string | null,
+): boolean {
+  if (zip !== null || extractStreet(callerTexts.join(" . ")) === null) {
+    return false;
+  }
+  // The notes only take a 98/99 ZIP on its own (see lastZip); for "has the
+  // caller given a ZIP at all", any five-digit number other than a house
+  // number counts, so an out-of-area caller is never asked again for one.
+  const fiveDigitRuns = callerTexts.flatMap((text) =>
+    [
+      ...collapseSpokenDigits(text).matchAll(
+        /(?<!\d)(\d{5})(?!\d)(?!\s+[a-z]+\s+(?:st|street|ave|avenue|rd|road|way|blvd|dr|drive|ln|lane|pl|place|ct|court)\b)/g,
+      ),
+    ].map((match) => match[1]),
+  );
+  if (fiveDigitRuns.length > 0) {
+    return false;
+  }
+  if (callerTexts.some((text) => ZIP_UNKNOWN.test(text))) {
+    return false;
+  }
+  return agentTexts.filter((text) => ZIP_ASKED.test(text)).length < MAX_ZIP_ASKS;
+}
+
+/**
+ * 2026-10-23 client call: Grace read back the caller's whole address with
+ * "ZIP unknown" in it, while the caller was still giving it. The closing
+ * confirmation fired on the street alone, and the note that asks for a
+ * missing ZIP only fires on a turn whose own words carry a whole street
+ * ("westlake avenue unit four" has no house number, so it did not). So the
+ * ZIP is now asked for, on its own, before the closing confirmation, at most
+ * twice, and not when the caller says they do not know it.
+ */
+export function zipMissingNote(args: {
+  callerTexts: readonly string[];
+  agentTexts: readonly string[];
+}): string | null {
+  const notes = buildCallNotes(args.callerTexts);
+  if (!notes.statedName && !notes.spelledName) {
+    return null;
+  }
+  if (!zipStillNeeded(args.callerTexts, args.agentTexts, notes.zip)) {
+    return null;
+  }
+  return "[You have their street but not the ZIP code. Your whole reply: ask for the ZIP code. Do not read anything back yet. Ask nothing else.]";
 }

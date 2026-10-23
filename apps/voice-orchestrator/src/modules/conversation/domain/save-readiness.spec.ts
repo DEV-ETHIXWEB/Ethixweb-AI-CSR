@@ -4,6 +4,7 @@ import {
   leadProblemBlockedReason,
   saveBlockedReason,
   shouldNudgeForCallbackNumber,
+  zipMissingNote,
   NUMBER_ASKED,
 } from "./save-readiness";
 
@@ -164,7 +165,7 @@ describe("saveBlockedReason (client feedback: no submitting before name and addr
 
 describe("shouldNudgeForCallbackNumber (client feedback: ask the callback number, alone, once)", () => {
   const base2 = {
-    callerTexts: ["my toilet runs", "it's 1200 Pine Street, Seattle"],
+    callerTexts: ["my toilet runs", "it's 1200 Pine Street, Seattle 98101"],
     agentTexts: [
       "Can I get your name?",
       "What's your address?",
@@ -437,5 +438,39 @@ describe("the callback question is recognized however Grace phrases it", () => {
     ],
   ])("counts %p as asking", (agentText) => {
     expect(NUMBER_ASKED.test(agentText)).toBe(true);
+  });
+});
+
+/** 2026-10-23 client call: the address was read back with "ZIP unknown" while the caller was still giving it. */
+describe("zipMissingNote", () => {
+  const named = [
+    "my name is nora kessler",
+    "the house number is one seven four eight",
+    "westlake avenue unit four",
+  ];
+
+  it("asks for the ZIP before anything is read back", () => {
+    expect(
+      zipMissingNote({ callerTexts: named, agentTexts: ["What's the street name?"] }),
+    ).toContain("ask for the ZIP code");
+    expect(
+      shouldNudgeForCallbackNumber({ callerTexts: named, agentTexts: ["What's your name?"] }),
+    ).toBe(false);
+  });
+
+  it("stops once the ZIP is given, in or out of the area", () => {
+    expect(
+      zipMissingNote({ callerTexts: [...named, "nine eight one two one"], agentTexts: [] }),
+    ).toBeNull();
+    expect(zipMissingNote({ callerTexts: [...named, "it's 30301"], agentTexts: [] })).toBeNull();
+  });
+
+  it("never asks more than twice, and not after the caller says they don't know it", () => {
+    expect(
+      zipMissingNote({ callerTexts: named, agentTexts: ["What's the ZIP code?", "And the ZIP?"] }),
+    ).toBeNull();
+    expect(
+      zipMissingNote({ callerTexts: [...named, "i don't know the zip"], agentTexts: [] }),
+    ).toBeNull();
   });
 });

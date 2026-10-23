@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { editDistanceAtMostOne } from "./name-grounding";
-import { collapseSpokenDigits } from "./service-area";
+import { collapseSpokenDigits, withoutFillerAfterNumbers } from "./service-area";
 import { STREET_SUFFIXES, streetCoreName, tokenizeStreet } from "./street-name";
 
 /**
@@ -51,7 +51,8 @@ const MAX_NAME_TOKENS = 4;
  * an address yet, and guessing at loose phrases would flag honest callers.
  */
 export function extractStreet(text: string): { name: string; core: string } | null {
-  const tokens = collapseSpokenDigits(text)
+  // See withoutFillerAfterNumbers in service-area.ts.
+  const tokens = withoutFillerAfterNumbers(collapseSpokenDigits(text))
     .toLowerCase()
     .replace(/[’']/g, "")
     .replace(/[^a-z0-9\s-]/g, " ")

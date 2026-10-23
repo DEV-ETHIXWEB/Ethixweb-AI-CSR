@@ -957,3 +957,32 @@ describe("names from the ten-day replay", () => {
     expect(said(["caller", "this is seattle five eight street"]).statedName).toBeNull();
   });
 });
+
+/** 2026-10-23 client calls: addresses saved as "4 North Avenue" and "1748 and it s westlake avenue unit 4". */
+describe("addresses from the 2026-10-23 afternoon calls", () => {
+  it("reads 'one triple four' as 1444", () => {
+    expect(
+      buildCallNotes(["yes my address is one triple four north sixtieth street seattle"]).street,
+    ).toBe("1444 north sixtieth street");
+  });
+
+  it("keeps the caller's joining words out of the street", () => {
+    expect(
+      buildCallNotes([
+        "well the house number is one seven four eight and it's",
+        "westlake avenue unit four",
+      ]).street,
+    ).toBe("1748 westlake avenue unit 4");
+  });
+
+  it("takes a unit given after the street", () => {
+    expect(
+      buildCallNotes([
+        "well the house number is one seven four eight and it's",
+        "westlake avenue unit four",
+        "seattle washington",
+        "yes it's four twelve unit four twelve seattle washington nine eight one two one",
+      ]).street,
+    ).toBe("1748 westlake avenue unit 412");
+  });
+});

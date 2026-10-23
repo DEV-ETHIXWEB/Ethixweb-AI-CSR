@@ -1,5 +1,5 @@
 import { spokenPhoneDigits } from "./save-readiness";
-import { collapseSpokenDigits } from "./service-area";
+import { collapseSpokenDigits, withoutFillerAfterNumbers } from "./service-area";
 import { reducePhoneticSpelling, spelledWordsIn } from "./spelled-letters";
 import { STREET_SUFFIXES } from "./street-name";
 
@@ -1141,11 +1141,36 @@ function lastStreet(callerTexts: readonly string[]): string | null {
     for (const candidate of candidates) {
       const street = streetIn(candidate);
       if (street) {
-        return street;
+        return withLaterUnit(street, callerTexts.slice(i + 1));
       }
     }
   }
   return null;
+}
+
+/**
+ * 2026-10-23 client call: "...westlake avenue unit four", then, a turn later,
+ * "it's four twelve unit four twelve". The street came from the first
+ * utterance, so the unit stayed "4" and the lead was saved as unit 4 of a
+ * building where the caller lives in 412. A unit said after the street is
+ * the newer word on it.
+ */
+function withLaterUnit(street: string, laterTexts: readonly string[]): string {
+  for (let i = laterTexts.length - 1; i >= 0; i -= 1) {
+    const tokens = collapseSpokenDigits(laterTexts[i] ?? "")
+      .replace(/[^a-z0-9\s-]/g, " ")
+      .split(/\s+/)
+      .filter(Boolean);
+    for (let at = tokens.length - 2; at >= 0; at -= 1) {
+      const value = tokens[at + 1] ?? "";
+      if (UNIT_WORDS.has(tokens[at] ?? "") && /^[a-z0-9]{1,5}$/.test(value) && /\d/.test(value)) {
+        const current = unitIn(street);
+        const unit = `${tokens[at]} ${value}`;
+        return current ? street.replace(current, unit) : `${street} ${unit}`;
+      }
+    }
+  }
+  return street;
 }
 
 const DIRECTIONS = new Set([
@@ -1168,7 +1193,11 @@ const DIRECTIONS = new Set([
 ]);
 
 function streetIn(text: string): string | null {
-  const tokens = collapseSpokenDigits(text)
+  // 2026-10-23 client call: "one seven four eight and it's / westlake avenue"
+  // was saved as the street "1748 and it s westlake avenue". Apostrophes close
+  // up ("it's" is one word), and words that only join the caller's sentence
+  // together are not part of a street name.
+  const tokens = withoutFillerAfterNumbers(collapseSpokenDigits(text.replace(/[’']/g, "")))
     .replace(/[^a-z0-9\s-]/g, " ")
     .split(/\s+/)
     .filter(Boolean);
@@ -1222,6 +1251,7 @@ const UNIT_WORDS = new Set([
 ]);
 
 /** The "apartment b" / "unit 304" tail of a parsed street, or null when it has none. */
+
 function unitIn(street: string): string | null {
   const tokens = street.split(" ");
   for (let index = 0; index < tokens.length - 1; index += 1) {

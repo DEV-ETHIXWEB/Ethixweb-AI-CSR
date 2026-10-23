@@ -12,6 +12,7 @@ import {
   leadProblemBlockedReason,
   saveBlockedReason,
   shouldNudgeForCallbackNumber,
+  zipMissingNote,
 } from "../domain/save-readiness";
 import {
   isNameGroundedInCaller,
@@ -613,7 +614,22 @@ export class HandleTurnUseCase {
       !nameUpdated &&
       !addressDisputed &&
       shouldNudgeForName(conversation);
+    // See zipMissingNote. Before the closing confirmation, which waits for it.
+    const zipNeeded =
+      !isTrailingOff &&
+      !wantsItAgain &&
+      !pendingReadback &&
+      !nameDisputed &&
+      !nameUpdated &&
+      !addressDisputed &&
+      !needsName &&
+      !hasUsableCustomer(conversation) &&
+      !conversation.leadEverAttempted &&
+      !conversation.customerCaptureAttempted
+        ? zipMissingNote({ callerTexts: callerTextsSoFar, agentTexts: agentTextsSoFar })
+        : null;
     const needsCallbackNumber =
+      !zipNeeded &&
       !isTrailingOff &&
       !wantsItAgain &&
       !pendingReadback &&
@@ -641,6 +657,7 @@ export class HandleTurnUseCase {
       nameDisputed !== null ||
       nameUpdated !== null ||
       addressDisputed !== null ||
+      zipNeeded !== null ||
       needsName ||
       needsCallbackNumber ||
       owesAnAnswer;
@@ -662,6 +679,8 @@ export class HandleTurnUseCase {
       // hold (a real-model QA scenario failed 4/4 on it). Same "reliability
       // ceiling" reasoning as the reminders above: a deterministic note.
       annotatedTranscript = `${directive(NAME_MISSING_NOTE)} ${annotatedTranscript}`;
+    } else if (zipNeeded) {
+      annotatedTranscript = `${directive(zipNeeded)} ${annotatedTranscript}`;
     } else if (needsCallbackNumber) {
       annotatedTranscript = `${directive(
         callbackNumberNote(
