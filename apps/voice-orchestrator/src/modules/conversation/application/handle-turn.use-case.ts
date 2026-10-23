@@ -45,6 +45,7 @@ import { ToolRegistry } from "../../tool-broker/application/tool-registry";
 import {
   addressDisputeNote,
   nameDisputeNote,
+  nameRepeatedNote,
   nameUpdateNote,
   addressReadbackNote,
   buildCallNotes,
@@ -604,8 +605,17 @@ export class HandleTurnUseCase {
       !isTrailingOff && !wantsItAgain && !pendingReadback && !nameDisputed
         ? nameUpdateNote(callerTextsSoFar)
         : null;
-    const addressDisputed =
+    const nameRepeated =
       !isTrailingOff && !wantsItAgain && !pendingReadback && !nameDisputed && !nameUpdated
+        ? nameRepeatedNote(callerTextsSoFar, agentTextsSoFar)
+        : null;
+    const addressDisputed =
+      !isTrailingOff &&
+      !wantsItAgain &&
+      !pendingReadback &&
+      !nameDisputed &&
+      !nameUpdated &&
+      !nameRepeated
         ? addressDisputeNote(callerTextsSoFar, agentTextsSoFar)
         : null;
     const needsName =
@@ -614,6 +624,7 @@ export class HandleTurnUseCase {
       !pendingReadback &&
       !nameDisputed &&
       !nameUpdated &&
+      !nameRepeated &&
       !addressDisputed &&
       // QA 2026-10-23 (vendor-01): "Sure, it's Renata, r e n a t a, last name
       // Kowal" was in the call notes as Renata Kowal while this nudge, which
@@ -630,6 +641,7 @@ export class HandleTurnUseCase {
       !pendingReadback &&
       !nameDisputed &&
       !nameUpdated &&
+      !nameRepeated &&
       !addressDisputed &&
       !needsName &&
       !hasUsableCustomer(conversation) &&
@@ -644,6 +656,7 @@ export class HandleTurnUseCase {
       !pendingReadback &&
       !nameDisputed &&
       !nameUpdated &&
+      !nameRepeated &&
       !addressDisputed &&
       !needsName &&
       shouldNudgeForCallbackNumber({
@@ -665,6 +678,7 @@ export class HandleTurnUseCase {
       pendingReadback !== null ||
       nameDisputed !== null ||
       nameUpdated !== null ||
+      nameRepeated !== null ||
       addressDisputed !== null ||
       zipNeeded !== null ||
       needsName ||
@@ -680,6 +694,8 @@ export class HandleTurnUseCase {
       annotatedTranscript = `${directive(nameDisputed)} ${annotatedTranscript}`;
     } else if (nameUpdated) {
       annotatedTranscript = `${directive(nameUpdated)} ${annotatedTranscript}`;
+    } else if (nameRepeated) {
+      annotatedTranscript = `${directive(nameRepeated)} ${annotatedTranscript}`;
     } else if (addressDisputed) {
       annotatedTranscript = `${directive(addressDisputed)} ${annotatedTranscript}`;
     } else if (needsName) {
@@ -2016,6 +2032,21 @@ export class HandleTurnUseCase {
     conversation: Conversation,
     toolCall: AiToolCallRequest,
   ): AiToolCallRequest {
+    // 2026-10-23 live call: createCustomer was rejected outright ("phone: must
+    // be E.164") because the model passed the number without +1. A US number
+    // written any other way is the same number.
+    const phone = toolCall.arguments["phone"];
+    if (
+      toolCall.name === "createCustomer" &&
+      typeof phone === "string" &&
+      !/^\+1\d{10}$/.test(phone)
+    ) {
+      const digits = phone.replace(/\D/g, "");
+      const ten = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+      if (ten.length === 10) {
+        toolCall = { ...toolCall, arguments: { ...toolCall.arguments, phone: `+1${ten}` } };
+      }
+    }
     const ours: Array<[string, string, string | null | undefined]> = [
       ["createLead", "customer_id", conversation.customerId],
       ["updateLead", "lead_id", conversation.leadId],

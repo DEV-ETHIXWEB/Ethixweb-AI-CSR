@@ -1,6 +1,7 @@
 import {
   addressDisputeNote,
   nameDisputeNote,
+  nameRepeatedNote,
   nameUpdateNote,
   addressReadbackNote,
   buildCallNotes,
@@ -1025,5 +1026,31 @@ describe("a street said after 'it's' is never a name", () => {
 
   it("still takes a name followed by an address", () => {
     expect(buildCallNotes(["this is tom at 4512 maple street"]).statedName).toBe("Tom");
+  });
+});
+
+/** 2026-10-23, tester: "if a customer repeats their name, get grace to ask for the alphabet". */
+describe("nameRepeatedNote", () => {
+  it("asks for a spelling when the caller says their name again", () => {
+    expect(
+      nameRepeatedNote(
+        ["my name is paula allen", "well i said my name is paul allen"],
+        ["Thanks, Paula."],
+      ),
+    ).toContain("spell their first name");
+    expect(nameRepeatedNote(["my name is josh", "my name is josh"], ["Got it, Josh."])).toContain(
+      "spell their first name",
+    );
+  });
+
+  it("stays quiet when the last name is simply arriving, or a spelling is under way", () => {
+    expect(
+      nameRepeatedNote(["my name is akash", "it's akash kumar"], ["What's your last name?"]),
+    ).toBeNull();
+    expect(nameRepeatedNote(["my name is josh", "it's yash y a s h"], [])).toBeNull();
+    expect(
+      nameRepeatedNote(["my name is josh", "my name is yash"], ["Could you spell that?"]),
+    ).toBeNull();
+    expect(nameRepeatedNote(["my name is akash", "update my name to prateek"], [])).toBeNull();
   });
 });

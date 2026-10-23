@@ -4899,3 +4899,26 @@ describe("the name nudge never contradicts the call notes", () => {
     expect(sent).not.toContain("you still do not have this caller's name");
   });
 });
+
+/** 2026-10-23 live call: createCustomer was rejected outright, "phone: must be E.164". */
+describe("a US phone number is passed in +1 form whatever the model wrote", () => {
+  it.each([["8722784999"], ["(872) 278-4999"], ["1-872-278-4999"], ["+18722784999"]])(
+    "%p",
+    (phone) => {
+      const { useCase } = buildUseCase();
+      const fixed = (
+        useCase as unknown as {
+          withOwnIdentifiers: (
+            c: Conversation,
+            t: { id: string; name: string; arguments: Record<string, unknown> },
+          ) => { arguments: Record<string, unknown> };
+        }
+      ).withOwnIdentifiers(baseConversation(), {
+        id: "t",
+        name: "createCustomer",
+        arguments: { phone },
+      });
+      expect(fixed.arguments["phone"]).toBe("+18722784999");
+    },
+  );
+});

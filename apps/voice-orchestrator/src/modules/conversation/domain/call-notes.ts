@@ -1488,6 +1488,45 @@ export function nameDisputeNote(
   );
 }
 
+/**
+ * 2026-10-23, tester (Yash): "it is better than before but still grace
+ * assumes the spelling. If a customer repeats their name we can get grace to
+ * ask if she can repeat the name's alphabet." A caller who says their name a
+ * second time, without spelling it, is usually saying it again because it
+ * was misheard; saying it a third time will not help, the letters will.
+ * Not when they are changing it (nameUpdateNote), already spelling it, or
+ * Grace has already asked for a spelling.
+ */
+export function nameRepeatedNote(
+  callerTexts: readonly string[],
+  agentTexts: readonly string[],
+): string | null {
+  const latest = (callerTexts.at(-1) ?? "").trim();
+  if (!latest || NAME_UPDATE.test(latest) || spelledWordsIn(latest, true).length > 0) {
+    return null;
+  }
+  if (agentTexts.some((text) => /\bspell\b/i.test(text))) {
+    return null;
+  }
+  const now = statedNameAt([latest]);
+  const before = statedNameAt(callerTexts.slice(0, -1));
+  if (!now || !before) {
+    return null;
+  }
+  // "my name is akash" then "it's akash kumar" is the last name arriving,
+  // not the name being misheard.
+  const [nowFirst, ...nowRest] = now.value.toLowerCase().split(/\s+/);
+  const [beforeFirst, ...beforeRest] = before.value.toLowerCase().split(/\s+/);
+  if (nowFirst === beforeFirst && nowRest.join(" ") !== beforeRest.join(" ")) {
+    return null;
+  }
+  return (
+    "[The caller has said their name again, so it may have been misheard. Your whole reply: " +
+    "ask them to spell their first name, letter by letter. Then use exactly the letters they " +
+    "give, never a familiar-sounding name instead.]"
+  );
+}
+
 /** "can you update my full name", "change the name to", "fix my last name". */
 const NAME_UPDATE =
   /\b(?:update|change|correct|fix|edit|spell)\s+(?:my|the|his|her)\s+(?:full\s+|first\s+|last\s+)?name\b|\bname\s+(?:should be|is actually|needs to be)\b/i;
