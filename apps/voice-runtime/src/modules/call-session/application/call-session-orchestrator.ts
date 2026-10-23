@@ -103,6 +103,11 @@ const STRONG_FRAGMENT_HOLD_MS = 3000;
  */
 const PARTIAL_NUMBER_HOLD_MS = 1500;
 
+/** See extendHoldWhileSpeaking: time for the resumed words' final transcript to arrive. */
+const SPEAKING_HOLD_EXTENSION_MS = 1500;
+/** No hold, however it was extended, runs longer than this. */
+const MAX_FRAGMENT_HOLD_MS = 10_000;
+
 /** Bounds a capacity-429 wait loop — a caller genuinely on hold this long has almost certainly already hung up or should hit the tenant's configured overflowNumber instead of waiting forever. Not a documented constant, an INFERRED safety limit (same honesty convention as voice-orchestrator's own MAX_TOOL_ITERATIONS). */
 const MAX_CAPACITY_RETRY_ATTEMPTS = 3;
 /** Bounds a turn's ambiguous-outcome retry loop (docs/28 §G: retry the SAME idempotencyKey on timeout/5xx). Not calling shared-kernel's withRetry directly: its exponential-backoff timing (up to 64s between attempts) is wrong for a caller on a live line waiting to hear a response — a live call needs a much tighter, capped retry, not the platform-wide async-job default. */
@@ -723,6 +728,7 @@ export class CallSessionOrchestrator {
     const strength = fragmentStrength(result.transcript);
     const addressComing = addressStillComing(this.pendingFragment.transcript, this.lastSpokenText);
     if (strength === "none" && !addressComing) {
+      this.fragmentHold = null;
       this.commitPendingFragment(params, sink, log);
       return;
     }
@@ -738,10 +744,52 @@ export class CallSessionOrchestrator {
       fragmentHoldMs,
       addressComing ? addressHoldMs(this.pendingFragment.transcript) : 0,
     );
+    this.armFragmentHold(params, sink, log, holdMs);
+  }
+
+  /** The hold now running, kept so caller speech can extend it; see extendHoldWhileSpeaking. */
+  private fragmentHold: {
+    params: CallSessionParams;
+    sink: MediaStreamSink;
+    log: StructuredLogger;
+    since: number;
+  } | null = null;
+
+  private armFragmentHold(
+    params: CallSessionParams,
+    sink: MediaStreamSink,
+    log: StructuredLogger,
+    holdMs: number,
+  ): void {
+    if (this.fragmentCoalesceTimer) {
+      clearTimeout(this.fragmentCoalesceTimer);
+    }
+    this.fragmentHold = { params, sink, log, since: this.fragmentHold?.since ?? Date.now() };
     this.fragmentCoalesceTimer = setTimeout(() => {
       this.fragmentCoalesceTimer = null;
+      this.fragmentHold = null;
       this.commitPendingFragment(params, sink, log);
     }, holdMs);
+  }
+
+  /**
+   * 2026-10-23, end-to-end test through the live pipeline: the caller paused
+   * after "the address is twelve fifteen", resumed after 3.3 s with "North
+   * Ninety Second Street", and the hold ran out while those words were still
+   * being recognized. Their finished transcript had not arrived yet, so the
+   * held piece went alone and Grace asked "What's the street name?" over the
+   * caller saying it. While a hold is running, recognized words mean the
+   * caller has resumed: the hold waits for their finished words, bounded.
+   */
+  private extendHoldWhileSpeaking(): void {
+    const hold = this.fragmentHold;
+    if (!hold || !this.fragmentCoalesceTimer) {
+      return;
+    }
+    if (Date.now() - hold.since > MAX_FRAGMENT_HOLD_MS) {
+      return;
+    }
+    this.armFragmentHold(hold.params, hold.sink, hold.log, SPEAKING_HOLD_EXTENSION_MS);
   }
 
   /** Sends whatever's currently buffered in `pendingFragment` (if anything) to `handleFinalTranscript` as one ordinary turn, and clears the buffer. A no-op if nothing is pending (defensive — every real caller of this method only calls it when it knows something's there). */
@@ -1253,6 +1301,9 @@ export class CallSessionOrchestrator {
     // (see armSilenceCheckIn's call sites at the end of a turn).
     this.lastCallerActivityAt = Date.now();
     this.disarmSilenceCheckIn();
+    if (transcript.trim().length > 0) {
+      this.extendHoldWhileSpeaking();
+    }
     if (!this.pendingBargeInTimer) {
       return;
     }
@@ -1507,6 +1558,7 @@ export class CallSessionOrchestrator {
       clearTimeout(this.fragmentCoalesceTimer);
       this.fragmentCoalesceTimer = null;
     }
+    this.fragmentHold = null;
     this.pendingFragment = null;
     this.disarmSilenceCheckIn();
     await this.sttSession?.close().catch(() => undefined);

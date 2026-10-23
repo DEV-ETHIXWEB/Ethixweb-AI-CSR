@@ -2739,3 +2739,65 @@ describe("an address read out in pieces becomes one turn", () => {
     }
   });
 });
+
+/**
+ * 2026-10-23, end-to-end test through the live pipeline: the hold after
+ * "the address is twelve fifteen" ran out while the caller was already
+ * saying the street, and Grace asked for the street over them.
+ */
+describe("a hold waits while the caller is speaking again", () => {
+  const originalSilenceTimeout = process.env["SILENCE_CHECK_IN_TIMEOUT_MS"];
+  beforeEach(() => {
+    process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = "60000";
+  });
+  afterEach(() => {
+    if (originalSilenceTimeout === undefined) {
+      delete process.env["SILENCE_CHECK_IN_TIMEOUT_MS"];
+    } else {
+      process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = originalSilenceTimeout;
+    }
+  });
+
+  const reply = (responseText: string) => ({
+    conversationId: "conv-1",
+    responseText,
+    toolCallsExecuted: [],
+    interrupted: false,
+    state: "qualifying" as const,
+  });
+
+  it("joins the piece the caller was in the middle of saying when the hold ran out", async () => {
+    jest.useFakeTimers();
+    try {
+      const { orchestrator, orchestratorClient, stt, sink } = buildOrchestratorWithSink();
+      orchestratorClient.turnResponses = [
+        reply("What's the service address?"),
+        reply("Let me make sure I have it right."),
+      ];
+      await orchestrator.onCallStart(baseParams(), sink);
+      stt.sessions[0]!.emitFinalTranscript("my water heater is broken", 0.95);
+      await jest.advanceTimersByTimeAsync(100);
+      expect(orchestratorClient.turnCalls).toHaveLength(1);
+
+      stt.sessions[0]!.emitFinalTranscript("the address is twelve fifteen", 0.95);
+      await jest.advanceTimersByTimeAsync(3000);
+      stt.sessions[0]!.emitInterimSpeech("north ninety"); // resumed, still talking
+      await jest.advanceTimersByTimeAsync(1000); // past the original 3.5 s hold
+      stt.sessions[0]!.emitInterimSpeech("north ninety second street");
+      await jest.advanceTimersByTimeAsync(1000);
+      expect(orchestratorClient.turnCalls).toHaveLength(1);
+
+      stt.sessions[0]!.emitFinalTranscript(
+        "north ninety second street seattle nine eight one zero three",
+        0.95,
+      );
+      await jest.advanceTimersByTimeAsync(100);
+      expect(orchestratorClient.turnCalls).toHaveLength(2);
+      expect(orchestratorClient.turnCalls[1]?.req.transcript).toBe(
+        "the address is twelve fifteen north ninety second street seattle nine eight one zero three",
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
