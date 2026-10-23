@@ -38,8 +38,11 @@ const WH_QUESTION = new RegExp(
 );
 
 /** Unambiguous wherever they sit in the sentence. */
+// 2026-10-23, live call: "so like do you guys even do that kind of
+// conversion" went unanswered while Grace asked for a name; "you guys" and
+// "even" kept it from matching anything here.
 const QUESTION_PHRASES =
-  /\b(can someone|can somebody|can anyone|can you|could you|could someone|do you (have|offer|do|know|charge|take|service|work)|does (it|that|this) (cost|include)|is there (a|any|an)|are there (any|a)|how much|how long|how soon|how many|how fast|what time|what (do|does) (it|that|you)|any chance|is it possible|will someone|will somebody|will anyone|would it be possible|any idea (how|when|what))\b/i;
+  /\b((do|can|could|will|would) (you guys|y'?all)|(you guys|y'?all) (even )?(do|offer|have|handle|service|install|fix|work)|do you (even|actually|also) (do|offer|have|handle|service|install|fix|work)|can someone|can somebody|can anyone|can you|could you|could someone|do you (have|offer|do|know|charge|take|service|work)|does (it|that|this) (cost|include)|is there (a|any|an)|are there (any|a)|how much|how long|how soon|how many|how fast|what time|what (do|does) (it|that|you)|any chance|is it possible|will someone|will somebody|will anyone|would it be possible|any idea (how|when|what))\b/i;
 
 /**
  * A caller who is answering a question Grace just asked is not asking one,

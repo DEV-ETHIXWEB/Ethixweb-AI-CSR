@@ -60,3 +60,20 @@ describe("answerFirst", () => {
     expect(note.endsWith("]")).toBe(true);
   });
 });
+
+/** 2026-10-23 live call: this went unanswered while Grace asked for a name. */
+describe("questions with 'you guys' in them", () => {
+  it.each([
+    [
+      "hi i'm just trying to get some information right now i'm thinking about switching from a regular tank water heater to a tankless one so like do you guys even do that kind of conversion",
+    ],
+    ["do y'all install water softeners"],
+    ["you guys do drain cleaning"],
+  ])("%p is a question", (said) => {
+    expect(callerAskedAQuestion(said)).toBe(true);
+  });
+
+  it("an ordinary statement is not", () => {
+    expect(callerAskedAQuestion("my water heater stopped working last night")).toBe(false);
+  });
+});
