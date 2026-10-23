@@ -39,6 +39,7 @@ import {
 } from "./emotional-delivery";
 import { LoudnessLeveler } from "./loudness-leveler";
 import {
+  addressHoldMs,
   addressStillComing,
   fragmentStrength,
   isPartialNumberUtterance,
@@ -101,8 +102,6 @@ const STRONG_FRAGMENT_HOLD_MS = 3000;
  * half seconds on the turn a caller notices most.
  */
 const PARTIAL_NUMBER_HOLD_MS = 1500;
-
-const ADDRESS_HOLD_MS = 2000;
 
 /** Bounds a capacity-429 wait loop — a caller genuinely on hold this long has almost certainly already hung up or should hit the tenant's configured overflowNumber instead of waiting forever. Not a documented constant, an INFERRED safety limit (same honesty convention as voice-orchestrator's own MAX_TOOL_ITERATIONS). */
 const MAX_CAPACITY_RETRY_ATTEMPTS = 3;
@@ -735,7 +734,10 @@ export class CallSessionOrchestrator {
         : strength === "weak"
           ? FRAGMENT_COALESCE_WINDOW_MS
           : 0;
-    const holdMs = Math.max(fragmentHoldMs, addressComing ? ADDRESS_HOLD_MS : 0);
+    const holdMs = Math.max(
+      fragmentHoldMs,
+      addressComing ? addressHoldMs(this.pendingFragment.transcript) : 0,
+    );
     this.fragmentCoalesceTimer = setTimeout(() => {
       this.fragmentCoalesceTimer = null;
       this.commitPendingFragment(params, sink, log);

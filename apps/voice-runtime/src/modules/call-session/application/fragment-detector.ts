@@ -131,6 +131,13 @@ const TRAILING_WORDS = new Set([
   "some",
   "any",
   "we",
+  // 2026-10-23, live call: a caller said "it's", paused to read the
+  // address, and Grace answered "it seems like your response got cut off".
+  // "it's" at the end is the start of an answer, never the whole of one.
+  "it's",
+  "its",
+  "i'm",
+  "im",
 ]);
 
 /**
@@ -392,6 +399,20 @@ const ADDRESS_WORDS =
  * not yet END on a ZIP. A ZIP at the end is the natural close of an address,
  * so that turn goes through at once, with no added wait.
  */
+/**
+ * How long to hold, given that the address is still coming: longer while the
+ * caller has said only a number so far, since that is where people stop to
+ * look the rest up. 2026-10-23, three live calls: after a bare house number
+ * ("the address is twelve fifteen", "it's it's two o o", "fourteen ninety")
+ * callers resumed about 4.5 s after it was transcribed, and the 2 s hold had
+ * Grace already asking for the street.
+ */
+export function addressHoldMs(saidSoFar: string): number {
+  return ADDRESS_WORDS.test(saidSoFar) ? ADDRESS_HOLD_WITH_STREET_MS : ADDRESS_HOLD_NUMBER_ONLY_MS;
+}
+const ADDRESS_HOLD_NUMBER_ONLY_MS = 3500;
+const ADDRESS_HOLD_WITH_STREET_MS = 2500;
+
 export function addressStillComing(saidSoFar: string, lastAgentText: string): boolean {
   if (!ADDRESS_ASKED.test(lastAgentText) && !ADDRESS_ANNOUNCED.test(saidSoFar)) {
     return false;

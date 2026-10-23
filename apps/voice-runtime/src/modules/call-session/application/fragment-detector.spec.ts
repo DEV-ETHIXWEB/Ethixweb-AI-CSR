@@ -1,4 +1,5 @@
 import {
+  addressHoldMs,
   addressStillComing,
   fragmentStrength,
   isPartialNumberUtterance,
@@ -381,5 +382,20 @@ describe("addressStillComing", () => {
   it("reads 'triple four' as digits, so it holds like any partial number", () => {
     expect(fragmentStrength("triple four")).toBe("strong");
     expect(isPartialNumberUtterance("one triple four")).toBe(true);
+  });
+});
+
+/** 2026-10-23 live calls. */
+describe("holding for the rest of an answer", () => {
+  it.each([["it's"], ["yes it's"], ["yeah sure it's"]])(
+    "holds %p, which is only the start of an answer",
+    (said) => {
+      expect(fragmentStrength(said)).toBe("strong");
+    },
+  );
+
+  it("holds longer after a bare house number than after a street", () => {
+    expect(addressHoldMs("the address is twelve fifteen")).toBe(3500);
+    expect(addressHoldMs("rainier avenue southwest seattle")).toBe(2500);
   });
 });
