@@ -133,6 +133,44 @@ const TRAILING_WORDS = new Set([
   "we",
 ]);
 
+/**
+ * 2026-10-23, client: "when I end saying something it usually takes 5 full
+ * seconds to answer". Run over 800 real caller lines from the last ten days,
+ * the four-second hold caught complete sentences that simply END on one of
+ * these words: "it only happens when i turn the water on", "i'd like to get
+ * it looked at", "i wanted to find out what my options are", "what did you
+ * say my name was". Every one sat in four seconds of silence, plus the turn.
+ *
+ * A short utterance ending on them still holds ("i'm at", "my house is in"):
+ * that is someone about to give the rest. A longer one has already said its
+ * piece; these words are stranded particles there, not openings.
+ */
+const LONG_UTTERANCE_WORDS = 5;
+const ENDS_A_SENTENCE = new Set(["on", "in", "at", "was", "are", "am"]);
+/**
+ * The rest of the trailing words that often end a complete sentence ("what
+ * is it for", "who am I speaking with"). A long utterance ending on one gets
+ * the short hold instead of the long one; determiners, conjunctions and
+ * "is"/"to" keep the long hold at any length ("the address is", "i want to").
+ */
+const SOFT_TRAILING_WORDS = new Set([
+  "about",
+  "for",
+  "with",
+  "like",
+  "by",
+  "into",
+  "than",
+  "as",
+  "some",
+  "any",
+  "also",
+  "we",
+  "when",
+  "where",
+  "which",
+]);
+
 const SPOKEN_DIGITS: Record<string, string> = {
   zero: "0",
   oh: "0",
@@ -264,6 +302,12 @@ export function fragmentStrength(transcript: string): FragmentStrength {
   // not the article (2026-10-14 tester call).
   const spelling = words.length >= 2 && normalizeWord(words[words.length - 2]!).length === 1;
   if (TRAILING_WORDS.has(last) && !spelling) {
+    if (words.length >= LONG_UTTERANCE_WORDS && ENDS_A_SENTENCE.has(last)) {
+      return "none";
+    }
+    if (words.length >= LONG_UTTERANCE_WORDS && SOFT_TRAILING_WORDS.has(last)) {
+      return "weak";
+    }
     return "strong";
   }
   if (isPartialNumber(words)) {

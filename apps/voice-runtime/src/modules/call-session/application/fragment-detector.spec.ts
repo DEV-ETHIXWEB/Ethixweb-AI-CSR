@@ -271,3 +271,34 @@ describe("a spelling that has only just started", () => {
     expect(fragmentStrength(said)).toBe("none");
   });
 });
+
+/** 2026-10-23 client: "it usually takes 5 full seconds to answer". Real lines that sat in the 4 s hold. */
+describe("a complete sentence that ends on a particle is not held", () => {
+  it.each([
+    ["it only happens when i turn the water on"],
+    ["i'm not an emergency but i'd like to get it looked at"],
+    ["i think it's time to replace it i wanted to find out what my options are"],
+    ["what did you say my name was"],
+  ])("answers %p straight away", (said) => {
+    expect(fragmentStrength(said)).toBe("none");
+  });
+
+  it.each([
+    ["could you tell me what that charge is for"],
+    ["is that something you can help me with"],
+  ])("gives %p only the short hold", (said) => {
+    expect(fragmentStrength(said)).toBe("weak");
+  });
+
+  it.each([
+    ["yes the address is"],
+    ["my service address is"],
+    ["the last name is"],
+    ["i'm at"],
+    ["hi chris i actually am calling because i want to"],
+    ["hi i was looking to get a water heater replaced for me and"],
+    ["by the way do you know that my full name is"],
+  ])("still holds %p, which is unfinished", (said) => {
+    expect(fragmentStrength(said)).toBe("strong");
+  });
+});

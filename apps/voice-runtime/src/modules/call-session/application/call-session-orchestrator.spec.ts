@@ -1039,7 +1039,7 @@ describe("CallSessionOrchestrator", () => {
 
         await orchestrator.onCallStart(baseParams(), sink);
         stt.sessions[0]!.emitFinalTranscript("let me check on", 0.95);
-        await jest.advanceTimersByTimeAsync(3000); // well past the old 1.2s window
+        await jest.advanceTimersByTimeAsync(2500); // well past the old 1.2s window
         expect(orchestratorClient.turnCalls).toHaveLength(0);
         expect(tts.synthesizeCalls).toEqual(["Thanks for calling, how can I help?"]); // nothing said over the caller
 

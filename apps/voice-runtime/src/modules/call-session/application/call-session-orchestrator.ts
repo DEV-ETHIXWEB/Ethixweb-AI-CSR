@@ -72,7 +72,11 @@ const FRAGMENT_COALESCE_WINDOW_MS = 1200;
  * talking, Grace answered the fragment with "go ahead" / "take your time",
  * and that reply then talked over the real answer. See `fragmentStrength`.
  */
-const STRONG_FRAGMENT_HOLD_MS = 4000;
+// 2026-10-23: 4000 -> 3000. The client measured a five-second wait at the
+// end of a sentence. Deepgram has already waited 500ms of silence before
+// this hold starts, and a caller pausing mid-sentence resumes well inside
+// three seconds; the fourth second only ever cost callers who had finished.
+const STRONG_FRAGMENT_HOLD_MS = 3000;
 
 /**
  * The hold for an utterance that is only digits, which is held because it
