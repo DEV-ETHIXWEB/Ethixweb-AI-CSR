@@ -197,6 +197,7 @@ const SILENT_TURN_FALLBACK = "Sorry about the pause there. What else can I help 
  * written with one readback missing beats no record and an apology.
  */
 const SOFT_SAVE_GATES: ReadonlySet<string> = new Set([
+  "name_not_read_back",
   "address_not_confirmed",
   "callback_number_not_confirmed",
   "new_callback_number_not_read_back",
@@ -706,6 +707,14 @@ export class HandleTurnUseCase {
       annotatedTranscript = `${directive(NAME_MISSING_NOTE)} ${annotatedTranscript}`;
     } else if (zipNeeded) {
       annotatedTranscript = `${directive(zipNeeded)} ${annotatedTranscript}`;
+    } else if (needsCallbackNumber && !notes.statedName && !notes.spelledName) {
+      // 2026-10-23, Akash's test call: Grace asked for the name, the caller
+      // answered with when to come, and needsName stays quiet once the name
+      // has been asked. The closing confirmation then said "the caller has
+      // confirmed their name and address" with no name at all, and the lead
+      // was saved under a name heard once and never read back. There is no
+      // closing without a name: ask for it.
+      annotatedTranscript = `${directive(NAME_STILL_MISSING_NOTE)} ${annotatedTranscript}`;
     } else if (needsCallbackNumber) {
       annotatedTranscript = `${directive(
         callbackNumberNote(
@@ -1886,6 +1895,8 @@ export class HandleTurnUseCase {
           : priorAgentTexts,
         address: toolCall.arguments["address"],
         phone: toolCall.arguments["phone"],
+        name: toolCall.arguments["name"],
+        priorAgentTexts,
       });
       if (blocked) {
         const alreadyRefusedThisTurn =
@@ -2697,6 +2708,11 @@ const NAME_MISSING_NOTE =
   "[System note: you still do not have this caller's name and have not asked for it. " +
   "In THIS reply, the ONLY question you ask is for their name, after a brief acknowledgment. " +
   "Do not ask anything else this turn.]";
+
+const NAME_STILL_MISSING_NOTE =
+  "[System note: you asked for the caller's name earlier but never got it. Before confirming " +
+  "anything, ask for it again: in THIS reply, the ONLY question you ask is their first and last " +
+  "name, after a brief acknowledgment. Do not read back the address or the number yet.]";
 
 /** True when the call is several caller turns in, nobody has asked for or given a name, and nothing is saved yet. */
 /**

@@ -166,6 +166,9 @@ interface Args {
   agentTexts: readonly string[];
   address: unknown;
   phone?: unknown;
+  name?: unknown;
+  /** Grace's replies before this turn; the name check needs a reply the caller could answer. */
+  priorAgentTexts?: readonly string[];
 }
 
 const hasStreetArg = (address: unknown): boolean =>
@@ -203,7 +206,45 @@ export function saveBlockedReason(args: Args) {
   if (spoken === null && !agentTexts.some((text) => NUMBER_ASKED.test(text))) {
     return PHONE_NOT_CONFIRMED_ERROR;
   }
-  return null;
+  return nameBlockedReason(args);
+}
+
+export const NAME_NOT_READ_BACK_ERROR = {
+  error: "name_not_read_back",
+  detail:
+    "Do not save yet. You have not read the caller's name back. In this reply, read back their name, spelling the first name letter by letter, and ask if that is right. Save once they confirm. Everything else the caller already gave you is still valid: do not ask for it again.",
+} as const;
+
+/**
+ * 2026-10-23, Akash's test call: the name ("pigeon stink") was given, and in
+ * the same turn the request was saved and closed with "You're all set,
+ * Pigeon Stink". It was never spelled back: what testers reported as "Grace
+ * assumes the spelling". Before a save, the first name has been spelled in
+ * an earlier reply of Grace's, which the caller could answer, or by the
+ * caller.
+ */
+function nameBlockedReason({ name, callerTexts, agentTexts, priorAgentTexts }: Args) {
+  const given =
+    typeof name === "object" && name !== null ? (name as Record<string, unknown>)["first"] : name;
+  const full = typeof given === "string" ? given : "";
+  const first = (full.trim().split(/\s+/)[0] ?? "").toLowerCase().replace(/[^a-z]/g, "");
+  if (first.length < 2) {
+    return null;
+  }
+  // "s i o b h a n, o k o n k w o" runs on into the last name.
+  const spelled = (texts: readonly string[]) =>
+    texts.some((text) => letterRuns(text).some((run) => run.startsWith(first)));
+  if (spelled(priorAgentTexts ?? agentTexts) || spelled(callerTexts)) {
+    return null;
+  }
+  return NAME_NOT_READ_BACK_ERROR;
+}
+
+/** "Yash, Y-A-S-H" and "y a s h" both give "yash". */
+function letterRuns(text: string): string[] {
+  return (text.match(/\b[a-z](?:[\s,.-]+[a-z]\b)+/gi) ?? []).map((run) =>
+    run.replace(/[^a-z]/gi, "").toLowerCase(),
+  );
 }
 
 /**

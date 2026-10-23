@@ -822,7 +822,7 @@ describe("HandleTurnUseCase", () => {
         {
           turnIndex: 5,
           speaker: "agent" as const,
-          text: "So that's 1200 Pine Street, and 2-0-6-5-5-5-0-1-4-7?",
+          text: "So that's Akash, A-K-A-S-H, at 1200 Pine Street, and 2-0-6-5-5-5-0-1-4-7?",
           confidence: null,
           offsetMs: 0,
           at,
@@ -973,7 +973,7 @@ describe("HandleTurnUseCase", () => {
             {
               turnIndex: 1,
               speaker: "agent",
-              text: "So that's 1200 Pine Street, and 2-0-6-5-5-5-0-1-4-7?",
+              text: "So that's Catherine, C-A-T-H-E-R-I-N-E, at 1200 Pine Street, and 2-0-6-5-5-5-0-1-4-7?",
               confidence: null,
               offsetMs: 0,
               at,
@@ -1065,7 +1065,7 @@ describe("HandleTurnUseCase", () => {
         {
           turnIndex: 5,
           speaker: "agent" as const,
-          text: "So that's 1200 Pine Street, and 2-0-6-5-5-5-0-1-4-7?",
+          text: "So that's Akash, A-K-A-S-H, at 1200 Pine Street, and 2-0-6-5-5-5-0-1-4-7?",
           confidence: null,
           offsetMs: 0,
           at,
@@ -3439,6 +3439,32 @@ describe("shouldNudgeForName (client feedback: a call must not run on without a 
       false,
     );
   });
+
+  it("Akash's test call: the closing confirmation never starts without a name", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(
+      baseConversation({
+        transcript: [
+          turn("caller", "hi my kitchen sink is draining really slowly", 0),
+          turn("agent", "That sounds frustrating. Can I get your name to help with this?", 1),
+          turn("caller", "could you guys please come tomorrow evening", 2),
+          turn("agent", "I'll note tomorrow evening. What's the service address?", 3),
+          turn("caller", "the service address is 1200 pine street", 4),
+          turn("agent", "And what's the ZIP code there?", 5),
+        ],
+      }),
+    );
+    const aiProvider = new FakeAiProvider();
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    await useCase.execute(
+      baseCommand({ transcript: "seattle washington nine eight one zero one" }),
+    );
+
+    const sent = aiProvider.requests[0]?.messages[0]?.content ?? "";
+    expect(sent).toContain("you asked for the caller's name earlier but never got it");
+    expect(sent).not.toContain("has confirmed their name and address");
+  });
 });
 
 describe("address check (client feedback: random street plus ZIP was accepted)", () => {
@@ -3763,7 +3789,7 @@ describe("HandleTurnUseCase with a matched record that has no name or address", 
           {
             turnIndex: 3,
             speaker: "agent",
-            text: "So that's 1912 9th Avenue West, Seattle, 98119?",
+            text: "So that's Patrick, P-A-T-R-I-C-K, at 1912 9th Avenue West, Seattle, 98119?",
             confidence: null,
             offsetMs: 0,
             at,

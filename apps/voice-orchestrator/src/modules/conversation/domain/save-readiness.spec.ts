@@ -55,6 +55,51 @@ describe("saveBlockedReason (client feedback: no submitting before name and addr
     ).toBeNull();
   });
 
+  describe("the name is spelled back before it is saved (Akash's test call, 2026-10-23)", () => {
+    const ready = {
+      ...base,
+      callerTexts: ["it's 1200 Pine Street, Seattle", "yes my name is pigeon stink"],
+      address: { street: "1200 Pine Street" },
+      name: { first: "Pigeon", last: "Stink" },
+    };
+    const readback = "So that's 1200 Pine Street, Seattle?";
+
+    it("refuses a name heard once and never spelled back", () => {
+      expect(
+        saveBlockedReason({ ...ready, agentTexts: [...base.agentTexts, readback] })?.error,
+      ).toBe("name_not_read_back");
+    });
+
+    it("spelling it in the same reply as the save does not count", () => {
+      const sameTurn = "You're all set, Pigeon, P-I-G-E-O-N.";
+      expect(
+        saveBlockedReason({
+          ...ready,
+          agentTexts: [...base.agentTexts, readback, sameTurn],
+          priorAgentTexts: [...base.agentTexts, readback],
+        })?.error,
+      ).toBe("name_not_read_back");
+    });
+
+    it("allows it once Grace spelled it in an earlier reply, or the caller spelled it", () => {
+      const spelled = "So that's Pigeon, P-I-G-E-O-N, Stink, at 1200 Pine Street?";
+      expect(
+        saveBlockedReason({
+          ...ready,
+          agentTexts: [...base.agentTexts, spelled],
+          priorAgentTexts: [...base.agentTexts, spelled],
+        }),
+      ).toBeNull();
+      expect(
+        saveBlockedReason({
+          ...ready,
+          callerTexts: [...ready.callerTexts, "p i g e o n, s t i n k"],
+          agentTexts: [...base.agentTexts, readback],
+        }),
+      ).toBeNull();
+    });
+  });
+
   it("never holds up a real emergency", () => {
     expect(
       saveBlockedReason({ ...base, callerTexts: ["a pipe burst and water is everywhere"] }),
