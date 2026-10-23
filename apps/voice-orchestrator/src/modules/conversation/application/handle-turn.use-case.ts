@@ -1219,6 +1219,13 @@ export class HandleTurnUseCase {
     // speaking here would talk over them — the complaint this codebase has
     // already been through twice), a caller who asked Grace to wait, and a
     // caller only saying "mm-hmm, go on", who has not taken the floor at all.
+    // 2026-10-23 client call: the saved reply was a lone "]". voice-runtime
+    // strips cue brackets before speaking, so the caller heard nothing, but
+    // the "]" went into the transcript (and back into the model's own
+    // history on every later turn). A reply with no words in it is no reply.
+    if (!/[a-z0-9]/i.test(responseText.replace(/\[[^\]]*\]/g, " ").replace(/[[\]]/g, " "))) {
+      responseText = "";
+    }
     const silenceWasIntended =
       trailsOff(command.transcript) ||
       isHoldRequest(command.transcript) ||

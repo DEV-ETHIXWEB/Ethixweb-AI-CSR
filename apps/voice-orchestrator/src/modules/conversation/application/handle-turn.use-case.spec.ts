@@ -4665,3 +4665,24 @@ describe("a name update reopens nothing else", () => {
     expect(sent).not.toContain("service address is wrong");
   });
 });
+
+/** 2026-10-23 client call: Grace's saved reply was a lone "]". */
+describe("a reply with no words in it is never saved", () => {
+  it.each([["]"], ["[pause]"], ["[softly] ]"]])(
+    "does not save %p to the transcript",
+    async (modelText) => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          { type: "text_delta", text: modelText },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const { useCase } = buildUseCase({ aiProvider, repository });
+      const result = await useCase.execute(baseCommand({ transcript: "yes the address is" }));
+      expect(result.responseText).toBe("");
+    },
+  );
+});
