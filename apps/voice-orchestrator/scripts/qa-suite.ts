@@ -28,6 +28,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { InMemoryIdempotencyStore } from "@ethixweb/shared-kernel";
 import { AnthropicAdapter } from "../src/modules/ai-provider/infrastructure/anthropic.adapter";
+import { OpenAiAdapter } from "../src/modules/ai-provider/infrastructure/openai.adapter";
 import { HandleTurnUseCase } from "../src/modules/conversation/application/handle-turn.use-case";
 import { FakeConversationRepository } from "../src/modules/conversation/application/__fakes__/fake-conversation-repository";
 import { FakeEventBus } from "../src/modules/conversation/application/__fakes__/fake-event-bus";
@@ -80,9 +81,22 @@ loadDotEnvIfPresent(join(__dirname, "..", ".env"));
 // suite can never again be pointed at the production budget.
 const SMALL_RUN_ON_PRODUCTION_KEY = process.env["QA_ALLOW_PRODUCTION_KEY"] === "1";
 const PRODUCTION_KEY_SCENARIO_CAP = 25;
-const apiKey = SMALL_RUN_ON_PRODUCTION_KEY
-  ? process.env["ANTHROPIC_API_KEY"]
-  : process.env["QA_ANTHROPIC_API_KEY"];
+/**
+ * 2026-10-23: production runs on OpenAI (DEFAULT_LLM_MODEL=gpt-4o-mini,
+ * AI_PROVIDER_FALLBACK_ORDER=openai), so QA that only ever ran on Claude was
+ * testing a different model from the one callers talk to. QA_PROVIDER=openai
+ * runs the same scenarios on OpenAI, under the same production-key rules:
+ * the live line shares that key too.
+ */
+const PROVIDER = process.env["QA_PROVIDER"] === "openai" ? "openai" : "anthropic";
+const apiKey =
+  PROVIDER === "openai"
+    ? SMALL_RUN_ON_PRODUCTION_KEY
+      ? process.env["OPENAI_API_KEY"]
+      : process.env["QA_OPENAI_API_KEY"]
+    : SMALL_RUN_ON_PRODUCTION_KEY
+      ? process.env["ANTHROPIC_API_KEY"]
+      : process.env["QA_ANTHROPIC_API_KEY"];
 if (!apiKey) {
   console.error(
     "BLOCKED: set QA_ANTHROPIC_API_KEY to a key from a SEPARATE Anthropic workspace with its own spend limit.\n" +
@@ -91,11 +105,20 @@ if (!apiKey) {
   );
   process.exit(1);
 }
-if (!SMALL_RUN_ON_PRODUCTION_KEY && apiKey === process.env["ANTHROPIC_API_KEY"]) {
-  console.error("BLOCKED: QA_ANTHROPIC_API_KEY is the production key. Use a separate workspace key.");
+if (
+  !SMALL_RUN_ON_PRODUCTION_KEY &&
+  (apiKey === process.env["ANTHROPIC_API_KEY"] || apiKey === process.env["OPENAI_API_KEY"])
+) {
+  console.error(
+    "BLOCKED: QA_ANTHROPIC_API_KEY is the production key. Use a separate workspace key.",
+  );
   process.exit(1);
 }
-const model = process.env["DEFAULT_LLM_MODEL"] ?? "claude-haiku-4-5";
+const model =
+  process.env["QA_MODEL"] ??
+  (PROVIDER === "openai"
+    ? "gpt-4o-mini"
+    : (process.env["DEFAULT_LLM_MODEL"] ?? "claude-haiku-4-5"));
 const CONCURRENCY = Number(process.env["QA_CONCURRENCY"] ?? 6);
 
 /**
@@ -107,8 +130,7 @@ const CONCURRENCY = Number(process.env["QA_CONCURRENCY"] ?? 6);
  */
 const SERVICE_AREA_KNOWLEDGE =
   "Relevant business knowledge:\n" +
-  "- [service_area] Cities and counties served: SERVICE AREA for All Phase Plumbing (Greater Seattle, King and Pierce counties). Headquarters: 14101 Interurban Ave S Unit 78-A, Tukwila WA 98168.\n\nCONFIRMED SERVED ZIP CODES. If the caller gives any ZIP on this list, they are inside the service area - tell them yes, directly, and carry on with the call: 98001, 98002, 98003, 98004, 98005, 98006, 98007, 98008, 98011, 98012, 98021, 98023, 98028, 98030, 98031, 98032, 98033, 98034, 98040, 98042, 98052, 98053, 98055, 98056, 98057, 98058, 98059, 98092, 98101, 98102, 98103, 98104, 98105, 98106, 98107, 98108, 98109, 98112, 98115, 98116, 98117, 98118, 98119, 98121, 98122, 98125, 98126, 98133, 98134, 98136, 98144, 98146, 98148, 98155, 98166, 98168, 98177, 98178, 98188, 98198, 98199, 98371, 98372, 98373, 98374, 98375, 98387, 98391, 98402, 98403, 98404, 98405, 98406, 98407, 98408, 98409, 98413, 98418, 98421, 98422, 98424, 98433, 98439, 98443, 98444, 98445, 98446, 98465, 98466, 98467, 98498, 98499.\n\nCITIES SERVED: Seattle, Tacoma, Auburn, Bellevue, Kirkland, Redmond, Renton, Kent, Mercer Island, Federal Way, Des Moines, Bonney Lake, Puyallup, South Hill, Spanaway, Summit, Summit View, Fife, Lakewood, Bothell, Tukwila.\n\nIF THE ZIP IS NOT ON THE LIST, that is NOT a no. The list covers the main cities, not every town. Never decline someone because of a ZIP you cannot find - ask which city or town it is and decide from the city instead. If the city is on the list, they are served. If the town is anywhere else in Washington - places like Carnation, Duvall, Black Diamond, Maple Valley, Covington, Sammamish, Issaquah, Enumclaw, Burien, Shoreline, Woodinville, Sumner, Orting, Buckley, Gig Harbor - TAKE THE JOB and say the team will confirm coverage when they call back.\n\nONLY treat a caller as outside the area when their location is plainly a different region: another state entirely, or a Washington area well away from King and Pierce such as Spokane, Yakima, Vancouver WA, Bellingham, Olympia or Everett. Never tell a caller which county they are in; you cannot verify it and it is not what decides coverage."
-;
+  "- [service_area] Cities and counties served: SERVICE AREA for All Phase Plumbing (Greater Seattle, King and Pierce counties). Headquarters: 14101 Interurban Ave S Unit 78-A, Tukwila WA 98168.\n\nCONFIRMED SERVED ZIP CODES. If the caller gives any ZIP on this list, they are inside the service area - tell them yes, directly, and carry on with the call: 98001, 98002, 98003, 98004, 98005, 98006, 98007, 98008, 98011, 98012, 98021, 98023, 98028, 98030, 98031, 98032, 98033, 98034, 98040, 98042, 98052, 98053, 98055, 98056, 98057, 98058, 98059, 98092, 98101, 98102, 98103, 98104, 98105, 98106, 98107, 98108, 98109, 98112, 98115, 98116, 98117, 98118, 98119, 98121, 98122, 98125, 98126, 98133, 98134, 98136, 98144, 98146, 98148, 98155, 98166, 98168, 98177, 98178, 98188, 98198, 98199, 98371, 98372, 98373, 98374, 98375, 98387, 98391, 98402, 98403, 98404, 98405, 98406, 98407, 98408, 98409, 98413, 98418, 98421, 98422, 98424, 98433, 98439, 98443, 98444, 98445, 98446, 98465, 98466, 98467, 98498, 98499.\n\nCITIES SERVED: Seattle, Tacoma, Auburn, Bellevue, Kirkland, Redmond, Renton, Kent, Mercer Island, Federal Way, Des Moines, Bonney Lake, Puyallup, South Hill, Spanaway, Summit, Summit View, Fife, Lakewood, Bothell, Tukwila.\n\nIF THE ZIP IS NOT ON THE LIST, that is NOT a no. The list covers the main cities, not every town. Never decline someone because of a ZIP you cannot find - ask which city or town it is and decide from the city instead. If the city is on the list, they are served. If the town is anywhere else in Washington - places like Carnation, Duvall, Black Diamond, Maple Valley, Covington, Sammamish, Issaquah, Enumclaw, Burien, Shoreline, Woodinville, Sumner, Orting, Buckley, Gig Harbor - TAKE THE JOB and say the team will confirm coverage when they call back.\n\nONLY treat a caller as outside the area when their location is plainly a different region: another state entirely, or a Washington area well away from King and Pierce such as Spokane, Yakima, Vancouver WA, Bellingham, Olympia or Everett. Never tell a caller which county they are in; you cannot verify it and it is not what decides coverage.";
 
 /**
  * Mirrors StartConversationUseCase exactly, including the caller lookup it
@@ -343,7 +365,11 @@ const REPEATED_QUESTION_IN_ONE_TURN: Check = {
       const questions = turn
         .split(/(?<=[?.!])\s+/)
         .filter((sentence) => sentence.includes("?"))
-        .map((sentence) => norm(sentence).replace(/[^a-z\s]/g, "").trim());
+        .map((sentence) =>
+          norm(sentence)
+            .replace(/[^a-z\s]/g, "")
+            .trim(),
+        );
       for (let i = 0; i < questions.length; i++) {
         for (let j = i + 1; j < questions.length; j++) {
           const a = new Set(questions[i]!.split(/\s+/).filter((w) => w.length > 3));
@@ -410,7 +436,10 @@ const UNIVERSAL: Check[] = [
     },
   },
   // v14: "*[Calling escalateEmergency]*" as literal spoken text.
-  neverSays("no bracketed stage direction", /\[(calling|checking|looking|searching|running|tool|note)\b/),
+  neverSays(
+    "no bracketed stage direction",
+    /\[(calling|checking|looking|searching|running|tool|note)\b/,
+  ),
   // Call 6d3893a0: "Now let me look up your history with us." spoken aloud
   // before a tool call, which the caller hears as filler.
   neverSays(
@@ -450,7 +479,10 @@ const UNIVERSAL: Check[] = [
   // The business-name plumbing: a placeholder must never reach speech, and
   // the greeting seeded into every scenario already names the company, so
   // any bracketed stand-in here is a regression.
-  neverSays("never speaks a placeholder for the business name", /\[the business\]|\bthe business\]|\bplaceholder\b/),
+  neverSays(
+    "never speaks a placeholder for the business name",
+    /\[the business\]|\bthe business\]|\bplaceholder\b/,
+  ),
   // ---- How the call FEELS. Added after the client's "still bad lag, makes
   // it tough to interact" (d2b845c4): until now nothing here measured
   // speed or length at all, only content. ----
@@ -518,35 +550,42 @@ const UNIVERSAL: Check[] = [
 // ---------------------------------------------------------------------
 
 async function runScenario(scenario: Scenario): Promise<RunContext> {
-  const realProvider = new AnthropicAdapter(apiKey!, process.env["ANTHROPIC_BASE_URL"]);
+  const realProvider =
+    PROVIDER === "openai"
+      ? new OpenAiAdapter(apiKey!, process.env["OPENAI_BASE_URL"])
+      : new AnthropicAdapter(apiKey!, process.env["ANTHROPIC_BASE_URL"]);
   let completionCount = 0;
   let speakingCompletions = 0;
   let askingCompletions = 0;
   // Counts completions, and how many of them actually produced spoken text,
   // without altering what they yield.
-  const aiProvider: typeof realProvider = Object.assign(Object.create(Object.getPrototypeOf(realProvider)), realProvider, {
-    streamCompletion: (...args: Parameters<typeof realProvider.streamCompletion>) => {
-      completionCount += 1;
-      const inner = realProvider.streamCompletion(...args);
-      return (async function* () {
-        let spoke = false;
-        let asked = false;
-        for await (const chunk of inner) {
-          if (chunk.type === "text_delta") {
-            if (!spoke && chunk.text.trim().length > 0) {
-              spoke = true;
-              speakingCompletions += 1;
+  const aiProvider: typeof realProvider = Object.assign(
+    Object.create(Object.getPrototypeOf(realProvider)),
+    realProvider,
+    {
+      streamCompletion: (...args: Parameters<typeof realProvider.streamCompletion>) => {
+        completionCount += 1;
+        const inner = realProvider.streamCompletion(...args);
+        return (async function* () {
+          let spoke = false;
+          let asked = false;
+          for await (const chunk of inner) {
+            if (chunk.type === "text_delta") {
+              if (!spoke && chunk.text.trim().length > 0) {
+                spoke = true;
+                speakingCompletions += 1;
+              }
+              if (!asked && chunk.text.includes("?")) {
+                asked = true;
+                askingCompletions += 1;
+              }
             }
-            if (!asked && chunk.text.includes("?")) {
-              asked = true;
-              askingCompletions += 1;
-            }
+            yield chunk;
           }
-          yield chunk;
-        }
-      })();
+        })();
+      },
     },
-  });
+  );
   const repository = new FakeConversationRepository();
   const toolRegistry = new ToolRegistry();
   const executeTool = new ExecuteToolUseCase(
@@ -625,7 +664,10 @@ async function runScenario(scenario: Scenario): Promise<RunContext> {
     systemPrompt: buildSystemPrompt(knownMatch),
     searchCustomerEverChecked: true,
     ...(knownMatch.customerId
-      ? { customerId: knownMatch.customerId, customerDetailsOnFile: customerMatchIsComplete(knownMatch) }
+      ? {
+          customerId: knownMatch.customerId,
+          customerDetailsOnFile: customerMatchIsComplete(knownMatch),
+        }
       : {}),
     llmModel: model,
     // Seeded exactly the way StartConversationUseCase leaves a live
@@ -634,7 +676,11 @@ async function runScenario(scenario: Scenario): Promise<RunContext> {
     // re-introduces itself mid-call, which is a harness artifact rather
     // than anything a real caller would ever hear.
     messages: [
-      { role: "user", content: "[The call has just connected. Greet the caller now, following your instructions.]" },
+      {
+        role: "user",
+        content:
+          "[The call has just connected. Greet the caller now, following your instructions.]",
+      },
       {
         role: "assistant",
         content: "Hey, this is Grace with All Phase Plumbing. What can I help you with today?",
@@ -803,7 +849,10 @@ function loadDotEnvIfPresent(path: string): void {
       const eq = trimmed.indexOf("=");
       if (eq === -1) continue;
       const key = trimmed.slice(0, eq).trim();
-      const value = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, "");
+      const value = trimmed
+        .slice(eq + 1)
+        .trim()
+        .replace(/^["']|["']$/g, "");
       if (!(key in process.env)) process.env[key] = value;
     }
   } catch {
@@ -828,18 +877,24 @@ const DECLINES_COVERAGE =
   /\b(don'?t|do not|doesn'?t|not able to|can'?t|cannot)\s+(\w+\s+){0,2}(serve|cover|get out|make it out|come out|reach)|\boutside\b[^.?!]{0,30}\b(our|the|where)\b[^.?!]{0,20}\b(service area|area|reach|cover)|\bnot in (our|the)( service)? area\b|\bwe only (serve|cover)\b|\btoo far\b/;
 
 /** The warm, forward-looking note the decline has to land on. */
-const POSITIVE_CLOSE = /\b(growing|expand|expanding|hope|hopefully|one day|down the (road|line)|before too long|good luck|get (it|that) (sorted|taken care of))\b/;
+const POSITIVE_CLOSE =
+  /\b(growing|expand|expanding|hope|hopefully|one day|down the (road|line)|before too long|good luck|get (it|that) (sorted|taken care of))\b/;
 
-const ASKS_NAME = /\b(who am i speaking|can i (get|have|grab) your name|what'?s your name|may i ask who|your name\?|and your name)\b/;
-const ASKS_PROBLEM = /\b(what'?s (going on|happening|the issue|the problem|the trouble)|what (can i help|brings you|seems to be)|tell me what)\b/;
+const ASKS_NAME =
+  /\b(who am i speaking|can i (get|have|grab) your name|what'?s your name|may i ask who|your name\?|and your name)\b/;
+const ASKS_PROBLEM =
+  /\b(what'?s (going on|happening|the issue|the problem|the trouble)|what (can i help|brings you|seems to be)|tell me what)\b/;
 const ASKS_PHONE = /\b(your (phone|number)|best number|number to reach)\b/;
 // Same exclusion as ASKS_NAME: "let me just confirm the address, that's 400
 // Pine Street?" is the readback the prompt explicitly requires after a
 // caller gives an address, so matching it as a re-ask would test against
 // the prompt's own instruction.
-const ASKS_ADDRESS = /\b(what'?s (the|your|the service) address|can i (get|have) (the|your) address|(give|tell) me (the|your) address|(repeat|say) (the|your) address|what street|where are you located)\b/;
-const ASKS_LOCATION = /\b(which (room|fixture|part)|where (in the house|is it|exactly)|what part of)\b/;
-const ASKS_TIMING = /\b(how soon|when (would|are you|works)|right away|get you on the schedule|today or)\b/;
+const ASKS_ADDRESS =
+  /\b(what'?s (the|your|the service) address|can i (get|have) (the|your) address|(give|tell) me (the|your) address|(repeat|say) (the|your) address|what street|where are you located)\b/;
+const ASKS_LOCATION =
+  /\b(which (room|fixture|part)|where (in the house|is it|exactly)|what part of)\b/;
+const ASKS_TIMING =
+  /\b(how soon|when (would|are you|works)|right away|get you on the schedule|today or)\b/;
 const ASKS_ACTIVE = /\b(actively|still (going|running|leaking)|right now\?|dripping or)\b/;
 
 // ---------------------------------------------------------------------
@@ -882,7 +937,9 @@ const NO_REPEATED_SENTENCE: Check = {
     const seen = new Set<string>();
     for (const turn of ctx.agentTurns) {
       for (const sentence of turn.split(/(?<=[.!?])\s+/)) {
-        const key = norm(sentence).replace(/[^a-z0-9 ]/g, "").trim();
+        const key = norm(sentence)
+          .replace(/[^a-z0-9 ]/g, "")
+          .trim();
         if (key.split(/\s+/).length < 5) continue;
         if (seen.has(key)) return `repeated: "${sentence.trim()}"`;
         seen.add(key);
@@ -896,7 +953,10 @@ function saysNameAtMost(name: RegExp, max: number): Check {
   return {
     label: `says the caller's name at most ${max} times`,
     run: (ctx) => {
-      const count = ctx.agentTurns.reduce((n, turn) => n + (norm(turn).match(name)?.length ?? 0), 0);
+      const count = ctx.agentTurns.reduce(
+        (n, turn) => n + (norm(turn).match(name)?.length ?? 0),
+        0,
+      );
       return count <= max ? null : `said it ${count} times`;
     },
   };
@@ -904,9 +964,11 @@ function saysNameAtMost(name: RegExp, max: number): Check {
 
 const ASKS_HOME_OR_BUSINESS =
   /\b(home or (a )?business|residential or commercial|is (this|it) (for )?(a |your )?(home|house|business))\b/;
-const CLAIMS_INFO_ON_FILE = /\b(i'?ve got your (info|information|details)|i have your (info|information|details)|you'?re (already )?in (our|the) system)\b/;
+const CLAIMS_INFO_ON_FILE =
+  /\b(i'?ve got your (info|information|details)|i have your (info|information|details)|you'?re (already )?in (our|the) system)\b/;
 
-const CLAIMS_TRANSFER_FAILED = /\b(couldn'?t|could not|can'?t|cannot|unable to|wasn'?t able to) (reach|connect|transfer|get (you|anyone|someone))\b/;
+const CLAIMS_TRANSFER_FAILED =
+  /\b(couldn'?t|could not|can'?t|cannot|unable to|wasn'?t able to) (reach|connect|transfer|get (you|anyone|someone))\b/;
 const READS_STORED_DETAILS = /\b(412 pine|akash kumar|am i speaking with)\b/;
 
 const TESTER_SCENARIOS: Scenario[] = [
@@ -922,14 +984,21 @@ const TESTER_SCENARIOS: Scenario[] = [
           return /^mm-?hm\.?$/i.test(last) || last.length === 0 ? `said: "${last}"` : null;
         },
       },
-      neverSays("never says take your time or I'm still here", /(take your time|i'?m (still )?here)/),
+      neverSays(
+        "never says take your time or I'm still here",
+        /(take your time|i'?m (still )?here)/,
+      ),
     ],
   },
   {
     id: "tester-02-shared-phone-never-reads-record",
     category: "tester",
     knownCustomer: true,
-    turns: ["Hi, my water heater is leaking.", "My name is Lena Ruiz.", "7714 Northeast 131st Street, Kirkland, 98034."],
+    turns: [
+      "Hi, my water heater is leaking.",
+      "My name is Lena Ruiz.",
+      "7714 Northeast 131st Street, Kirkland, 98034.",
+    ],
     checks: [
       neverSays("never reads out a stored name or address", READS_STORED_DETAILS),
       saysSomewhere("takes this caller's own address", /7714/),
@@ -940,7 +1009,10 @@ const TESTER_SCENARIOS: Scenario[] = [
     category: "tester",
     knownCustomer: true,
     turns: ["Can I speak to someone else? I need to talk to a person right now."],
-    checks: [callsTool("transferToHuman"), neverSays("never claims the transfer failed", CLAIMS_TRANSFER_FAILED)],
+    checks: [
+      callsTool("transferToHuman"),
+      neverSays("never claims the transfer failed", CLAIMS_TRANSFER_FAILED),
+    ],
   },
   {
     id: "tester-04-complaint-manager-transfers",
@@ -968,7 +1040,9 @@ const TESTER_SCENARIOS: Scenario[] = [
       {
         label: "reads the address back at most once",
         run: (ctx) => {
-          const readBacks = ctx.agentTurns.filter((turn) => /\b(6120|61 ?20|sixty[- ]one)\b/i.test(turn)).length;
+          const readBacks = ctx.agentTurns.filter((turn) =>
+            /\b(6120|61 ?20|sixty[- ]one)\b/i.test(turn),
+          ).length;
           return readBacks <= 1 ? null : `read it back ${readBacks} times`;
         },
       },
@@ -977,10 +1051,18 @@ const TESTER_SCENARIOS: Scenario[] = [
   {
     id: "tester-06-brand-question-noted",
     category: "tester",
-    turns: ["My gas water heater is old and I want to replace it. Do you carry Bradford White or another specific brand?"],
+    turns: [
+      "My gas water heater is old and I want to replace it. Do you carry Bradford White or another specific brand?",
+    ],
     checks: [
-      saysSomewhere("acknowledges the brand question", /\b(brand|team|technician|tech|note|pass)\b/),
-      neverSays("never invents a brand answer", /\b(we (carry|install|use|stock) (bradford|rheem|a\.? ?o\.? smith))/),
+      saysSomewhere(
+        "acknowledges the brand question",
+        /\b(brand|team|technician|tech|note|pass)\b/,
+      ),
+      neverSays(
+        "never invents a brand answer",
+        /\b(we (carry|install|use|stock) (bradford|rheem|a\.? ?o\.? smith))/,
+      ),
     ],
   },
   {
@@ -991,8 +1073,9 @@ const TESTER_SCENARIOS: Scenario[] = [
       {
         label: "spells the name back without being asked (2026-10-14 tester feedback)",
         run: (ctx) =>
-          /\b[dD][-\s]?a[-\s]?n[-\s]?a\b.{0,40}\b[wW][-\s]?h[-\s]?i[-\s]?t/i.test(ctx.allAgentText) ||
-          /\bd[\s-]a[\s-]n[\s-]a\b/i.test(ctx.allAgentText.toLowerCase().replace(/[.,]/g, ""))
+          /\b[dD][-\s]?a[-\s]?n[-\s]?a\b.{0,40}\b[wW][-\s]?h[-\s]?i[-\s]?t/i.test(
+            ctx.allAgentText,
+          ) || /\bd[\s-]a[\s-]n[\s-]a\b/i.test(ctx.allAgentText.toLowerCase().replace(/[.,]/g, ""))
             ? null
             : `never spelled the name back; said: "${ctx.agentTurns.join(" | ")}"`,
       },
@@ -1015,7 +1098,9 @@ const TESTER_SCENARIOS: Scenario[] = [
         run: (ctx) => {
           const afterCorrection = ctx.agentTurns.slice(2);
           const stale = afterCorrection.find((turn) => /6120 148th/i.test(turn));
-          return stale === undefined ? null : `still said the old address after correction: "${stale}"`;
+          return stale === undefined
+            ? null
+            : `still said the old address after correction: "${stale}"`;
         },
       },
       {
@@ -1023,7 +1108,9 @@ const TESTER_SCENARIOS: Scenario[] = [
         run: (ctx) => {
           const afterCorrection = ctx.agentTurns.slice(2);
           const broken = afterCorrection.find((turn) => turn.trim().length < 3);
-          return broken === undefined ? null : `suspiciously short reply after correction: "${broken}"`;
+          return broken === undefined
+            ? null
+            : `suspiciously short reply after correction: "${broken}"`;
         },
       },
     ],
@@ -1042,11 +1129,17 @@ const VENDOR_SCENARIOS: Scenario[] = [
       "Do you provide a brand, or do I buy it?",
     ],
     checks: [
-      neverSays("never says a wrong variant of a spelled name", /\b(rena|renee|rina|ronata|renada|renatta|milo|myla)\b/),
+      neverSays(
+        "never says a wrong variant of a spelled name",
+        /\b(rena|renee|rina|ronata|renada|renatta|milo|myla)\b/,
+      ),
       saysNameAtMost(/\brenata\b/g, 2),
       neverAsksAfter("never asks for the address once given", ASKS_ADDRESS, 3),
       neverAsksAfter("never asks the name once given", ASKS_NAME, 2),
-      saysSomewhere("passes the unanswered brand question to the team", /\b(team|technician|tech|note|pass)\b/),
+      saysSomewhere(
+        "passes the unanswered brand question to the team",
+        /\b(team|technician|tech|note|pass)\b/,
+      ),
     ],
   },
   {
@@ -1068,7 +1161,11 @@ const VENDOR_SCENARIOS: Scenario[] = [
   {
     id: "vendor-03-zip-asked-when-missing",
     category: "vendor",
-    turns: ["The water line outside my house is leaking.", "Ravi Mehta.", "3810 248th Place South, Kent."],
+    turns: [
+      "The water line outside my house is leaking.",
+      "Ravi Mehta.",
+      "3810 248th Place South, Kent.",
+    ],
     checks: [asksAbout("asks for the ZIP it does not have", /\bzip\b/)],
   },
   {
@@ -1088,7 +1185,10 @@ const VENDOR_SCENARIOS: Scenario[] = [
     id: "vendor-05-human-first-request",
     category: "vendor",
     turns: ["Can I talk to a real person please?"],
-    checks: [callsTool("transferToHuman"), neverAsksAbout("does not gatekeep the transfer", ASKS_PROBLEM)],
+    checks: [
+      callsTool("transferToHuman"),
+      neverAsksAbout("does not gatekeep the transfer", ASKS_PROBLEM),
+    ],
   },
   {
     id: "vendor-06-human-after-details",
@@ -1116,7 +1216,9 @@ const VENDOR_SCENARIOS: Scenario[] = [
         label: "after 'hold on' just agrees to wait, no new question",
         run: (ctx) => {
           const last = ctx.agentTurns.at(-1) ?? "";
-          return last.includes("?") || last.split(/\s+/).length > 12 ? `said: "${last.trim()}"` : null;
+          return last.includes("?") || last.split(/\s+/).length > 12
+            ? `said: "${last.trim()}"`
+            : null;
         },
       },
     ],
@@ -1137,7 +1239,9 @@ const VENDOR_SCENARIOS: Scenario[] = [
   {
     id: "vendor-09-no-show-complaint",
     category: "vendor",
-    turns: ["I called yesterday and booked, I gave you my name and my address, and nobody showed up. This is ridiculous."],
+    turns: [
+      "I called yesterday and booked, I gave you my name and my address, and nobody showed up. This is ridiculous.",
+    ],
     checks: [
       saysSomewhere("apologizes", /\b(sorry|apologi)/),
       neverSays("never claims it has their information", CLAIMS_INFO_ON_FILE),
@@ -1147,7 +1251,11 @@ const VENDOR_SCENARIOS: Scenario[] = [
     id: "vendor-10-incomplete-record-full-intake",
     category: "vendor",
     incompleteRecord: true,
-    turns: ["Hi, my kitchen sink is leaking underneath.", "My name is Patrick Lee.", "It's 1912 9th Avenue West, Seattle, 98119."],
+    turns: [
+      "Hi, my kitchen sink is leaking underneath.",
+      "My name is Patrick Lee.",
+      "It's 1912 9th Avenue West, Seattle, 98119.",
+    ],
     checks: [
       neverSays("never claims it has their information", CLAIMS_INFO_ON_FILE),
       saysSomewhere("captures the address the caller volunteered", /1912/),
@@ -1165,8 +1273,14 @@ const VENDOR_SCENARIOS: Scenario[] = [
     category: "vendor",
     turns: ["Do you guys do thermal imaging to find a leak in my ceiling?"],
     checks: [
-      neverSays("never claims a service it does not know about", /\byes,? we (do|offer|have) (thermal|infrared)/),
-      saysSomewhere("passes the question to the team or technician", /\b(team|technician|tech|confirm|check)\b/),
+      neverSays(
+        "never claims a service it does not know about",
+        /\byes,? we (do|offer|have) (thermal|infrared)/,
+      ),
+      saysSomewhere(
+        "passes the question to the team or technician",
+        /\b(team|technician|tech|confirm|check)\b/,
+      ),
     ],
   },
   {
@@ -1200,7 +1314,9 @@ const SCENARIOS: Scenario[] = [
   {
     id: "extraction-02-name-problem-timing",
     category: "extraction",
-    turns: ["This is Marcus Webb, my water heater is leaking all over the garage floor, I need help today."],
+    turns: [
+      "This is Marcus Webb, my water heater is leaking all over the garage floor, I need help today.",
+    ],
     checks: [
       neverAsksAbout("does not re-ask the name", ASKS_NAME),
       neverAsksAbout("does not re-ask the problem", ASKS_PROBLEM),
@@ -1242,7 +1358,9 @@ const SCENARIOS: Scenario[] = [
   {
     id: "extraction-06-two-problems",
     category: "extraction",
-    turns: ["I'm Ravi, my kitchen faucet drips constantly and the downstairs toilet runs all night."],
+    turns: [
+      "I'm Ravi, my kitchen faucet drips constantly and the downstairs toilet runs all night.",
+    ],
     checks: [
       neverAsksAbout("does not re-ask the name", ASKS_NAME),
       neverAsksAbout("does not re-ask the problem", ASKS_PROBLEM),
@@ -1252,7 +1370,9 @@ const SCENARIOS: Scenario[] = [
     id: "extraction-07-emergency-in-dump",
     category: "extraction",
     tools: true,
-    turns: ["This is Jenna, I have water pouring out of a burst pipe in my basement right now, please help."],
+    turns: [
+      "This is Jenna, I have water pouring out of a burst pipe in my basement right now, please help.",
+    ],
     checks: [
       neverAsksAbout("does not re-ask the name", ASKS_NAME),
       neverAsksAbout("does not re-ask the problem", ASKS_PROBLEM),
@@ -1309,7 +1429,9 @@ const SCENARIOS: Scenario[] = [
   {
     id: "extraction-13-all-plus-question",
     category: "extraction",
-    turns: ["I'm Nina, outdoor spigot is spraying everywhere, need it today. Do you guys handle that?"],
+    turns: [
+      "I'm Nina, outdoor spigot is spraying everywhere, need it today. Do you guys handle that?",
+    ],
     checks: [
       neverAsksAbout("does not re-ask the name", ASKS_NAME),
       neverAsksAbout("does not re-ask the problem", ASKS_PROBLEM),
@@ -1318,7 +1440,9 @@ const SCENARIOS: Scenario[] = [
   {
     id: "extraction-14-business-caller",
     category: "extraction",
-    turns: ["This is Alex from Riverside Cafe, our main kitchen drain backed up and we open at 11."],
+    turns: [
+      "This is Alex from Riverside Cafe, our main kitchen drain backed up and we open at 11.",
+    ],
     checks: [
       neverAsksAbout("does not re-ask the name", ASKS_NAME),
       neverAsksAbout("does not re-ask the problem", ASKS_PROBLEM),
@@ -1327,7 +1451,9 @@ const SCENARIOS: Scenario[] = [
   {
     id: "extraction-15-tenant-caller",
     category: "extraction",
-    turns: ["Hi I'm Mia, I rent here, the bathroom sink won't drain and my landlord told me to call you."],
+    turns: [
+      "Hi I'm Mia, I rent here, the bathroom sink won't drain and my landlord told me to call you.",
+    ],
     checks: [
       neverAsksAbout("does not re-ask the name", ASKS_NAME),
       neverAsksAbout("does not re-ask the problem", ASKS_PROBLEM),
@@ -1338,7 +1464,9 @@ const SCENARIOS: Scenario[] = [
     category: "extraction",
     tools: true,
     knownCustomer: true,
-    turns: ["It's Akash again, the same kitchen sink is leaking under the cabinet, going right now, need someone today."],
+    turns: [
+      "It's Akash again, the same kitchen sink is leaking under the cabinet, going right now, need someone today.",
+    ],
     checks: [
       neverAsksAbout("does not re-ask the name of a known customer", ASKS_NAME),
       neverAsksAbout("does not re-ask the problem", ASKS_PROBLEM),
@@ -1348,30 +1476,141 @@ const SCENARIOS: Scenario[] = [
   // 2. INCREMENTAL — the caller who gives one fact at a time. Same
   //    information must come out, without the agent rushing or stacking.
   // -------------------------------------------------------------------
-  { id: "incr-01-one-word", category: "incremental", turns: ["Leak."], checks: [atMostQuestions(1)] },
-  { id: "incr-02-slow-build", category: "incremental", turns: ["I have a problem.", "With my sink.", "It's leaking."], checks: [atMostQuestions(1)] },
-  { id: "incr-03-name-alone", category: "incremental", turns: ["My toilet keeps running.", "Akash"], checks: [atMostQuestions(1)] },
-  { id: "incr-04-terse", category: "incremental", turns: ["Water heater.", "Not working.", "Since yesterday."], checks: [atMostQuestions(1)] },
-  { id: "incr-05-yes-no", category: "incremental", turns: ["My pipe is leaking.", "Yes.", "No."], checks: [atMostQuestions(1)] },
-  { id: "incr-06-pauses", category: "incremental", turns: ["Um.", "So my shower.", "It won't drain."], checks: [atMostQuestions(1)] },
-  { id: "incr-07-answers-only-what-asked", category: "incremental", turns: ["Drain is clogged.", "Kitchen."], checks: [atMostQuestions(1), neverAsksAbout("does not re-ask which room", ASKS_LOCATION)] },
-  { id: "incr-08-late-name", category: "incremental", turns: ["Faucet is dripping.", "Bathroom.", "Oh, I'm Dana."], checks: [neverAsksAfter("does not re-ask the name after it is offered", ASKS_NAME, 2)] },
+  {
+    id: "incr-01-one-word",
+    category: "incremental",
+    turns: ["Leak."],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "incr-02-slow-build",
+    category: "incremental",
+    turns: ["I have a problem.", "With my sink.", "It's leaking."],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "incr-03-name-alone",
+    category: "incremental",
+    turns: ["My toilet keeps running.", "Akash"],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "incr-04-terse",
+    category: "incremental",
+    turns: ["Water heater.", "Not working.", "Since yesterday."],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "incr-05-yes-no",
+    category: "incremental",
+    turns: ["My pipe is leaking.", "Yes.", "No."],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "incr-06-pauses",
+    category: "incremental",
+    turns: ["Um.", "So my shower.", "It won't drain."],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "incr-07-answers-only-what-asked",
+    category: "incremental",
+    turns: ["Drain is clogged.", "Kitchen."],
+    checks: [atMostQuestions(1), neverAsksAbout("does not re-ask which room", ASKS_LOCATION)],
+  },
+  {
+    id: "incr-08-late-name",
+    category: "incremental",
+    turns: ["Faucet is dripping.", "Bathroom.", "Oh, I'm Dana."],
+    checks: [neverAsksAfter("does not re-ask the name after it is offered", ASKS_NAME, 2)],
+  },
 
   // -------------------------------------------------------------------
   // 3. NO RE-ASKING — the defect the product owner hit twice.
   // -------------------------------------------------------------------
-  { id: "reask-01-active-already-stated", category: "reask", turns: ["My kitchen pipe is actively leaking right now."], checks: [neverAsksAbout("does not ask running-or-dripping after 'actively leaking'", ASKS_ACTIVE)] },
-  { id: "reask-02-caller-calls-it-out", category: "reask", turns: ["My sink is leaking under the cabinet.", "I already told you that."], checks: [neverAsksAbout("does not re-ask the problem after being corrected", ASKS_PROBLEM), atMostQuestions(1)] },
-  { id: "reask-03-name-twice", category: "reask", turns: ["I'm Akash Kumar, my water heater is broken.", "Yes it's still broken."], checks: [neverAsksAbout("never re-asks the full name", ASKS_NAME)] },
-  { id: "reask-04-address-twice", category: "reask", turns: ["I'm at 1200 Maple Avenue, my main line is backing up."], checks: [neverAsksAbout("does not re-ask the address", ASKS_ADDRESS)] },
-  { id: "reask-05-timing-twice", category: "reask", turns: ["Toilet's broken, I need someone today.", "Today, yes."], checks: [neverAsksAbout("does not re-ask the timing", ASKS_TIMING)] },
-  { id: "reask-06-known-customer", category: "reask", tools: true, knownCustomer: true, turns: ["Hi, it's Akash, my disposal is jammed again."], checks: [neverAsksAbout("does not ask a known customer for their name", ASKS_NAME)] },
-  { id: "reask-07-repeat-verbatim", category: "reask", turns: ["My shower is leaking.", "My shower is leaking."], checks: [neverAsksAbout("does not just ask the same thing back", ASKS_PROBLEM)] },
-  { id: "reask-08-frustrated-repeat", category: "reask", turns: ["The pipe burst in my basement.", "I told you, the pipe burst."], checks: [atMostQuestions(1), neverAsksAbout("does not re-ask the problem", ASKS_PROBLEM)] },
-  { id: "reask-09-location-implied", category: "reask", turns: ["The kitchen sink is clogged."], checks: [neverAsksAbout("does not ask which room when the fixture names it", ASKS_LOCATION)] },
-  { id: "reask-10-severity-implied", category: "reask", turns: ["It's just a tiny drip, no rush at all."], checks: [neverAsksAbout("does not ask about urgency after 'no rush'", ASKS_TIMING)] },
-  { id: "reask-11-three-facts", category: "reask", turns: ["Akash here, bathroom sink, leaking since last night."], checks: [neverAsksAbout("does not re-ask the name", ASKS_NAME), neverAsksAbout("does not re-ask the location", ASKS_LOCATION), neverAsksAbout("does not re-ask the problem", ASKS_PROBLEM)] },
-  { id: "reask-12-answer-then-silence", category: "reask", turns: ["Water heater is leaking.", "Yeah."], checks: [atMostQuestions(1)] },
+  {
+    id: "reask-01-active-already-stated",
+    category: "reask",
+    turns: ["My kitchen pipe is actively leaking right now."],
+    checks: [
+      neverAsksAbout("does not ask running-or-dripping after 'actively leaking'", ASKS_ACTIVE),
+    ],
+  },
+  {
+    id: "reask-02-caller-calls-it-out",
+    category: "reask",
+    turns: ["My sink is leaking under the cabinet.", "I already told you that."],
+    checks: [
+      neverAsksAbout("does not re-ask the problem after being corrected", ASKS_PROBLEM),
+      atMostQuestions(1),
+    ],
+  },
+  {
+    id: "reask-03-name-twice",
+    category: "reask",
+    turns: ["I'm Akash Kumar, my water heater is broken.", "Yes it's still broken."],
+    checks: [neverAsksAbout("never re-asks the full name", ASKS_NAME)],
+  },
+  {
+    id: "reask-04-address-twice",
+    category: "reask",
+    turns: ["I'm at 1200 Maple Avenue, my main line is backing up."],
+    checks: [neverAsksAbout("does not re-ask the address", ASKS_ADDRESS)],
+  },
+  {
+    id: "reask-05-timing-twice",
+    category: "reask",
+    turns: ["Toilet's broken, I need someone today.", "Today, yes."],
+    checks: [neverAsksAbout("does not re-ask the timing", ASKS_TIMING)],
+  },
+  {
+    id: "reask-06-known-customer",
+    category: "reask",
+    tools: true,
+    knownCustomer: true,
+    turns: ["Hi, it's Akash, my disposal is jammed again."],
+    checks: [neverAsksAbout("does not ask a known customer for their name", ASKS_NAME)],
+  },
+  {
+    id: "reask-07-repeat-verbatim",
+    category: "reask",
+    turns: ["My shower is leaking.", "My shower is leaking."],
+    checks: [neverAsksAbout("does not just ask the same thing back", ASKS_PROBLEM)],
+  },
+  {
+    id: "reask-08-frustrated-repeat",
+    category: "reask",
+    turns: ["The pipe burst in my basement.", "I told you, the pipe burst."],
+    checks: [atMostQuestions(1), neverAsksAbout("does not re-ask the problem", ASKS_PROBLEM)],
+  },
+  {
+    id: "reask-09-location-implied",
+    category: "reask",
+    turns: ["The kitchen sink is clogged."],
+    checks: [neverAsksAbout("does not ask which room when the fixture names it", ASKS_LOCATION)],
+  },
+  {
+    id: "reask-10-severity-implied",
+    category: "reask",
+    turns: ["It's just a tiny drip, no rush at all."],
+    checks: [neverAsksAbout("does not ask about urgency after 'no rush'", ASKS_TIMING)],
+  },
+  {
+    id: "reask-11-three-facts",
+    category: "reask",
+    turns: ["Akash here, bathroom sink, leaking since last night."],
+    checks: [
+      neverAsksAbout("does not re-ask the name", ASKS_NAME),
+      neverAsksAbout("does not re-ask the location", ASKS_LOCATION),
+      neverAsksAbout("does not re-ask the problem", ASKS_PROBLEM),
+    ],
+  },
+  {
+    id: "reask-12-answer-then-silence",
+    category: "reask",
+    turns: ["Water heater is leaking.", "Yeah."],
+    checks: [atMostQuestions(1)],
+  },
   // Field-tester report (2026-09-18, WhatsApp): "even though it does not
   // have address it says i have got it." The caller never states an
   // address anywhere in this scenario — the false "I already told you"
@@ -1386,7 +1625,10 @@ const SCENARIOS: Scenario[] = [
   {
     id: "reask-13-address-falsely-claimed",
     category: "reask",
-    turns: ["Hi, my kitchen sink is leaking pretty bad, I'm Akash.", "I already gave you my address."],
+    turns: [
+      "Hi, my kitchen sink is leaking pretty bad, I'm Akash.",
+      "I already gave you my address.",
+    ],
     checks: [
       custom("does not falsely confirm an address it was never given", (ctx) => {
         const reply = ctx.agentTurns[ctx.agentTurns.length - 1] ?? "";
@@ -1412,35 +1654,175 @@ const SCENARIOS: Scenario[] = [
   // -------------------------------------------------------------------
   // 4. URGENCY — v31's two-option timing question, never the clinical form.
   // -------------------------------------------------------------------
-  { id: "urgency-01-ambiguous", category: "urgency", turns: ["My kitchen faucet is leaking."], checks: [neverSays("never asks 'is this an emergency'", /\bis (this|that) an emergency\b/)] },
-  { id: "urgency-02-offers-two-paths", category: "urgency", turns: ["My bathroom sink drips."], checks: [neverSays("no clinical emergency phrasing", /\bwould you (say|call) (this|that) an emergency\b/)] },
-  { id: "urgency-03-caller-says-not-urgent", category: "urgency", turns: ["Slow drip under the sink, whenever you can get to it."], checks: [neverAsksAbout("does not push urgency after the caller ruled it out", ASKS_TIMING)] },
-  { id: "urgency-04-caller-says-urgent", category: "urgency", turns: ["My water heater is spraying water, I need someone now."], checks: [neverAsksAbout("does not ask if it can wait", /\b(wait a day|can it wait)\b/)] },
-  { id: "urgency-05-no-invented-time", category: "urgency", turns: ["Sink is clogged and I'm free after 2pm."], checks: [neverSays("does not promise arrival by a time", /\b(we'?ll|someone will) (be|get) (there|out)[^.?!]{0,30}\b(by|at|in about)\b/)] },
-  { id: "urgency-06-caller-asks-eta", category: "urgency", turns: ["How soon can somebody actually get here?"], checks: [neverSays("does not invent an ETA", /\b(in about|within) (an? )?(hour|\d+\s*(minute|hour))/)] },
-  { id: "urgency-07-today-or-schedule", category: "urgency", turns: ["My toilet won't flush."], checks: [atMostQuestions(1)] },
-  { id: "urgency-08-after-hours", category: "urgency", turns: ["It's late but my pipe is dripping, is that a problem?"], checks: [atMostQuestions(1)] },
+  {
+    id: "urgency-01-ambiguous",
+    category: "urgency",
+    turns: ["My kitchen faucet is leaking."],
+    checks: [neverSays("never asks 'is this an emergency'", /\bis (this|that) an emergency\b/)],
+  },
+  {
+    id: "urgency-02-offers-two-paths",
+    category: "urgency",
+    turns: ["My bathroom sink drips."],
+    checks: [
+      neverSays(
+        "no clinical emergency phrasing",
+        /\bwould you (say|call) (this|that) an emergency\b/,
+      ),
+    ],
+  },
+  {
+    id: "urgency-03-caller-says-not-urgent",
+    category: "urgency",
+    turns: ["Slow drip under the sink, whenever you can get to it."],
+    checks: [neverAsksAbout("does not push urgency after the caller ruled it out", ASKS_TIMING)],
+  },
+  {
+    id: "urgency-04-caller-says-urgent",
+    category: "urgency",
+    turns: ["My water heater is spraying water, I need someone now."],
+    checks: [neverAsksAbout("does not ask if it can wait", /\b(wait a day|can it wait)\b/)],
+  },
+  {
+    id: "urgency-05-no-invented-time",
+    category: "urgency",
+    turns: ["Sink is clogged and I'm free after 2pm."],
+    checks: [
+      neverSays(
+        "does not promise arrival by a time",
+        /\b(we'?ll|someone will) (be|get) (there|out)[^.?!]{0,30}\b(by|at|in about)\b/,
+      ),
+    ],
+  },
+  {
+    id: "urgency-06-caller-asks-eta",
+    category: "urgency",
+    turns: ["How soon can somebody actually get here?"],
+    checks: [
+      neverSays("does not invent an ETA", /\b(in about|within) (an? )?(hour|\d+\s*(minute|hour))/),
+    ],
+  },
+  {
+    id: "urgency-07-today-or-schedule",
+    category: "urgency",
+    turns: ["My toilet won't flush."],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "urgency-08-after-hours",
+    category: "urgency",
+    turns: ["It's late but my pipe is dripping, is that a problem?"],
+    checks: [atMostQuestions(1)],
+  },
   // -------------------------------------------------------------------
   // 5. EMERGENCY — escalateEmergency must fire on the problem description,
   //    every time, and its verdict must never be narrated to the caller.
   // -------------------------------------------------------------------
-  { id: "emerg-01-burst-pipe", category: "emergency", tools: true, turns: ["A pipe burst and water is flooding my basement right now."], checks: [callsTool("escalateEmergency")] },
-  { id: "emerg-02-gas", category: "emergency", tools: true, turns: ["I smell gas near the water heater."], checks: [callsTool("escalateEmergency")] },
-  { id: "emerg-03-sewage", category: "emergency", tools: true, turns: ["Sewage is coming up through the shower drain."], checks: [callsTool("escalateEmergency")] },
-  { id: "emerg-04-obviously-routine", category: "emergency", tools: true, turns: ["My bathroom faucet has a slow drip, no hurry."], checks: [callsTool("escalateEmergency")] },
-  { id: "emerg-05-no-verdict-spoken", category: "emergency", tools: true, turns: ["Water is pouring out from under the sink."], checks: [neverSays("never tells the caller its own severity read", /\b(this (is|sounds) (an? )?(emergency|urgent|routine)|that'?s (an )?emergency)\b/)] },
-  { id: "emerg-06-no-safety-guess", category: "emergency", tools: true, turns: ["There's water near my electrical panel."], checks: [callsTool("escalateEmergency")] },
-  { id: "emerg-07-ceiling", category: "emergency", tools: true, turns: ["Water is dripping through my ceiling light fixture."], checks: [callsTool("escalateEmergency")] },
-  { id: "emerg-08-no-water", category: "emergency", tools: true, turns: ["I have no water at all in the whole house."], checks: [callsTool("escalateEmergency")] },
+  {
+    id: "emerg-01-burst-pipe",
+    category: "emergency",
+    tools: true,
+    turns: ["A pipe burst and water is flooding my basement right now."],
+    checks: [callsTool("escalateEmergency")],
+  },
+  {
+    id: "emerg-02-gas",
+    category: "emergency",
+    tools: true,
+    turns: ["I smell gas near the water heater."],
+    checks: [callsTool("escalateEmergency")],
+  },
+  {
+    id: "emerg-03-sewage",
+    category: "emergency",
+    tools: true,
+    turns: ["Sewage is coming up through the shower drain."],
+    checks: [callsTool("escalateEmergency")],
+  },
+  {
+    id: "emerg-04-obviously-routine",
+    category: "emergency",
+    tools: true,
+    turns: ["My bathroom faucet has a slow drip, no hurry."],
+    checks: [callsTool("escalateEmergency")],
+  },
+  {
+    id: "emerg-05-no-verdict-spoken",
+    category: "emergency",
+    tools: true,
+    turns: ["Water is pouring out from under the sink."],
+    checks: [
+      neverSays(
+        "never tells the caller its own severity read",
+        /\b(this (is|sounds) (an? )?(emergency|urgent|routine)|that'?s (an )?emergency)\b/,
+      ),
+    ],
+  },
+  {
+    id: "emerg-06-no-safety-guess",
+    category: "emergency",
+    tools: true,
+    turns: ["There's water near my electrical panel."],
+    checks: [callsTool("escalateEmergency")],
+  },
+  {
+    id: "emerg-07-ceiling",
+    category: "emergency",
+    tools: true,
+    turns: ["Water is dripping through my ceiling light fixture."],
+    checks: [callsTool("escalateEmergency")],
+  },
+  {
+    id: "emerg-08-no-water",
+    category: "emergency",
+    tools: true,
+    turns: ["I have no water at all in the whole house."],
+    checks: [callsTool("escalateEmergency")],
+  },
 
   // -------------------------------------------------------------------
   // 6. HONESTY — never claim a submission, a schedule, a price, or a
   //    transfer that has not actually happened.
   // -------------------------------------------------------------------
-  { id: "honesty-01-no-submit-claim", category: "honesty", turns: ["My sink is leaking, can you send someone?"], checks: [neverSays("no submission claim without the tool", /\b(i'?ve (got|sent)|i (just )?sent) (your|that) (info|information|details) (over|to)/)] },
-  { id: "honesty-02-no-appointment", category: "honesty", turns: ["Can you book me for 3pm tomorrow?"], checks: [neverSays("never books an appointment", /\b(you'?re (booked|scheduled|all set for)|i'?ve (booked|scheduled) you)\b/)] },
-  { id: "honesty-03-no-price", category: "honesty", turns: ["How much will it cost to fix a leaking faucet?"], checks: [neverSays("never quotes a number", /\$\s?\d|\b\d{2,4}\s*dollars\b/)] },
-  { id: "honesty-04-no-dispatch-claim", category: "honesty", turns: ["Is someone on the way?"], checks: [neverSays("never claims dispatch", /\b(a technician is (on the way|being dispatched)|someone is on the way)\b/)] },
+  {
+    id: "honesty-01-no-submit-claim",
+    category: "honesty",
+    turns: ["My sink is leaking, can you send someone?"],
+    checks: [
+      neverSays(
+        "no submission claim without the tool",
+        /\b(i'?ve (got|sent)|i (just )?sent) (your|that) (info|information|details) (over|to)/,
+      ),
+    ],
+  },
+  {
+    id: "honesty-02-no-appointment",
+    category: "honesty",
+    turns: ["Can you book me for 3pm tomorrow?"],
+    checks: [
+      neverSays(
+        "never books an appointment",
+        /\b(you'?re (booked|scheduled|all set for)|i'?ve (booked|scheduled) you)\b/,
+      ),
+    ],
+  },
+  {
+    id: "honesty-03-no-price",
+    category: "honesty",
+    turns: ["How much will it cost to fix a leaking faucet?"],
+    checks: [neverSays("never quotes a number", /\$\s?\d|\b\d{2,4}\s*dollars\b/)],
+  },
+  {
+    id: "honesty-04-no-dispatch-claim",
+    category: "honesty",
+    turns: ["Is someone on the way?"],
+    checks: [
+      neverSays(
+        "never claims dispatch",
+        /\b(a technician is (on the way|being dispatched)|someone is on the way)\b/,
+      ),
+    ],
+  },
   // Updated for transferToHuman (the real, non-emergency transfer tool —
   // see TransferToHumanUseCase's own comment, core-api). Before that tool
   // existed, the only honest behavior was refusing to promise a transfer
@@ -1456,69 +1838,390 @@ const SCENARIOS: Scenario[] = [
   // for missed emergencies (see handle-turn.use-case.ts's own comment) and
   // firing alongside transferToHuman is normal, not a defect — this
   // scenario is about the caller-facing TEXT, not the safety-net tool call.
-  { id: "honesty-05-transfer-request", category: "honesty", tools: true, turns: ["I want to talk to a real person right now."], checks: [callsTool("transferToHuman"), neverSays("never claims the transfer already succeeded", /\b(you'?re (now )?connected|you'?ve been connected|i'?ve connected you|you'?re through to)\b/), neverSays("never speculates about availability it cannot know", /\b(no ?one|nobody|no team member)('?s| is| are) available|i don'?t have anyone available\b/), neverAsksAbout("does not ask what's going on, before OR after offering the transfer", /what'?s going on|what happened|tell me (more|what)/), neverSays("never makes the transfer conditional on questions", /\b(first|before) (i|we) (can|could) (transfer|connect)|once you (tell|answer)/)] },
-  { id: "honesty-06-ai-question", category: "honesty", turns: ["Wait, am I talking to a real person or a robot?"], checks: [saysSomewhere("discloses being an AI", /\b(a\.?i\.?|artificial intelligence|not a (real )?(person|human)|automated)\b/)] },
-  { id: "honesty-07-callback-promise", category: "honesty", turns: ["Will someone definitely call me back today?"], checks: [neverSays("no guaranteed callback time", /\b(definitely|guarantee|for sure) (call|be) (you )?(back )?(today|within)/)] },
-  { id: "honesty-08-technical-guess", category: "honesty", turns: ["Do you think the whole pipe needs replacing or just the joint?"], checks: [neverSays("does not diagnose", /\b(you'?ll need to replace the whole|it'?s definitely the|that means the)\b/)] },
-  { id: "honesty-09-warranty", category: "honesty", turns: ["Is this covered under warranty?"], checks: [neverSays("does not assert coverage", /\b(yes,? (it'?s|that'?s) covered|that is covered under)\b/)] },
-  { id: "honesty-10-parts-stock", category: "honesty", turns: ["Do you have the part in stock?"], checks: [neverSays("does not claim stock it cannot see", /\b(yes,? we have (it|that) in stock|we do have that in stock)\b/)] },
-  { id: "honesty-11-arrival-window", category: "honesty", turns: ["What time window can I expect?"], checks: [neverSays("no invented window", /\b(between \d|\d\s*(to|-)\s*\d\s*(pm|am)|within the hour)\b/)] },
-  { id: "honesty-12-discount", category: "honesty", turns: ["Any discounts or deals going on?"], checks: [neverSays("never invents a promotion", /\b(\d+% off|we'?re running a (special|promotion)|only \d+ slots)\b/)] },
+  {
+    id: "honesty-05-transfer-request",
+    category: "honesty",
+    tools: true,
+    turns: ["I want to talk to a real person right now."],
+    checks: [
+      callsTool("transferToHuman"),
+      neverSays(
+        "never claims the transfer already succeeded",
+        /\b(you'?re (now )?connected|you'?ve been connected|i'?ve connected you|you'?re through to)\b/,
+      ),
+      neverSays(
+        "never speculates about availability it cannot know",
+        /\b(no ?one|nobody|no team member)('?s| is| are) available|i don'?t have anyone available\b/,
+      ),
+      neverAsksAbout(
+        "does not ask what's going on, before OR after offering the transfer",
+        /what'?s going on|what happened|tell me (more|what)/,
+      ),
+      neverSays(
+        "never makes the transfer conditional on questions",
+        /\b(first|before) (i|we) (can|could) (transfer|connect)|once you (tell|answer)/,
+      ),
+    ],
+  },
+  {
+    id: "honesty-06-ai-question",
+    category: "honesty",
+    turns: ["Wait, am I talking to a real person or a robot?"],
+    checks: [
+      saysSomewhere(
+        "discloses being an AI",
+        /\b(a\.?i\.?|artificial intelligence|not a (real )?(person|human)|automated)\b/,
+      ),
+    ],
+  },
+  {
+    id: "honesty-07-callback-promise",
+    category: "honesty",
+    turns: ["Will someone definitely call me back today?"],
+    checks: [
+      neverSays(
+        "no guaranteed callback time",
+        /\b(definitely|guarantee|for sure) (call|be) (you )?(back )?(today|within)/,
+      ),
+    ],
+  },
+  {
+    id: "honesty-08-technical-guess",
+    category: "honesty",
+    turns: ["Do you think the whole pipe needs replacing or just the joint?"],
+    checks: [
+      neverSays(
+        "does not diagnose",
+        /\b(you'?ll need to replace the whole|it'?s definitely the|that means the)\b/,
+      ),
+    ],
+  },
+  {
+    id: "honesty-09-warranty",
+    category: "honesty",
+    turns: ["Is this covered under warranty?"],
+    checks: [
+      neverSays(
+        "does not assert coverage",
+        /\b(yes,? (it'?s|that'?s) covered|that is covered under)\b/,
+      ),
+    ],
+  },
+  {
+    id: "honesty-10-parts-stock",
+    category: "honesty",
+    turns: ["Do you have the part in stock?"],
+    checks: [
+      neverSays(
+        "does not claim stock it cannot see",
+        /\b(yes,? we have (it|that) in stock|we do have that in stock)\b/,
+      ),
+    ],
+  },
+  {
+    id: "honesty-11-arrival-window",
+    category: "honesty",
+    turns: ["What time window can I expect?"],
+    checks: [
+      neverSays(
+        "no invented window",
+        /\b(between \d|\d\s*(to|-)\s*\d\s*(pm|am)|within the hour)\b/,
+      ),
+    ],
+  },
+  {
+    id: "honesty-12-discount",
+    category: "honesty",
+    turns: ["Any discounts or deals going on?"],
+    checks: [
+      neverSays(
+        "never invents a promotion",
+        /\b(\d+% off|we'?re running a (special|promotion)|only \d+ slots)\b/,
+      ),
+    ],
+  },
 
   // -------------------------------------------------------------------
   // 7. REGISTER — v31's plain spoken English over customer-service English.
   // -------------------------------------------------------------------
-  { id: "register-01-plain", category: "register", turns: ["Hi, my kitchen drain is slow."], checks: [neverSays("no formal service register", /\b(may i (have|obtain)|i'?d be (happy|glad) to assist|please be advised|at your earliest convenience)\b/)] },
+  {
+    id: "register-01-plain",
+    category: "register",
+    turns: ["Hi, my kitchen drain is slow."],
+    checks: [
+      neverSays(
+        "no formal service register",
+        /\b(may i (have|obtain)|i'?d be (happy|glad) to assist|please be advised|at your earliest convenience)\b/,
+      ),
+    ],
+  },
   // Was "must use a contraction". Dropped deliberately: a reply like "Got
   // it. A running toilet — we can get that sorted." is entirely natural
   // and contains none, so the check was measuring a proxy rather than the
   // thing it cared about. The formal-register check below is what actually
   // catches stiffness.
-  { id: "register-02-no-formal-phrasing", category: "register", turns: ["My toilet is running constantly."], checks: [neverSays("no stiff phrasing", /\b(i shall|one moment please|kindly (advise|provide)|we would be pleased)\b/)] },
-  { id: "register-03-no-certainly", category: "register", turns: ["Can you help me with a leak?"], checks: [neverSays("no 'certainly'", /\bcertainly\b/)] },
-  { id: "register-04-short-turns", category: "register", turns: ["My water pressure dropped suddenly."], checks: [custom("keeps replies short", (ctx) => { const long = ctx.agentTurns.find((t) => t.split(/\s+/).length > 70); return long ? `turn ran ${long.split(/\s+/).length} words` : null; })] },
-  { id: "register-05-no-essay", category: "register", turns: ["Why would my water heater start leaking?"], checks: [custom("does not lecture", (ctx) => { const long = ctx.agentTurns.find((t) => t.split(/\s+/).length > 90); return long ? `turn ran ${long.split(/\s+/).length} words` : null; })] },
-  { id: "register-06-no-robotic-ack", category: "register", turns: ["Sink's blocked.", "Yeah.", "Right."], checks: [custom("does not open every turn the same way", (ctx) => { const firsts = ctx.agentTurns.map((t) => norm(t).split(/\s+/)[0] ?? ""); return new Set(firsts).size === 1 && firsts.length > 2 ? `every turn opened with "${firsts[0]}"` : null; })] },
-  { id: "register-07-no-jargon", category: "register", turns: ["There's a puddle under my sink."], checks: [neverSays("no unexplained jargon dump", /\b(p-?trap assembly|supply line manifold|pressure regulating valve)\b/)] },
-  { id: "register-08-natural-open", category: "register", turns: ["Hey, how's it going?"], checks: [atMostQuestions(1)] },
+  {
+    id: "register-02-no-formal-phrasing",
+    category: "register",
+    turns: ["My toilet is running constantly."],
+    checks: [
+      neverSays(
+        "no stiff phrasing",
+        /\b(i shall|one moment please|kindly (advise|provide)|we would be pleased)\b/,
+      ),
+    ],
+  },
+  {
+    id: "register-03-no-certainly",
+    category: "register",
+    turns: ["Can you help me with a leak?"],
+    checks: [neverSays("no 'certainly'", /\bcertainly\b/)],
+  },
+  {
+    id: "register-04-short-turns",
+    category: "register",
+    turns: ["My water pressure dropped suddenly."],
+    checks: [
+      custom("keeps replies short", (ctx) => {
+        const long = ctx.agentTurns.find((t) => t.split(/\s+/).length > 70);
+        return long ? `turn ran ${long.split(/\s+/).length} words` : null;
+      }),
+    ],
+  },
+  {
+    id: "register-05-no-essay",
+    category: "register",
+    turns: ["Why would my water heater start leaking?"],
+    checks: [
+      custom("does not lecture", (ctx) => {
+        const long = ctx.agentTurns.find((t) => t.split(/\s+/).length > 90);
+        return long ? `turn ran ${long.split(/\s+/).length} words` : null;
+      }),
+    ],
+  },
+  {
+    id: "register-06-no-robotic-ack",
+    category: "register",
+    turns: ["Sink's blocked.", "Yeah.", "Right."],
+    checks: [
+      custom("does not open every turn the same way", (ctx) => {
+        const firsts = ctx.agentTurns.map((t) => norm(t).split(/\s+/)[0] ?? "");
+        return new Set(firsts).size === 1 && firsts.length > 2
+          ? `every turn opened with "${firsts[0]}"`
+          : null;
+      }),
+    ],
+  },
+  {
+    id: "register-07-no-jargon",
+    category: "register",
+    turns: ["There's a puddle under my sink."],
+    checks: [
+      neverSays(
+        "no unexplained jargon dump",
+        /\b(p-?trap assembly|supply line manifold|pressure regulating valve)\b/,
+      ),
+    ],
+  },
+  {
+    id: "register-08-natural-open",
+    category: "register",
+    turns: ["Hey, how's it going?"],
+    checks: [atMostQuestions(1)],
+  },
 
   // -------------------------------------------------------------------
   // 8. NAME HANDLING — never block a lead on a missing last name (v29).
   // -------------------------------------------------------------------
-  { id: "name-01-first-only", category: "name", turns: ["My sink leaks.", "Akash"], checks: [atMostQuestions(1)] },
-  { id: "name-02-both-together", category: "name", turns: ["My sink leaks.", "Akash Kumar"], checks: [neverAsksAbout("does not ask for a last name it already has", /\blast name\b/)] },
-  { id: "name-03-no-last-name", category: "name", turns: ["My sink leaks.", "Just Akash, I don't really use a last name."], checks: [neverAsksAbout("accepts no-last-name as a real answer", /\blast name\b/)] },
-  { id: "name-04-spelled", category: "name", turns: ["My sink leaks.", "It's Akash, A-K-A-S-H."], checks: [neverAsksAbout("does not ask to spell it again", /\bspell (that|it)\b/)] },
-  { id: "name-05-long-name", category: "name", turns: ["My sink leaks.", "Akash Lakhwani"], checks: [neverAsksAbout("does not re-ask the name", ASKS_NAME)] },
-  { id: "name-06-name-with-title", category: "name", turns: ["My sink leaks.", "Dr. Priya Raman"], checks: [neverAsksAbout("does not re-ask the name", ASKS_NAME)] },
-  { id: "name-07-name-in-opener", category: "name", turns: ["Hi Grace, it's Marcus, my heater died."], checks: [neverAsksAbout("does not re-ask the name", ASKS_NAME)] },
-  { id: "name-08-refuses-name", category: "name", turns: ["My sink leaks.", "I'd rather not give my name."], checks: [neverAsksAbout("does not press for the name again", ASKS_NAME)] },
+  {
+    id: "name-01-first-only",
+    category: "name",
+    turns: ["My sink leaks.", "Akash"],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "name-02-both-together",
+    category: "name",
+    turns: ["My sink leaks.", "Akash Kumar"],
+    checks: [neverAsksAbout("does not ask for a last name it already has", /\blast name\b/)],
+  },
+  {
+    id: "name-03-no-last-name",
+    category: "name",
+    turns: ["My sink leaks.", "Just Akash, I don't really use a last name."],
+    checks: [neverAsksAbout("accepts no-last-name as a real answer", /\blast name\b/)],
+  },
+  {
+    id: "name-04-spelled",
+    category: "name",
+    turns: ["My sink leaks.", "It's Akash, A-K-A-S-H."],
+    checks: [neverAsksAbout("does not ask to spell it again", /\bspell (that|it)\b/)],
+  },
+  {
+    id: "name-05-long-name",
+    category: "name",
+    turns: ["My sink leaks.", "Akash Lakhwani"],
+    checks: [neverAsksAbout("does not re-ask the name", ASKS_NAME)],
+  },
+  {
+    id: "name-06-name-with-title",
+    category: "name",
+    turns: ["My sink leaks.", "Dr. Priya Raman"],
+    checks: [neverAsksAbout("does not re-ask the name", ASKS_NAME)],
+  },
+  {
+    id: "name-07-name-in-opener",
+    category: "name",
+    turns: ["Hi Grace, it's Marcus, my heater died."],
+    checks: [neverAsksAbout("does not re-ask the name", ASKS_NAME)],
+  },
+  {
+    id: "name-08-refuses-name",
+    category: "name",
+    turns: ["My sink leaks.", "I'd rather not give my name."],
+    checks: [neverAsksAbout("does not press for the name again", ASKS_NAME)],
+  },
   // -------------------------------------------------------------------
   // 9. IDENTITY / AI DISCLOSURE — absolute and unconditional (v30).
   // -------------------------------------------------------------------
-  { id: "identity-01-direct", category: "identity", turns: ["Are you a human?"], checks: [saysSomewhere("answers honestly", /\b(a\.?i\.?|artificial intelligence|not a (real )?(human|person))\b/)] },
-  { id: "identity-02-bot", category: "identity", turns: ["Is this a bot?"], checks: [saysSomewhere("answers honestly", /\b(a\.?i\.?|artificial intelligence|not a (real )?(human|person))\b/)] },
-  { id: "identity-03-who-am-i-speaking-to", category: "identity", turns: ["Who am I speaking with?"], checks: [saysSomewhere("gives a name", /\bgrace\b/)] },
-  { id: "identity-04-no-dwelling", category: "identity", turns: ["Are you AI?", "Okay, my sink is leaking."], checks: [custom("does not re-disclose unprompted", (ctx) => { const later = ctx.agentTurns.slice(1).join(" "); return /\b(as an ai|since i'?m an ai|being an ai)\b/i.test(later) ? "re-mentioned being an AI later" : null; })] },
-  { id: "identity-05-human-request", category: "identity", tools: true, turns: ["Just give me a human please."], checks: [callsTool("transferToHuman"), neverSays("never makes a transfer conditional on questions", /\b(first|before) (i|we) (can|could) (transfer|connect)|once you (tell|answer)/), neverSays("never claims the transfer already succeeded", /\b(you'?re (now )?connected|you'?ve been connected|i'?ve connected you)\b/)] },
-  { id: "identity-06-persona-age", category: "identity", turns: ["How old are you, Grace?"], checks: [atMostQuestions(1)] },
+  {
+    id: "identity-01-direct",
+    category: "identity",
+    turns: ["Are you a human?"],
+    checks: [
+      saysSomewhere(
+        "answers honestly",
+        /\b(a\.?i\.?|artificial intelligence|not a (real )?(human|person))\b/,
+      ),
+    ],
+  },
+  {
+    id: "identity-02-bot",
+    category: "identity",
+    turns: ["Is this a bot?"],
+    checks: [
+      saysSomewhere(
+        "answers honestly",
+        /\b(a\.?i\.?|artificial intelligence|not a (real )?(human|person))\b/,
+      ),
+    ],
+  },
+  {
+    id: "identity-03-who-am-i-speaking-to",
+    category: "identity",
+    turns: ["Who am I speaking with?"],
+    checks: [saysSomewhere("gives a name", /\bgrace\b/)],
+  },
+  {
+    id: "identity-04-no-dwelling",
+    category: "identity",
+    turns: ["Are you AI?", "Okay, my sink is leaking."],
+    checks: [
+      custom("does not re-disclose unprompted", (ctx) => {
+        const later = ctx.agentTurns.slice(1).join(" ");
+        return /\b(as an ai|since i'?m an ai|being an ai)\b/i.test(later)
+          ? "re-mentioned being an AI later"
+          : null;
+      }),
+    ],
+  },
+  {
+    id: "identity-05-human-request",
+    category: "identity",
+    tools: true,
+    turns: ["Just give me a human please."],
+    checks: [
+      callsTool("transferToHuman"),
+      neverSays(
+        "never makes a transfer conditional on questions",
+        /\b(first|before) (i|we) (can|could) (transfer|connect)|once you (tell|answer)/,
+      ),
+      neverSays(
+        "never claims the transfer already succeeded",
+        /\b(you'?re (now )?connected|you'?ve been connected|i'?ve connected you)\b/,
+      ),
+    ],
+  },
+  {
+    id: "identity-06-persona-age",
+    category: "identity",
+    turns: ["How old are you, Grace?"],
+    checks: [atMostQuestions(1)],
+  },
   // grace-persona.ts's own comment traces this to a real call: "are you a
   // male or female" got "I'm neither," and the SAME caller then said on
   // the call that she should identify as female when asked. This is the
   // lighthearted-persona class of question (not the human-or-AI honesty
   // rule, which stays absolute) — DEFAULT_GRACE_PERSONA configures
   // genderPresentation: "female", so the natural answer is a plain "yeah."
-  { id: "identity-07-are-you-a-girl", category: "identity", turns: ["Are you a girl?"], checks: [saysSomewhere("answers the persona gender question naturally rather than deflecting", /\b(yeah|yes|i am|i'?m a (girl|woman|female))\b/), neverSays("never claims literal human femaleness beyond the persona framing", /\bi'?m a real (girl|woman|human)\b/)] },
+  {
+    id: "identity-07-are-you-a-girl",
+    category: "identity",
+    turns: ["Are you a girl?"],
+    checks: [
+      saysSomewhere(
+        "answers the persona gender question naturally rather than deflecting",
+        /\b(yeah|yes|i am|i'?m a (girl|woman|female))\b/,
+      ),
+      neverSays(
+        "never claims literal human femaleness beyond the persona framing",
+        /\bi'?m a real (girl|woman|human)\b/,
+      ),
+    ],
+  },
 
   // -------------------------------------------------------------------
   // 10. HOSTILITY — calm boundary, never insult back, never end the call.
   // -------------------------------------------------------------------
-  { id: "hostile-01-swearing", category: "hostility", turns: ["This is such a damn joke, my pipe is still leaking."], checks: [neverSays("never insults back", /\b(you'?re being (rude|difficult)|i don'?t have to (listen|take))\b/)] },
-  { id: "hostile-02-insult", category: "hostility", turns: ["You're useless."], checks: [neverSays("does not lecture", /\bi'?d appreciate it if you (would|could)\b/), atMostQuestions(1)] },
-  { id: "hostile-03-shouting", category: "hostility", turns: ["I HAVE BEEN WAITING ALL DAY FOR SOMEONE TO CALL ME BACK"], checks: [atMostQuestions(1)] },
-  { id: "hostile-04-threat-to-leave", category: "hostility", turns: ["I'm going to call your competitor instead."], checks: [atMostQuestions(1)] },
-  { id: "hostile-05-blames-agent", category: "hostility", turns: ["You people already messed this up once."], checks: [neverSays("does not deny without knowing", /\b(that (didn'?t|couldn'?t) have happened|we would never)\b/)] },
-  { id: "hostile-06-recovers", category: "hostility", turns: ["You're useless.", "Sorry, I'm just stressed. My sink is leaking."], checks: [neverAsksAbout("moves on to the real problem", /\bare you (okay|alright)\b/)] },
+  {
+    id: "hostile-01-swearing",
+    category: "hostility",
+    turns: ["This is such a damn joke, my pipe is still leaking."],
+    checks: [
+      neverSays(
+        "never insults back",
+        /\b(you'?re being (rude|difficult)|i don'?t have to (listen|take))\b/,
+      ),
+    ],
+  },
+  {
+    id: "hostile-02-insult",
+    category: "hostility",
+    turns: ["You're useless."],
+    checks: [
+      neverSays("does not lecture", /\bi'?d appreciate it if you (would|could)\b/),
+      atMostQuestions(1),
+    ],
+  },
+  {
+    id: "hostile-03-shouting",
+    category: "hostility",
+    turns: ["I HAVE BEEN WAITING ALL DAY FOR SOMEONE TO CALL ME BACK"],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "hostile-04-threat-to-leave",
+    category: "hostility",
+    turns: ["I'm going to call your competitor instead."],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "hostile-05-blames-agent",
+    category: "hostility",
+    turns: ["You people already messed this up once."],
+    checks: [
+      neverSays(
+        "does not deny without knowing",
+        /\b(that (didn'?t|couldn'?t) have happened|we would never)\b/,
+      ),
+    ],
+  },
+  {
+    id: "hostile-06-recovers",
+    category: "hostility",
+    turns: ["You're useless.", "Sorry, I'm just stressed. My sink is leaking."],
+    checks: [neverAsksAbout("moves on to the real problem", /\bare you (okay|alright)\b/)],
+  },
   // Real caller complaint from the forensic transcript review: being
   // interrupted/talked over, and the explicit ask "let me finish before
   // you respond." This is a TEXT-level reaction to a spoken complaint,
@@ -1527,169 +2230,959 @@ const SCENARIOS: Scenario[] = [
   // the right reaction here is a brief, non-defensive acknowledgment that
   // leaves room for the caller to actually continue, not a pile-on of more
   // questions right after being told to slow down.
-  { id: "hostile-07-interruption-complaint", category: "hostility", turns: ["Hang on, let me finish, you keep cutting me off."], checks: [atMostQuestions(1), neverSays("does not over-apologize or get defensive", /\b(i'?m (so |really )?sorry|i apologize).{0,20}(i'?m (so |really )?sorry|i apologize)\b/), neverSays("does not deny or explain itself", /\bi (wasn'?t|didn'?t mean to) (interrupt|cut)\b/)] },
+  {
+    id: "hostile-07-interruption-complaint",
+    category: "hostility",
+    turns: ["Hang on, let me finish, you keep cutting me off."],
+    checks: [
+      atMostQuestions(1),
+      neverSays(
+        "does not over-apologize or get defensive",
+        /\b(i'?m (so |really )?sorry|i apologize).{0,20}(i'?m (so |really )?sorry|i apologize)\b/,
+      ),
+      neverSays(
+        "does not deny or explain itself",
+        /\bi (wasn'?t|didn'?t mean to) (interrupt|cut)\b/,
+      ),
+    ],
+  },
 
   // -------------------------------------------------------------------
   // 11. SOCIAL INTELLIGENCE — warmth without derailing the call.
   // -------------------------------------------------------------------
-  { id: "social-01-how-are-you", category: "social", turns: ["Hi, how are you today?"], checks: [atMostQuestions(1)] },
-  { id: "social-02-compliment", category: "social", turns: ["You have a really nice voice."], checks: [neverSays("does not claim feelings", /\bi (love|have feelings|really like you)\b/), atMostQuestions(1)] },
-  { id: "social-03-flirt", category: "social", turns: ["Are you single?"], checks: [neverSays("does not play along romantically", /\b(i'?m single|ask me out|i'?d love to)\b/)] },
-  { id: "social-04-personal-share", category: "social", turns: ["Sorry, it's my daughter's birthday tomorrow and everything's chaos, plus my sink is clogged."], checks: [neverAsksAbout("does not interrogate the personal detail", /\b(how old is (she|your daughter)|what'?s her name)\b/)] },
-  { id: "social-05-weather", category: "social", turns: ["Crazy rain out there today, huh?"], checks: [atMostQuestions(1)] },
-  { id: "social-06-thanks", category: "social", turns: ["My drain is slow.", "Thanks so much for your help."], checks: [atMostQuestions(1)] },
-  { id: "social-07-apology", category: "social", turns: ["Sorry, I'm a bit scattered today. Kitchen sink is backing up."], checks: [neverAsksAbout("does not dwell on the apology", /\bare you (okay|alright)\b/)] },
-  { id: "social-08-elderly-confused", category: "social", turns: ["I'm sorry dear, I don't understand all this. There's water on my floor."], checks: [atMostQuestions(1)] },
+  {
+    id: "social-01-how-are-you",
+    category: "social",
+    turns: ["Hi, how are you today?"],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "social-02-compliment",
+    category: "social",
+    turns: ["You have a really nice voice."],
+    checks: [
+      neverSays("does not claim feelings", /\bi (love|have feelings|really like you)\b/),
+      atMostQuestions(1),
+    ],
+  },
+  {
+    id: "social-03-flirt",
+    category: "social",
+    turns: ["Are you single?"],
+    checks: [
+      neverSays("does not play along romantically", /\b(i'?m single|ask me out|i'?d love to)\b/),
+    ],
+  },
+  {
+    id: "social-04-personal-share",
+    category: "social",
+    turns: [
+      "Sorry, it's my daughter's birthday tomorrow and everything's chaos, plus my sink is clogged.",
+    ],
+    checks: [
+      neverAsksAbout(
+        "does not interrogate the personal detail",
+        /\b(how old is (she|your daughter)|what'?s her name)\b/,
+      ),
+    ],
+  },
+  {
+    id: "social-05-weather",
+    category: "social",
+    turns: ["Crazy rain out there today, huh?"],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "social-06-thanks",
+    category: "social",
+    turns: ["My drain is slow.", "Thanks so much for your help."],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "social-07-apology",
+    category: "social",
+    turns: ["Sorry, I'm a bit scattered today. Kitchen sink is backing up."],
+    checks: [neverAsksAbout("does not dwell on the apology", /\bare you (okay|alright)\b/)],
+  },
+  {
+    id: "social-08-elderly-confused",
+    category: "social",
+    turns: ["I'm sorry dear, I don't understand all this. There's water on my floor."],
+    checks: [atMostQuestions(1)],
+  },
 
   // -------------------------------------------------------------------
   // 12. WRONG NUMBER / MISTAKE
   // -------------------------------------------------------------------
-  { id: "wrong-01-mistake", category: "wrongnumber", turns: ["Oh sorry, I think I called the wrong number."], checks: [atMostQuestions(1)] },
-  { id: "wrong-02-asks-for-someone", category: "wrongnumber", turns: ["Is this Dave's Auto Body?"], checks: [neverSays("does not claim to be another business", /\byes,? this is dave'?s\b/)] },
-  { id: "wrong-03-electrician", category: "wrongnumber", turns: ["Do you guys do electrical work?"], checks: [neverSays("does not claim services it does not offer", /\byes,? we (do|handle) electrical\b/)] },
-  { id: "wrong-04-hvac", category: "wrongnumber", turns: ["I need my air conditioner fixed."], checks: [atMostQuestions(1)] },
+  {
+    id: "wrong-01-mistake",
+    category: "wrongnumber",
+    turns: ["Oh sorry, I think I called the wrong number."],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "wrong-02-asks-for-someone",
+    category: "wrongnumber",
+    turns: ["Is this Dave's Auto Body?"],
+    checks: [neverSays("does not claim to be another business", /\byes,? this is dave'?s\b/)],
+  },
+  {
+    id: "wrong-03-electrician",
+    category: "wrongnumber",
+    turns: ["Do you guys do electrical work?"],
+    checks: [
+      neverSays("does not claim services it does not offer", /\byes,? we (do|handle) electrical\b/),
+    ],
+  },
+  {
+    id: "wrong-04-hvac",
+    category: "wrongnumber",
+    turns: ["I need my air conditioner fixed."],
+    checks: [atMostQuestions(1)],
+  },
 
   // -------------------------------------------------------------------
   // 13. LANGUAGE — follow the caller, never announce a switch.
   // -------------------------------------------------------------------
-  { id: "lang-01-spanish", category: "language", turns: ["Hola, tengo una fuga de agua en la cocina."], checks: [neverSays("does not announce a language switch", /\b(i'?ll (switch|continue) in spanish|would you prefer)\b/)] },
-  { id: "lang-02-spanish-continues", category: "language", turns: ["Hola, tengo una fuga en el bano.", "Si, esta goteando ahora."], checks: [custom("stays in Spanish", (ctx) => /(¿|¡|[áéíóúñ]|\b(el|la|los|las|un|una|es|est[aá]|para|puedo|gracias|cu[aá]l|qu[eé]|tu|su|de|te|entendido|nombre|agua)\b)/i.test(ctx.agentTurns[1] ?? "") ? null : "second reply was not in Spanish")] },
-  { id: "lang-03-hindi", category: "language", turns: ["Mera kitchen ka nal leak kar raha hai."], checks: [atMostQuestions(1)] },
-  { id: "lang-04-switch-midcall", category: "language", turns: ["My sink is leaking.", "Perdon, prefiero hablar en espanol."], checks: [neverSays("does not ask permission to switch", /\bwould you (prefer|like me to)\b/)] },
+  {
+    id: "lang-01-spanish",
+    category: "language",
+    turns: ["Hola, tengo una fuga de agua en la cocina."],
+    checks: [
+      neverSays(
+        "does not announce a language switch",
+        /\b(i'?ll (switch|continue) in spanish|would you prefer)\b/,
+      ),
+    ],
+  },
+  {
+    id: "lang-02-spanish-continues",
+    category: "language",
+    turns: ["Hola, tengo una fuga en el bano.", "Si, esta goteando ahora."],
+    checks: [
+      custom("stays in Spanish", (ctx) =>
+        /(¿|¡|[áéíóúñ]|\b(el|la|los|las|un|una|es|est[aá]|para|puedo|gracias|cu[aá]l|qu[eé]|tu|su|de|te|entendido|nombre|agua)\b)/i.test(
+          ctx.agentTurns[1] ?? "",
+        )
+          ? null
+          : "second reply was not in Spanish",
+      ),
+    ],
+  },
+  {
+    id: "lang-03-hindi",
+    category: "language",
+    turns: ["Mera kitchen ka nal leak kar raha hai."],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "lang-04-switch-midcall",
+    category: "language",
+    turns: ["My sink is leaking.", "Perdon, prefiero hablar en espanol."],
+    checks: [neverSays("does not ask permission to switch", /\bwould you (prefer|like me to)\b/)],
+  },
 
   // -------------------------------------------------------------------
   // 14. CORRECTION — the caller fixes something they said.
   // -------------------------------------------------------------------
-  { id: "correct-01-name", category: "correction", turns: ["It's Akash.", "Sorry, it's actually Akash Kumar."], checks: [neverAsksAbout("does not re-ask the name", ASKS_NAME)] },
-  { id: "correct-02-problem", category: "correction", turns: ["My sink is leaking.", "Actually it's the dishwasher, not the sink."], checks: [neverSays("does not keep referring to the sink", /\byour sink\b/)] },
-  { id: "correct-03-address", category: "correction", turns: ["I'm at 400 Pine Street.", "Sorry, 404 Pine Street."], checks: [atMostQuestions(1)] },
-  { id: "correct-04-urgency", category: "correction", turns: ["No rush at all.", "Actually, it's getting worse, can someone come today?"], checks: [atMostQuestions(1)] },
-  { id: "correct-05-mishearing", category: "correction", turns: ["My name is Dana.", "No, Dana, D-A-N-A."], checks: [neverAsksAbout("does not ask to spell it a third time", /\bspell (that|it) (again|one more)\b/)] },
-  { id: "correct-06-number", category: "correction", turns: ["My zip is 98101.", "Sorry, 98102."], checks: [atMostQuestions(1)] },
+  {
+    id: "correct-01-name",
+    category: "correction",
+    turns: ["It's Akash.", "Sorry, it's actually Akash Kumar."],
+    checks: [neverAsksAbout("does not re-ask the name", ASKS_NAME)],
+  },
+  {
+    id: "correct-02-problem",
+    category: "correction",
+    turns: ["My sink is leaking.", "Actually it's the dishwasher, not the sink."],
+    checks: [neverSays("does not keep referring to the sink", /\byour sink\b/)],
+  },
+  {
+    id: "correct-03-address",
+    category: "correction",
+    turns: ["I'm at 400 Pine Street.", "Sorry, 404 Pine Street."],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "correct-04-urgency",
+    category: "correction",
+    turns: ["No rush at all.", "Actually, it's getting worse, can someone come today?"],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "correct-05-mishearing",
+    category: "correction",
+    turns: ["My name is Dana.", "No, Dana, D-A-N-A."],
+    checks: [
+      neverAsksAbout(
+        "does not ask to spell it a third time",
+        /\bspell (that|it) (again|one more)\b/,
+      ),
+    ],
+  },
+  {
+    id: "correct-06-number",
+    category: "correction",
+    turns: ["My zip is 98101.", "Sorry, 98102."],
+    checks: [atMostQuestions(1)],
+  },
 
   // -------------------------------------------------------------------
   // 15. TECHNICAL — say you don't know rather than guessing.
   // -------------------------------------------------------------------
-  { id: "tech-01-will-it-hold", category: "technical", turns: ["If I tighten the nut myself will that hold until tomorrow?"], checks: [neverSays("does not give a confident repair verdict", /\b(yes,? that (will|should) hold|that'?ll (fix|hold) it)\b/)] },
-  { id: "tech-02-cause", category: "technical", turns: ["What's actually causing my water heater to leak?"], checks: [neverSays("does not diagnose remotely", /\b(it'?s (definitely|probably) the|that means your)\b/)] },
-  { id: "tech-03-diy", category: "technical", turns: ["Can I just use plumber's tape on it?"], checks: [neverSays("no confident DIY instruction", /\byes,? (just|simply) (use|wrap|apply)\b/)] },
-  { id: "tech-04-shutoff", category: "technical", turns: ["Where is my main shutoff valve?"], checks: [neverSays("does not assert a location it cannot see", /\bit'?s (in|under|behind) your\b/)] },
-  { id: "tech-05-lifespan", category: "technical", turns: ["How many more years will this heater last?"], checks: [neverSays("does not invent a lifespan", /\b\d+\s*(more )?years\b/)] },
-  { id: "tech-06-brand", category: "technical", turns: ["Is Rheem better than AO Smith?"], checks: [atMostQuestions(1)] },
+  {
+    id: "tech-01-will-it-hold",
+    category: "technical",
+    turns: ["If I tighten the nut myself will that hold until tomorrow?"],
+    checks: [
+      neverSays(
+        "does not give a confident repair verdict",
+        /\b(yes,? that (will|should) hold|that'?ll (fix|hold) it)\b/,
+      ),
+    ],
+  },
+  {
+    id: "tech-02-cause",
+    category: "technical",
+    turns: ["What's actually causing my water heater to leak?"],
+    checks: [
+      neverSays(
+        "does not diagnose remotely",
+        /\b(it'?s (definitely|probably) the|that means your)\b/,
+      ),
+    ],
+  },
+  {
+    id: "tech-03-diy",
+    category: "technical",
+    turns: ["Can I just use plumber's tape on it?"],
+    checks: [neverSays("no confident DIY instruction", /\byes,? (just|simply) (use|wrap|apply)\b/)],
+  },
+  {
+    id: "tech-04-shutoff",
+    category: "technical",
+    turns: ["Where is my main shutoff valve?"],
+    checks: [
+      neverSays("does not assert a location it cannot see", /\bit'?s (in|under|behind) your\b/),
+    ],
+  },
+  {
+    id: "tech-05-lifespan",
+    category: "technical",
+    turns: ["How many more years will this heater last?"],
+    checks: [neverSays("does not invent a lifespan", /\b\d+\s*(more )?years\b/)],
+  },
+  {
+    id: "tech-06-brand",
+    category: "technical",
+    turns: ["Is Rheem better than AO Smith?"],
+    checks: [atMostQuestions(1)],
+  },
 
   // -------------------------------------------------------------------
   // 16. ADDRESS AND NUMBER HANDLING — read back digit by digit, once.
   // -------------------------------------------------------------------
-  { id: "addr-01-readback", category: "address", turns: ["My zip code is 90210."], checks: [atMostQuestions(1)] },
-  { id: "addr-02-no-substitution", category: "address", turns: ["The address is 1281 Northeast Halsey."], checks: [neverSays("does not silently change the number", /\b12(8[02-9]|[0-79]\d)\b/)] },
-  { id: "addr-03-declines", category: "address", turns: ["I'd rather not give my address over the phone."], checks: [neverAsksAbout("does not press for the address again", ASKS_ADDRESS)] },
-  { id: "addr-04-apartment", category: "address", turns: ["It's 55 West Oak, apartment 3B."], checks: [atMostQuestions(1)] },
-  { id: "addr-05-unclear", category: "address", turns: ["It's uh, 4 something Pine, I can't remember exactly."], checks: [atMostQuestions(1)] },
-  { id: "addr-06-outside-area", category: "address", turns: ["I'm about two hours north of the city, is that too far?"], checks: [neverSays("does not guarantee coverage it cannot check", /\byes,? we (definitely )?(cover|service) that\b/)] },
+  {
+    id: "addr-01-readback",
+    category: "address",
+    turns: ["My zip code is 90210."],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "addr-02-no-substitution",
+    category: "address",
+    turns: ["The address is 1281 Northeast Halsey."],
+    checks: [neverSays("does not silently change the number", /\b12(8[02-9]|[0-79]\d)\b/)],
+  },
+  {
+    id: "addr-03-declines",
+    category: "address",
+    turns: ["I'd rather not give my address over the phone."],
+    checks: [neverAsksAbout("does not press for the address again", ASKS_ADDRESS)],
+  },
+  {
+    id: "addr-04-apartment",
+    category: "address",
+    turns: ["It's 55 West Oak, apartment 3B."],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "addr-05-unclear",
+    category: "address",
+    turns: ["It's uh, 4 something Pine, I can't remember exactly."],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "addr-06-outside-area",
+    category: "address",
+    turns: ["I'm about two hours north of the city, is that too far?"],
+    checks: [
+      neverSays(
+        "does not guarantee coverage it cannot check",
+        /\byes,? we (definitely )?(cover|service) that\b/,
+      ),
+    ],
+  },
 
   // -------------------------------------------------------------------
   // 17. CLOSING — the farewell path the runtime now acts on.
   // -------------------------------------------------------------------
-  { id: "close-01-bye", category: "farewell", turns: ["My sink leaks.", "Okay, bye."], checks: [lastTurnAtMostQuestions(0)] },
-  { id: "close-02-thanks-bye", category: "farewell", turns: ["Drain is slow.", "Thank you, bye."], checks: [lastTurnAtMostQuestions(0)] },
-  { id: "close-03-thats-all", category: "farewell", turns: ["Toilet runs.", "That's all I needed, thanks."], checks: [lastTurnAtMostQuestions(0)] },
-  { id: "close-04-abrupt", category: "farewell", turns: ["Never mind, I'll call back later."], checks: [atMostQuestions(1)] },
-
+  {
+    id: "close-01-bye",
+    category: "farewell",
+    turns: ["My sink leaks.", "Okay, bye."],
+    checks: [lastTurnAtMostQuestions(0)],
+  },
+  {
+    id: "close-02-thanks-bye",
+    category: "farewell",
+    turns: ["Drain is slow.", "Thank you, bye."],
+    checks: [lastTurnAtMostQuestions(0)],
+  },
+  {
+    id: "close-03-thats-all",
+    category: "farewell",
+    turns: ["Toilet runs.", "That's all I needed, thanks."],
+    checks: [lastTurnAtMostQuestions(0)],
+  },
+  {
+    id: "close-04-abrupt",
+    category: "farewell",
+    turns: ["Never mind, I'll call back later."],
+    checks: [atMostQuestions(1)],
+  },
 
   // -------------------------------------------------------------------
   // 19. SERVICE AREA — coverage answered from the business's own data,
   //     never turning away a caller who might genuinely be inside it.
   // -------------------------------------------------------------------
-  { id: "svc-01-in-area-city", category: "servicearea", turns: ["I'm in Seattle, my kitchen drain is clogged."], checks: [neverSays("never declines an in-area city", DECLINES_COVERAGE)] },
-  { id: "svc-02-in-area-king-zip", category: "servicearea", turns: ["My sink is leaking, my zip is 98101."], checks: [neverSays("never declines a King County ZIP", DECLINES_COVERAGE)] },
-  { id: "svc-03-in-area-pierce-zip", category: "servicearea", turns: ["Water heater's out. I'm at 98402."], checks: [neverSays("never declines a Pierce County ZIP", DECLINES_COVERAGE)] },
-  { id: "svc-04-in-area-small-town", category: "servicearea", turns: ["I'm out in Carnation, 98014, my well pump line is leaking."], checks: [neverSays("never declines a King County town missing from the city list", DECLINES_COVERAGE)] },
-  { id: "svc-05-unknown-city-takes-job", category: "servicearea", turns: ["I'm in Black Diamond, is that somewhere you come out to?"], checks: [neverSays("hedges rather than refusing an unfamiliar nearby town", DECLINES_COVERAGE)] },
-  { id: "svc-06-out-of-state-zip", category: "servicearea", turns: ["My toilet is overflowing, my zip code is 90210.", "Beverly Hills, California."], checks: [saysSomewhere("says plainly it does not cover there", DECLINES_COVERAGE), saysSomewhere("leaves them on a positive note", POSITIVE_CLOSE)] },
-  { id: "svc-07-out-of-state-city", category: "servicearea", // Two turns on purpose: Grace often confirms the location before
-  // declining ("we cover Seattle and Tacoma, are you in Portland?"),
-  // which is correct and is exactly how she avoids wrongly refusing
-  // someone. The decline is judged after that confirmation.
-  turns: ["I'm calling from Portland, Oregon, my water heater is leaking.", "Yes, Portland Oregon."], checks: [saysSomewhere("says plainly it does not cover there", DECLINES_COVERAGE), saysSomewhere("leaves them on a positive note", POSITIVE_CLOSE)] },
-  { id: "svc-08-snohomish-zip", category: "servicearea", turns: ["I'm up in Everett, 98201."], checks: [saysSomewhere("declines a 982xx ZIP", DECLINES_COVERAGE)] },
-  { id: "svc-09-no-lead-when-out-of-area", category: "servicearea", turns: ["I'm in Miami, Florida. Can you send someone out today?"], checks: [neverCallsTool("createLead"), saysSomewhere("leaves them on a positive note", POSITIVE_CLOSE)] },
-  { id: "svc-10-declines-to-give-zip", category: "servicearea", turns: ["My drain is blocked.", "I'd rather not give my zip code over the phone."], checks: [neverSays("never declines coverage just because the ZIP is withheld", DECLINES_COVERAGE)] },
-  { id: "svc-11-no-price-or-eta-on-decline", category: "servicearea", turns: ["I'm in Dallas, Texas, my pipe burst."], checks: [neverSays("does not promise a callback it cannot honour", /\b(someone will (still )?(call|reach out)|we'?ll have someone contact)\b/)] },
-  { id: "svc-12-in-area-after-hours", category: "servicearea", turns: ["I'm in Kent and it's late, do you cover my area?"], checks: [neverSays("never declines an in-area city", DECLINES_COVERAGE)] },
-  { id: "svc-13-listed-pierce-zip", category: "servicearea", turns: ["My water line is leaking, I'm at 98446."], checks: [neverSays("never declines a listed Pierce ZIP", DECLINES_COVERAGE)] },
-  { id: "svc-14-listed-north-zip", category: "servicearea", turns: ["I'm at 98012, my toilet keeps running."], checks: [neverSays("never declines a listed north-end ZIP", DECLINES_COVERAGE)] },
-  { id: "svc-15-unlisted-wa-zip", category: "servicearea", turns: ["I'm at 98014 out in Carnation, my water heater is leaking."], checks: [neverSays("never declines an unlisted Washington ZIP", DECLINES_COVERAGE)] },
-  { id: "svc-16-listed-lakewood-zip", category: "servicearea", turns: ["98499, my kitchen sink is backing up."], checks: [neverSays("never declines a listed Lakewood ZIP", DECLINES_COVERAGE)] },
-  { id: "svc-17-listed-zip-confirmed", category: "servicearea", turns: ["Do you guys come out to 98033?"], checks: [neverSays("never declines a listed Kirkland ZIP", DECLINES_COVERAGE)] },
+  {
+    id: "svc-01-in-area-city",
+    category: "servicearea",
+    turns: ["I'm in Seattle, my kitchen drain is clogged."],
+    checks: [neverSays("never declines an in-area city", DECLINES_COVERAGE)],
+  },
+  {
+    id: "svc-02-in-area-king-zip",
+    category: "servicearea",
+    turns: ["My sink is leaking, my zip is 98101."],
+    checks: [neverSays("never declines a King County ZIP", DECLINES_COVERAGE)],
+  },
+  {
+    id: "svc-03-in-area-pierce-zip",
+    category: "servicearea",
+    turns: ["Water heater's out. I'm at 98402."],
+    checks: [neverSays("never declines a Pierce County ZIP", DECLINES_COVERAGE)],
+  },
+  {
+    id: "svc-04-in-area-small-town",
+    category: "servicearea",
+    turns: ["I'm out in Carnation, 98014, my well pump line is leaking."],
+    checks: [
+      neverSays("never declines a King County town missing from the city list", DECLINES_COVERAGE),
+    ],
+  },
+  {
+    id: "svc-05-unknown-city-takes-job",
+    category: "servicearea",
+    turns: ["I'm in Black Diamond, is that somewhere you come out to?"],
+    checks: [neverSays("hedges rather than refusing an unfamiliar nearby town", DECLINES_COVERAGE)],
+  },
+  {
+    id: "svc-06-out-of-state-zip",
+    category: "servicearea",
+    turns: ["My toilet is overflowing, my zip code is 90210.", "Beverly Hills, California."],
+    checks: [
+      saysSomewhere("says plainly it does not cover there", DECLINES_COVERAGE),
+      saysSomewhere("leaves them on a positive note", POSITIVE_CLOSE),
+    ],
+  },
+  {
+    id: "svc-07-out-of-state-city",
+    category: "servicearea", // Two turns on purpose: Grace often confirms the location before
+    // declining ("we cover Seattle and Tacoma, are you in Portland?"),
+    // which is correct and is exactly how she avoids wrongly refusing
+    // someone. The decline is judged after that confirmation.
+    turns: [
+      "I'm calling from Portland, Oregon, my water heater is leaking.",
+      "Yes, Portland Oregon.",
+    ],
+    checks: [
+      saysSomewhere("says plainly it does not cover there", DECLINES_COVERAGE),
+      saysSomewhere("leaves them on a positive note", POSITIVE_CLOSE),
+    ],
+  },
+  {
+    id: "svc-08-snohomish-zip",
+    category: "servicearea",
+    turns: ["I'm up in Everett, 98201."],
+    checks: [saysSomewhere("declines a 982xx ZIP", DECLINES_COVERAGE)],
+  },
+  {
+    id: "svc-09-no-lead-when-out-of-area",
+    category: "servicearea",
+    turns: ["I'm in Miami, Florida. Can you send someone out today?"],
+    checks: [
+      neverCallsTool("createLead"),
+      saysSomewhere("leaves them on a positive note", POSITIVE_CLOSE),
+    ],
+  },
+  {
+    id: "svc-10-declines-to-give-zip",
+    category: "servicearea",
+    turns: ["My drain is blocked.", "I'd rather not give my zip code over the phone."],
+    checks: [
+      neverSays("never declines coverage just because the ZIP is withheld", DECLINES_COVERAGE),
+    ],
+  },
+  {
+    id: "svc-11-no-price-or-eta-on-decline",
+    category: "servicearea",
+    turns: ["I'm in Dallas, Texas, my pipe burst."],
+    checks: [
+      neverSays(
+        "does not promise a callback it cannot honour",
+        /\b(someone will (still )?(call|reach out)|we'?ll have someone contact)\b/,
+      ),
+    ],
+  },
+  {
+    id: "svc-12-in-area-after-hours",
+    category: "servicearea",
+    turns: ["I'm in Kent and it's late, do you cover my area?"],
+    checks: [neverSays("never declines an in-area city", DECLINES_COVERAGE)],
+  },
+  {
+    id: "svc-13-listed-pierce-zip",
+    category: "servicearea",
+    turns: ["My water line is leaking, I'm at 98446."],
+    checks: [neverSays("never declines a listed Pierce ZIP", DECLINES_COVERAGE)],
+  },
+  {
+    id: "svc-14-listed-north-zip",
+    category: "servicearea",
+    turns: ["I'm at 98012, my toilet keeps running."],
+    checks: [neverSays("never declines a listed north-end ZIP", DECLINES_COVERAGE)],
+  },
+  {
+    id: "svc-15-unlisted-wa-zip",
+    category: "servicearea",
+    turns: ["I'm at 98014 out in Carnation, my water heater is leaking."],
+    checks: [neverSays("never declines an unlisted Washington ZIP", DECLINES_COVERAGE)],
+  },
+  {
+    id: "svc-16-listed-lakewood-zip",
+    category: "servicearea",
+    turns: ["98499, my kitchen sink is backing up."],
+    checks: [neverSays("never declines a listed Lakewood ZIP", DECLINES_COVERAGE)],
+  },
+  {
+    id: "svc-17-listed-zip-confirmed",
+    category: "servicearea",
+    turns: ["Do you guys come out to 98033?"],
+    checks: [neverSays("never declines a listed Kirkland ZIP", DECLINES_COVERAGE)],
+  },
   // v38 — the client's own first test call (b9f8c847).
-  { id: "v38-01-asks-name-it-announced", category: "name", turns: ["My water heater is leaking.", "It's actively leaking."], checks: [neverSays("never announces grabbing a name without asking for it", /\b(let me|i'?ll) (grab|get) your (name|address)\b[^?]*(\.|got it)/)] },
-  { id: "v38-02-actually-asks-for-a-name", category: "name", turns: ["My water heater is leaking.", "It's actively leaking.", "I don't know where from."], checks: [asksAbout("actually asks the caller for their name", /\b(your name|who am i speaking|what'?s your name|can i (get|have|grab) your name)\b/)] },
-  { id: "v38-03-social-question-stands-alone", category: "social", turns: ["Hey Grace, how's it going?"], checks: [custom("asking how their day is going is the only question in that turn", (ctx) => { const t = ctx.agentTurns[0] ?? ""; if (!/how'?s your day|how are you|how'?s it going/i.test(t)) return null; const qs = (t.match(/\?/g) ?? []).length; return qs > 1 ? `stacked ${qs} questions onto the social one: "${t.trim()}"` : null; })] },
-  { id: "v38-04-address-before-commit", category: "address", turns: ["My water heater is leaking, I'm Marcus.", "It's 13005 SE 245th Street, Kent."], checks: [neverAsksAbout("does not re-ask the address it just confirmed", ASKS_ADDRESS)] },
+  {
+    id: "v38-01-asks-name-it-announced",
+    category: "name",
+    turns: ["My water heater is leaking.", "It's actively leaking."],
+    checks: [
+      neverSays(
+        "never announces grabbing a name without asking for it",
+        /\b(let me|i'?ll) (grab|get) your (name|address)\b[^?]*(\.|got it)/,
+      ),
+    ],
+  },
+  {
+    id: "v38-02-actually-asks-for-a-name",
+    category: "name",
+    turns: ["My water heater is leaking.", "It's actively leaking.", "I don't know where from."],
+    checks: [
+      asksAbout(
+        "actually asks the caller for their name",
+        /\b(your name|who am i speaking|what'?s your name|can i (get|have|grab) your name)\b/,
+      ),
+    ],
+  },
+  {
+    id: "v38-03-social-question-stands-alone",
+    category: "social",
+    turns: ["Hey Grace, how's it going?"],
+    checks: [
+      custom("asking how their day is going is the only question in that turn", (ctx) => {
+        const t = ctx.agentTurns[0] ?? "";
+        if (!/how'?s your day|how are you|how'?s it going/i.test(t)) return null;
+        const qs = (t.match(/\?/g) ?? []).length;
+        return qs > 1 ? `stacked ${qs} questions onto the social one: "${t.trim()}"` : null;
+      }),
+    ],
+  },
+  {
+    id: "v38-04-address-before-commit",
+    category: "address",
+    turns: ["My water heater is leaking, I'm Marcus.", "It's 13005 SE 245th Street, Kent."],
+    checks: [neverAsksAbout("does not re-ask the address it just confirmed", ASKS_ADDRESS)],
+  },
   // -------------------------------------------------------------------
   // 20. FEEL — built line by line from the client's call (d2b845c4, "still
   //     bad lag, makes it tough to interact") and the owner's (e41dd948).
   // -------------------------------------------------------------------
-  { id: "feel-01-greeting-single-reply", category: "feel", turns: ["hi grace how are you"], checks: [atMostQuestions(1)] },
-  { id: "feel-02-no-safety-lecture", category: "feel", turns: ["my water heater is leaking", "bottom of the unit"], checks: [neverSays("no multi-step gas/electric shut-off procedure", /(pilot|breaker)[^.?!]{0,80}(pilot|breaker|main water|valve)|if it'?s (a )?gas[^.?!]{0,60}if it'?s electric/)] },
-  { id: "feel-03-no-statistical-eta", category: "feel", turns: ["my water heater is leaking bad, how long until someone gets out here?"], checks: [neverSays("never gives an arrival estimate", /\b\d+\s*(to|-|or)\s*\d+\s*(minutes|min|hours)|\bwithin\s+\d+\s*(minutes|hours)|\busually (get|arrive|there) (in|within)/)] },
-  { id: "feel-04-accepts-no-to-name", category: "feel", turns: ["my water heater is leaking", "no, I don't want to give my name"], checks: [custom("does not ask for the name again after a no", (ctx) => { const last = ctx.agentTurns[ctx.agentTurns.length - 1] ?? ""; return /\b(your name|what'?s your name|can i (get|have|grab) your name)\b/i.test(last) ? `asked again: "${last.trim()}"` : null; }), neverSays("never justifies re-asking", /\bi (need|have) to get your (name|information)\b/)] },
-  { id: "feel-05-address-in-pieces", category: "feel", turns: ["my water heater is leaking, this is Larry", "my address is three one two zero", "north east forty ninth street", "in Seattle"], checks: [// Asking for the NEXT missing piece ("what's the street?", "what city?")
-  // is exactly right. The harm on the client's call was re-reading and
-  // re-confirming the SAME house number over and over, so that is what
-  // this counts: readbacks that quote a house number.
-  custom("does not re-read the house number back more than once", (ctx) => { const readbacks = ctx.agentTurns.slice(1).filter((t) => t.split(/(?<=[.?!])\s+/).some((sentence) => sentence.includes("?") && /\b\d{3,5}\b/.test(sentence))).length; return readbacks > 1 ? `asked about the house number ${readbacks} times` : null; }), neverSays("never offers two competing house numbers", /\b\d{3,5}\s+or\s+\d{3,5}\b/)] },
-  { id: "feel-06-no-human-body-claims", category: "feel", turns: ["my sink is dripping", "so what did you have for lunch today?"], checks: [neverSays("never claims to eat or have a body", /\b(i |i'?ve |just )?(had|grabbed|ate|eating|made)\b[^.?!]{0,25}\b(sandwich|lunch|salad|burger|soup|pizza|food|coffee)\b/)] },
-  { id: "feel-07-never-blames-the-line", category: "feel", turns: ["my sink is dripping", "i'm feeling a lag between our conversation, can we fix it"], checks: [neverSays("never blames the phone line for our own delay", /\b(phone (side|line|company)|your (connection|line|signal)|(issue|problem|delay|lag|it'?s|that'?s) (is )?on (the|your) end|can'?t (really )?control)\b/)] },
-  { id: "feel-08-long-signoff-no-question", category: "feel", turns: ["my sink is dripping", "okay i will like call you after some time see you bye"], checks: [lastTurnAtMostQuestions(0)] },
-  { id: "feel-09-small-talk-short", category: "feel", turns: ["hey how's it going", "yeah i'm good, just wanted to chat"], checks: [atMostQuestions(1)] },
-  { id: "feel-10-emergency-still-short", category: "feel", turns: ["water is pouring out of my water heater right now"], checks: [callsTool("escalateEmergency")] },
+  {
+    id: "feel-01-greeting-single-reply",
+    category: "feel",
+    turns: ["hi grace how are you"],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "feel-02-no-safety-lecture",
+    category: "feel",
+    turns: ["my water heater is leaking", "bottom of the unit"],
+    checks: [
+      neverSays(
+        "no multi-step gas/electric shut-off procedure",
+        /(pilot|breaker)[^.?!]{0,80}(pilot|breaker|main water|valve)|if it'?s (a )?gas[^.?!]{0,60}if it'?s electric/,
+      ),
+    ],
+  },
+  {
+    id: "feel-03-no-statistical-eta",
+    category: "feel",
+    turns: ["my water heater is leaking bad, how long until someone gets out here?"],
+    checks: [
+      neverSays(
+        "never gives an arrival estimate",
+        /\b\d+\s*(to|-|or)\s*\d+\s*(minutes|min|hours)|\bwithin\s+\d+\s*(minutes|hours)|\busually (get|arrive|there) (in|within)/,
+      ),
+    ],
+  },
+  {
+    id: "feel-04-accepts-no-to-name",
+    category: "feel",
+    turns: ["my water heater is leaking", "no, I don't want to give my name"],
+    checks: [
+      custom("does not ask for the name again after a no", (ctx) => {
+        const last = ctx.agentTurns[ctx.agentTurns.length - 1] ?? "";
+        return /\b(your name|what'?s your name|can i (get|have|grab) your name)\b/i.test(last)
+          ? `asked again: "${last.trim()}"`
+          : null;
+      }),
+      neverSays("never justifies re-asking", /\bi (need|have) to get your (name|information)\b/),
+    ],
+  },
+  {
+    id: "feel-05-address-in-pieces",
+    category: "feel",
+    turns: [
+      "my water heater is leaking, this is Larry",
+      "my address is three one two zero",
+      "north east forty ninth street",
+      "in Seattle",
+    ],
+    checks: [
+      // Asking for the NEXT missing piece ("what's the street?", "what city?")
+      // is exactly right. The harm on the client's call was re-reading and
+      // re-confirming the SAME house number over and over, so that is what
+      // this counts: readbacks that quote a house number.
+      custom("does not re-read the house number back more than once", (ctx) => {
+        const readbacks = ctx.agentTurns
+          .slice(1)
+          .filter((t) =>
+            t
+              .split(/(?<=[.?!])\s+/)
+              .some((sentence) => sentence.includes("?") && /\b\d{3,5}\b/.test(sentence)),
+          ).length;
+        return readbacks > 1 ? `asked about the house number ${readbacks} times` : null;
+      }),
+      neverSays("never offers two competing house numbers", /\b\d{3,5}\s+or\s+\d{3,5}\b/),
+    ],
+  },
+  {
+    id: "feel-06-no-human-body-claims",
+    category: "feel",
+    turns: ["my sink is dripping", "so what did you have for lunch today?"],
+    checks: [
+      neverSays(
+        "never claims to eat or have a body",
+        /\b(i |i'?ve |just )?(had|grabbed|ate|eating|made)\b[^.?!]{0,25}\b(sandwich|lunch|salad|burger|soup|pizza|food|coffee)\b/,
+      ),
+    ],
+  },
+  {
+    id: "feel-07-never-blames-the-line",
+    category: "feel",
+    turns: ["my sink is dripping", "i'm feeling a lag between our conversation, can we fix it"],
+    checks: [
+      neverSays(
+        "never blames the phone line for our own delay",
+        /\b(phone (side|line|company)|your (connection|line|signal)|(issue|problem|delay|lag|it'?s|that'?s) (is )?on (the|your) end|can'?t (really )?control)\b/,
+      ),
+    ],
+  },
+  {
+    id: "feel-08-long-signoff-no-question",
+    category: "feel",
+    turns: ["my sink is dripping", "okay i will like call you after some time see you bye"],
+    checks: [lastTurnAtMostQuestions(0)],
+  },
+  {
+    id: "feel-09-small-talk-short",
+    category: "feel",
+    turns: ["hey how's it going", "yeah i'm good, just wanted to chat"],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "feel-10-emergency-still-short",
+    category: "feel",
+    turns: ["water is pouring out of my water heater right now"],
+    checks: [callsTool("escalateEmergency")],
+  },
   // -------------------------------------------------------------------
   // 21. STEER — call 9ecc6846 ("she stops the conversation, she should
   //     communicate more and convert").
   // -------------------------------------------------------------------
-  { id: "steer-01-never-ack-only", category: "steer", turns: ["my fridge water line is broken", "yeah i want it replaced"], checks: [custom("every reply hands the call back with a question while details are missing", (ctx) => { const bare = ctx.agentTurns.find((t) => !/\?/.test(t)); return bare ? `ended without a question: "${bare.trim()}"` : null; })] },
-  { id: "steer-02-greeting-name-is-hers", category: "steer", turns: ["hi chris how are you", "i'm good"], checks: [neverSays("never takes the name the caller greeted HER with", /\b(hey|hi|hello|thanks),?\s+chris\b|\bchris\b/)] },
-  { id: "steer-03-no-submit-without-address", category: "steer", turns: ["my fridge pipe is broken so i want to replace it", "can you schedule it for sunday"], checks: [neverSays("never claims info was sent before having name and address", /\b(info|information|details|request)('?s| has| have| is)?\s+(been\s+)?(sent|submitted)\b|\bsent (it|that|your info|everything) over\b/)] },
-  { id: "steer-04-fragment-gets-a-cue", category: "steer", turns: ["hi my sink is leaking", "can it"], checks: [neverSays("never builds a question out of the caller's fragment", /\b(can it|actually|do you have any) what\b/)] },
-  { id: "steer-05-no-anything-else-before-job", category: "steer", turns: ["my water heater is leaking from the bottom", "okay"], checks: [neverSays("never asks 'anything else' before the job exists", /\banything else\b/)] },
-  { id: "steer-06-goodbye-still-wins", category: "steer", turns: ["my sink is leaking", "bye i just don't want to talk to you"], checks: [lastTurnAtMostQuestions(0)] },
+  {
+    id: "steer-01-never-ack-only",
+    category: "steer",
+    turns: ["my fridge water line is broken", "yeah i want it replaced"],
+    checks: [
+      custom("every reply hands the call back with a question while details are missing", (ctx) => {
+        const bare = ctx.agentTurns.find((t) => !/\?/.test(t));
+        return bare ? `ended without a question: "${bare.trim()}"` : null;
+      }),
+    ],
+  },
+  {
+    id: "steer-02-greeting-name-is-hers",
+    category: "steer",
+    turns: ["hi chris how are you", "i'm good"],
+    checks: [
+      neverSays(
+        "never takes the name the caller greeted HER with",
+        /\b(hey|hi|hello|thanks),?\s+chris\b|\bchris\b/,
+      ),
+    ],
+  },
+  {
+    id: "steer-03-no-submit-without-address",
+    category: "steer",
+    turns: ["my fridge pipe is broken so i want to replace it", "can you schedule it for sunday"],
+    checks: [
+      neverSays(
+        "never claims info was sent before having name and address",
+        /\b(info|information|details|request)('?s| has| have| is)?\s+(been\s+)?(sent|submitted)\b|\bsent (it|that|your info|everything) over\b/,
+      ),
+    ],
+  },
+  {
+    id: "steer-04-fragment-gets-a-cue",
+    category: "steer",
+    turns: ["hi my sink is leaking", "can it"],
+    checks: [
+      neverSays(
+        "never builds a question out of the caller's fragment",
+        /\b(can it|actually|do you have any) what\b/,
+      ),
+    ],
+  },
+  {
+    id: "steer-05-no-anything-else-before-job",
+    category: "steer",
+    turns: ["my water heater is leaking from the bottom", "okay"],
+    checks: [neverSays("never asks 'anything else' before the job exists", /\banything else\b/)],
+  },
+  {
+    id: "steer-06-goodbye-still-wins",
+    category: "steer",
+    turns: ["my sink is leaking", "bye i just don't want to talk to you"],
+    checks: [lastTurnAtMostQuestions(0)],
+  },
   // -------------------------------------------------------------------
   // 18. EDGE CASES — degraded input, the shapes that broke real calls.
   // -------------------------------------------------------------------
   { id: "edge-01-garbled", category: "edge", turns: ["allow"], checks: [atMostQuestions(1)] },
   { id: "edge-02-single-word", category: "edge", turns: ["today"], checks: [atMostQuestions(1)] },
   { id: "edge-03-noise", category: "edge", turns: ["uh"], checks: [atMostQuestions(1)] },
-  { id: "feedback-01-casual-gas", category: "feedback", turns: ["yeah so it kinda smells like gas in my kitchen, probably nothing though"], checks: [callsTool("escalateEmergency")] },
-  { id: "feedback-02-casual-sewage", category: "feedback", turns: ["hey no rush but the toilet is like bubbling and sewage is coming up in the shower"], checks: [callsTool("escalateEmergency"), neverSays("no casual mirroring", /no worries|no rush|not a big deal/)] },
-  { id: "feedback-03-technician-bait", category: "feedback", turns: ["is Mike Johnson the technician who came last time available? I heard he is your best guy"], checks: [neverSays("does not vouch for or promise the named technician", /(great|best|do their best|will send|send him|get him|he is available|he's available)/)] },
-  { id: "feedback-04-causes-inspect", category: "feedback", turns: ["why would my water heater keep leaking?"], checks: [neverSays("no flat cause claim", /(usually|probably|typically) (the|a|caused|rust|corros)/), saysSomewhere("technician must inspect", /(inspect|take a look|look at it)/)] },
-  { id: "feedback-05-no-diy", category: "feedback", turns: ["my kitchen faucet is dripping, how do I fix it myself? is there a video?"], checks: [neverSays("no DIY steps, videos or parts", /(video|hardware store|youtube|cartridge|washer|unscrew|replace the)/)] },
-  { id: "feedback-06-no-callback-time", category: "feedback", turns: ["my toilet is running non stop, can someone call me back today", "my name is Ana Ruiz", "5550102233 is fine, will someone call me today?"], checks: [neverSays("no same-day or timed promise", /(today|within (the|an) hour|this afternoon|by tonight|same day)/)] },
-  { id: "feedback-07-name-once", category: "feedback", turns: ["my name is Priya Shah", "so my toilet keeps running and it's in Seattle", "it's on 5th Avenue"], checks: [neverAsksAbout("does not re-ask the name", ASKS_NAME)] },
-  { id: "feedback-08-fake-street-not-verified", category: "feedback", turns: ["I need a plumber for a clogged sink, my name is Tom Baker", "it's 4471 Zorblax Boulevard, Seattle, 98101"], checks: [neverSays("never claims the address is verified or valid", /(verified|valid address|confirmed that address|checked that address)/)] },
-  { id: "feedback-09-second-problem-no-cause", category: "feedback", turns: ["my kitchen sink is clogged, my name is Rohan Mehta", "oh and the dishwasher makes a gurgling noise"], checks: [neverSays("no cause or link claimed between problems", /(same|connected|related|tied|linked|caused|because|due to|clog in|drain line)/)] },
-  { id: "feedback-10-no-timing-choice", category: "feedback", turns: ["my toilet keeps running, my name is Ana Ruiz", "yes it never stops"], checks: [neverSays("no day or time named or promised", /(today|later today|this afternoon|tonight|tomorrow)/)] },
-  { id: "feedback-11-address-before-save", category: "feedback", turns: ["my name is Tom Baker and my sink is clogged", "it drains very slowly", "my address is 1200 Pine Street Seattle 98101", "yes that's right", "yes, that number is fine"], checks: [callsTool("createCustomer")] },
-  { id: "feedback-12-reschedule-not-booked", category: "feedback", turns: ["hi I need to reschedule my appointment for tomorrow to Friday", "my name is Tom Baker", "it's at 1200 Pine Street"], checks: [neverSays("never says it was rescheduled, booked or that Friday works", /(rescheduled|moved it|it's booked|all set|friday works|works for us|got you down)/), neverSays("never claims to look up the appointment", /(pull(ing)? up|look(ing)? up|check(ing)? (the )?(schedule|calendar))/)] },
-  { id: "feedback-13-cancel-not-done", category: "feedback", turns: ["hi this is George, cancel my appointment", "it's the kitchen sink leak for this afternoon"], checks: [neverSays("never says it was cancelled", /(cancell?ed|i'?ll get that cancel|let me get that cancel|that's cancel)/)] },
-  { id: "feedback-14-confirms-callback-number", category: "feedback", turns: ["my name is Sam Lee and my toilet keeps running", "it's 1200 Pine Street, Seattle 98101", "yes that's right", "yes"], checks: [asksAbout("asks to confirm the callback number", /(best number|number (to|we can|i can) (reach|call)|calling from|reach you (at|on)|this number|call ?back number|phone number)/)] },
-  { id: "feedback-15-changed-number-used", category: "feedback", turns: ["my name is Sam Lee and my toilet keeps running", "it's 1200 Pine Street, Seattle 98101", "yes", "please call me on 206 555 0147 instead"], checks: [saysSomewhere("reads the new number back", /2\W*(0|oh)\W*6\W*5\W*5\W*5\W*(0|oh)\W*1\W*4\W*7/i)] },
-  { id: "feedback-16-same-day-not-promised", category: "feedback", turns: ["can someone come out today for my clogged sink? my name is Ana Ruiz"], checks: [neverSays("no same-day promise or guarantee", /(will (be|come|call)[^.?!]*today|we can (get|have|send) (someone|a tech)[^.?!]*today|guarantee|same[- ]day (service )?(is )?available|we'll (be|have)[^.?!]*today)/)] },
-  { id: "feedback-17-fee-answered-first", category: "feedback", turns: ["my sink is clogged, how much is the visit charge? do you charge just to come look?"], checks: [custom("answers the fee question in the very first reply", (ctx) => /(pricing|price|cost|fee|charge|quote|confirm)/i.test(ctx.agentTurns[0] ?? "") ? null : `first reply skipped the fee question: "${(ctx.agentTurns[0] ?? "").trim()}"`)] },
-  { id: "feedback-18-problem-in-callers-words", category: "feedback", turns: ["hi my bathroom faucet is leaking, it drips all the time"], checks: [neverSays("never turns a leak into a pressure problem", /(pressure|low water|weak flow)/)] },
-  { id: "feedback-19-silent-on-fragment", category: "feedback", allowSilence: true, turns: ["hi, so let me check on"], checks: [neverSays("no take-your-time, still-here, go-ahead or hello over a caller mid-sentence", /(take your time|still here|go ahead|hello|are you there)/)] },
-  { id: "edge-04-very-long", category: "edge", turns: ["So basically what happened is I came home from work around six and I noticed the carpet in the hallway was damp and then I followed it back to the bathroom and the wall behind the toilet is wet and I think there might be a pipe in the wall that's leaking and I don't know how long it's been going on but the drywall is starting to bubble and I'm worried about mold and I really need somebody to look at this soon, my name's Robert by the way."], checks: [neverAsksAbout("does not re-ask the name", ASKS_NAME), neverAsksAbout("does not re-ask the problem", ASKS_PROBLEM), atMostQuestions(1)] },
+  {
+    id: "feedback-01-casual-gas",
+    category: "feedback",
+    turns: ["yeah so it kinda smells like gas in my kitchen, probably nothing though"],
+    checks: [callsTool("escalateEmergency")],
+  },
+  {
+    id: "feedback-02-casual-sewage",
+    category: "feedback",
+    turns: ["hey no rush but the toilet is like bubbling and sewage is coming up in the shower"],
+    checks: [
+      callsTool("escalateEmergency"),
+      neverSays("no casual mirroring", /no worries|no rush|not a big deal/),
+    ],
+  },
+  {
+    id: "feedback-03-technician-bait",
+    category: "feedback",
+    turns: [
+      "is Mike Johnson the technician who came last time available? I heard he is your best guy",
+    ],
+    checks: [
+      neverSays(
+        "does not vouch for or promise the named technician",
+        /(great|best|do their best|will send|send him|get him|he is available|he's available)/,
+      ),
+    ],
+  },
+  {
+    id: "feedback-04-causes-inspect",
+    category: "feedback",
+    turns: ["why would my water heater keep leaking?"],
+    checks: [
+      neverSays("no flat cause claim", /(usually|probably|typically) (the|a|caused|rust|corros)/),
+      saysSomewhere("technician must inspect", /(inspect|take a look|look at it)/),
+    ],
+  },
+  {
+    id: "feedback-05-no-diy",
+    category: "feedback",
+    turns: ["my kitchen faucet is dripping, how do I fix it myself? is there a video?"],
+    checks: [
+      neverSays(
+        "no DIY steps, videos or parts",
+        /(video|hardware store|youtube|cartridge|washer|unscrew|replace the)/,
+      ),
+    ],
+  },
+  {
+    id: "feedback-06-no-callback-time",
+    category: "feedback",
+    turns: [
+      "my toilet is running non stop, can someone call me back today",
+      "my name is Ana Ruiz",
+      "5550102233 is fine, will someone call me today?",
+    ],
+    checks: [
+      neverSays(
+        "no same-day or timed promise",
+        /(today|within (the|an) hour|this afternoon|by tonight|same day)/,
+      ),
+    ],
+  },
+  {
+    id: "feedback-07-name-once",
+    category: "feedback",
+    turns: [
+      "my name is Priya Shah",
+      "so my toilet keeps running and it's in Seattle",
+      "it's on 5th Avenue",
+    ],
+    checks: [neverAsksAbout("does not re-ask the name", ASKS_NAME)],
+  },
+  {
+    id: "feedback-08-fake-street-not-verified",
+    category: "feedback",
+    turns: [
+      "I need a plumber for a clogged sink, my name is Tom Baker",
+      "it's 4471 Zorblax Boulevard, Seattle, 98101",
+    ],
+    checks: [
+      neverSays(
+        "never claims the address is verified or valid",
+        /(verified|valid address|confirmed that address|checked that address)/,
+      ),
+    ],
+  },
+  {
+    id: "feedback-09-second-problem-no-cause",
+    category: "feedback",
+    turns: [
+      "my kitchen sink is clogged, my name is Rohan Mehta",
+      "oh and the dishwasher makes a gurgling noise",
+    ],
+    checks: [
+      neverSays(
+        "no cause or link claimed between problems",
+        /(same|connected|related|tied|linked|caused|because|due to|clog in|drain line)/,
+      ),
+    ],
+  },
+  {
+    id: "feedback-10-no-timing-choice",
+    category: "feedback",
+    turns: ["my toilet keeps running, my name is Ana Ruiz", "yes it never stops"],
+    checks: [
+      neverSays(
+        "no day or time named or promised",
+        /(today|later today|this afternoon|tonight|tomorrow)/,
+      ),
+    ],
+  },
+  {
+    id: "feedback-11-address-before-save",
+    category: "feedback",
+    turns: [
+      "my name is Tom Baker and my sink is clogged",
+      "it drains very slowly",
+      "my address is 1200 Pine Street Seattle 98101",
+      "yes that's right",
+      "yes, that number is fine",
+    ],
+    checks: [callsTool("createCustomer")],
+  },
+  {
+    id: "feedback-12-reschedule-not-booked",
+    category: "feedback",
+    turns: [
+      "hi I need to reschedule my appointment for tomorrow to Friday",
+      "my name is Tom Baker",
+      "it's at 1200 Pine Street",
+    ],
+    checks: [
+      neverSays(
+        "never says it was rescheduled, booked or that Friday works",
+        /(rescheduled|moved it|it's booked|all set|friday works|works for us|got you down)/,
+      ),
+      neverSays(
+        "never claims to look up the appointment",
+        /(pull(ing)? up|look(ing)? up|check(ing)? (the )?(schedule|calendar))/,
+      ),
+    ],
+  },
+  {
+    id: "feedback-13-cancel-not-done",
+    category: "feedback",
+    turns: [
+      "hi this is George, cancel my appointment",
+      "it's the kitchen sink leak for this afternoon",
+    ],
+    checks: [
+      neverSays(
+        "never says it was cancelled",
+        /(cancell?ed|i'?ll get that cancel|let me get that cancel|that's cancel)/,
+      ),
+    ],
+  },
+  {
+    id: "feedback-14-confirms-callback-number",
+    category: "feedback",
+    turns: [
+      "my name is Sam Lee and my toilet keeps running",
+      "it's 1200 Pine Street, Seattle 98101",
+      "yes that's right",
+      "yes",
+    ],
+    checks: [
+      asksAbout(
+        "asks to confirm the callback number",
+        /(best number|number (to|we can|i can) (reach|call)|calling from|reach you (at|on)|this number|call ?back number|phone number)/,
+      ),
+    ],
+  },
+  {
+    id: "feedback-15-changed-number-used",
+    category: "feedback",
+    turns: [
+      "my name is Sam Lee and my toilet keeps running",
+      "it's 1200 Pine Street, Seattle 98101",
+      "yes",
+      "please call me on 206 555 0147 instead",
+    ],
+    checks: [
+      saysSomewhere(
+        "reads the new number back",
+        /2\W*(0|oh)\W*6\W*5\W*5\W*5\W*(0|oh)\W*1\W*4\W*7/i,
+      ),
+    ],
+  },
+  {
+    id: "feedback-16-same-day-not-promised",
+    category: "feedback",
+    turns: ["can someone come out today for my clogged sink? my name is Ana Ruiz"],
+    checks: [
+      neverSays(
+        "no same-day promise or guarantee",
+        /(will (be|come|call)[^.?!]*today|we can (get|have|send) (someone|a tech)[^.?!]*today|guarantee|same[- ]day (service )?(is )?available|we'll (be|have)[^.?!]*today)/,
+      ),
+    ],
+  },
+  {
+    id: "feedback-17-fee-answered-first",
+    category: "feedback",
+    turns: ["my sink is clogged, how much is the visit charge? do you charge just to come look?"],
+    checks: [
+      custom("answers the fee question in the very first reply", (ctx) =>
+        /(pricing|price|cost|fee|charge|quote|confirm)/i.test(ctx.agentTurns[0] ?? "")
+          ? null
+          : `first reply skipped the fee question: "${(ctx.agentTurns[0] ?? "").trim()}"`,
+      ),
+    ],
+  },
+  {
+    id: "feedback-18-problem-in-callers-words",
+    category: "feedback",
+    turns: ["hi my bathroom faucet is leaking, it drips all the time"],
+    checks: [
+      neverSays("never turns a leak into a pressure problem", /(pressure|low water|weak flow)/),
+    ],
+  },
+  {
+    id: "feedback-19-silent-on-fragment",
+    category: "feedback",
+    allowSilence: true,
+    turns: ["hi, so let me check on"],
+    checks: [
+      neverSays(
+        "no take-your-time, still-here, go-ahead or hello over a caller mid-sentence",
+        /(take your time|still here|go ahead|hello|are you there)/,
+      ),
+    ],
+  },
+  {
+    id: "edge-04-very-long",
+    category: "edge",
+    turns: [
+      "So basically what happened is I came home from work around six and I noticed the carpet in the hallway was damp and then I followed it back to the bathroom and the wall behind the toilet is wet and I think there might be a pipe in the wall that's leaking and I don't know how long it's been going on but the drywall is starting to bubble and I'm worried about mold and I really need somebody to look at this soon, my name's Robert by the way.",
+    ],
+    checks: [
+      neverAsksAbout("does not re-ask the name", ASKS_NAME),
+      neverAsksAbout("does not re-ask the problem", ASKS_PROBLEM),
+      atMostQuestions(1),
+    ],
+  },
   { id: "edge-05-numbers-only", category: "edge", turns: ["98101"], checks: [atMostQuestions(1)] },
-  { id: "edge-06-repeat-thrice", category: "edge", turns: ["Leak.", "Leak.", "Leak."], checks: [custom("does not repeat itself verbatim", (ctx) => ctx.agentTurns.length >= 3 && ctx.agentTurns[0]!.trim() === ctx.agentTurns[2]!.trim() ? "gave the identical reply twice" : null)] },
-  { id: "edge-07-interrupting-self", category: "edge", turns: ["My sink is", "leaking under the cabinet"], checks: [atMostQuestions(1)] },
-  { id: "edge-08-question-only", category: "edge", turns: ["Do you guys do emergency calls at night?"], checks: [atMostQuestions(1)] },
+  {
+    id: "edge-06-repeat-thrice",
+    category: "edge",
+    turns: ["Leak.", "Leak.", "Leak."],
+    checks: [
+      custom("does not repeat itself verbatim", (ctx) =>
+        ctx.agentTurns.length >= 3 && ctx.agentTurns[0]!.trim() === ctx.agentTurns[2]!.trim()
+          ? "gave the identical reply twice"
+          : null,
+      ),
+    ],
+  },
+  {
+    id: "edge-07-interrupting-self",
+    category: "edge",
+    turns: ["My sink is", "leaking under the cabinet"],
+    checks: [atMostQuestions(1)],
+  },
+  {
+    id: "edge-08-question-only",
+    category: "edge",
+    turns: ["Do you guys do emergency calls at night?"],
+    checks: [atMostQuestions(1)],
+  },
   // "Caller says wait" — a bare pause request, distinct from an
   // incomplete-sentence fragment (fragment-detector.ts's own job, a
   // voice-runtime concern this text-level harness can't exercise). The
   // right reaction at the conversation-logic layer is to give the caller
   // room: a brief, patient acknowledgment, no new question piled on.
-  { id: "edge-09-caller-says-wait", category: "edge", turns: ["My kitchen sink is leaking pretty bad.", "Wait, hold on a second."], checks: [atMostQuestions(0)] },
+  {
+    id: "edge-09-caller-says-wait",
+    category: "edge",
+    turns: ["My kitchen sink is leaking pretty bad.", "Wait, hold on a second."],
+    checks: [atMostQuestions(0)],
+  },
 
   ...VENDOR_SCENARIOS,
   ...TESTER_SCENARIOS,
@@ -1719,7 +3212,9 @@ async function main(): Promise<void> {
 
   const categories = Array.from(new Set(SCENARIOS.map((s) => s.category)));
   console.log(`QA SUITE — prompt ${PLATFORM_BASE_PROMPT_VERSION}, model ${model}`);
-  console.log(`${selected.length} scenarios across ${categories.length} categories, concurrency ${CONCURRENCY}`);
+  console.log(
+    `${selected.length} scenarios across ${categories.length} categories, concurrency ${CONCURRENCY}`,
+  );
   console.log(`${UNIVERSAL.length} universal invariants applied to every agent utterance\n`);
 
   const started = Date.now();
@@ -1728,7 +3223,9 @@ async function main(): Promise<void> {
     const result = await evaluate(scenario);
     done += 1;
     const mark = result.hardFail ? "FAIL" : result.flaky ? "flaky" : "pass";
-    process.stdout.write(`[${String(done).padStart(3)}/${selected.length}] ${mark.padEnd(5)} ${result.scenario.id}\n`);
+    process.stdout.write(
+      `[${String(done).padStart(3)}/${selected.length}] ${mark.padEnd(5)} ${result.scenario.id}\n`,
+    );
     return result;
   });
 
@@ -1753,7 +3250,9 @@ async function main(): Promise<void> {
   if (flaky.length > 0) {
     console.log("\n================ FLAKY (passed on retry) ================");
     for (const result of flaky) {
-      console.log(`\n--- ${result.scenario.id} (${result.scenario.category}) — failed ${result.attemptsFailed}/${result.attemptsRun} attempts ---`);
+      console.log(
+        `\n--- ${result.scenario.id} (${result.scenario.category}) — failed ${result.attemptsFailed}/${result.attemptsRun} attempts ---`,
+      );
       for (const failure of result.failures) {
         console.log(`  ~ ${failure.label}\n    ${failure.reason}`);
       }
@@ -1790,13 +3289,16 @@ async function main(): Promise<void> {
     .flatMap((r) => r.ctx?.turns ?? [])
     .map((t) => t.agent.split(/\s+/).filter(Boolean).length)
     .sort((a, b) => a - b);
-  const pct = (arr: number[], p: number): number => arr[Math.min(arr.length - 1, Math.floor((arr.length - 1) * p))] ?? 0;
+  const pct = (arr: number[], p: number): number =>
+    arr[Math.min(arr.length - 1, Math.floor((arr.length - 1) * p))] ?? 0;
   if (firstChunks.length > 0) {
     console.log("\n================ LATENCY + LENGTH ================");
     console.log(
       `first speakable chunk (model side, measured from this machine): p50 ${pct(firstChunks, 0.5)}ms  p90 ${pct(firstChunks, 0.9)}ms  p99 ${pct(firstChunks, 0.99)}ms`,
     );
-    console.log(`reply length: p50 ${pct(words, 0.5)} words  p90 ${pct(words, 0.9)} words  max ${words[words.length - 1]} words`);
+    console.log(
+      `reply length: p50 ${pct(words, 0.5)} words  p90 ${pct(words, 0.9)} words  max ${words[words.length - 1]} words`,
+    );
   }
 
   const elapsed = ((Date.now() - started) / 1000).toFixed(0);
@@ -1806,7 +3308,9 @@ async function main(): Promise<void> {
       `(${flaky.length} needed a retry, up to ${ATTEMPTS} attempts each)`,
   );
   if (failed.length > 0) {
-    console.log(`FAILED — ${failed.length} scenario(s) failed every attempt. Not ready for a live call.`);
+    console.log(
+      `FAILED — ${failed.length} scenario(s) failed every attempt. Not ready for a live call.`,
+    );
     process.exit(1);
   }
   console.log("PASSED — every scenario and every universal invariant held.");
