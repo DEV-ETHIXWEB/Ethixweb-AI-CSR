@@ -116,6 +116,9 @@ export function spelledWordsIn(text: string, spellingAsked = false): string[] {
   //                                            comma is just the rhythm of
   //                                            spelling, mid-word.
   let lettersSinceBreak = 0;
+  // 2026-10-23 client call: "o m a r h a double d a d" came back as two
+  // words, "omarha" and "dad", because "double" broke the run.
+  let repeat = 1;
   const flush = (): void => {
     if (run.length >= 3) {
       words.push(run);
@@ -130,12 +133,18 @@ export function spelledWordsIn(text: string, spellingAsked = false): string[] {
       lettersSinceBreak = 0;
       continue;
     }
+    if ((token === "double" || token === "triple") && run.length > 0) {
+      repeat = token === "double" ? 2 : 3;
+      continue;
+    }
     const letter = letterOf(token, spellingAsked);
     if (letter) {
-      run += letter;
+      run += letter.repeat(repeat);
+      repeat = 1;
       lettersSinceBreak += 1;
       continue;
     }
+    repeat = 1;
     flush();
     lettersSinceBreak = 0;
   }

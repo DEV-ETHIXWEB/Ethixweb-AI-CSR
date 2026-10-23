@@ -1,6 +1,6 @@
 import { spokenPhoneDigits } from "./save-readiness";
 import { collapseSpokenDigits } from "./service-area";
-import { spelledWordsIn } from "./spelled-letters";
+import { reducePhoneticSpelling, spelledWordsIn } from "./spelled-letters";
 import { STREET_SUFFIXES } from "./street-name";
 
 /**
@@ -56,7 +56,7 @@ export interface CallNotes {
  * an introduction PHRASE then the name, or the name then "here"/"speaking".
  */
 const NAME_STATEMENT =
-  /\b(?<!\b(?:last|family|second) )(?:my name is|my name's|name is|i go by|my first name is|first name is|i'?m|i am|this is|it'?s|it is|you'?re speaking (?:with|to)|speaking with|call me|(?:update|change|correct|fix) (?:my |the )?name to)\s+(?:actually\s+|really\s+|just\s+|gonna be\s+|going to be\s+)?([a-z][a-z'-]+)(?:\s+([a-z][a-z'-]+))?/gi;
+  /\b(?<!\b(?:last|family|second|street|state|city|road|business|company|restaurant|building|property|shop|store) )(?:my name is|my name's|name is|i go by|my first name is|first name is|i'?m|i am|this is|it'?s|it is|you'?re speaking (?:with|to)|speaking with|call me|(?:update|change|correct|fix) (?:my |the )?name to)\s+(?:actually\s+|really\s+|just\s+|gonna be\s+|going to be\s+)?([a-z][a-z'-]+)(?:\s+([a-z][a-z'-]+))?/gi;
 
 /** The trailing form: "Tom Harris here", "Dana speaking". */
 const NAME_FIRST_STATEMENT =
@@ -183,10 +183,29 @@ export function buildCallNotes(
   const spellingAsked = turns.some(
     (turn) => turn.speaker === "agent" && /\bspell\b/i.test(turn.text),
   );
-  const nameTexts = nameUtterances(callerTexts, turns);
+  const utterances = nameUtterances(callerTexts, turns);
+  const nameTexts = utterances.map((utterance) => utterance.text);
   const statedFound = statedNameAt(nameTexts);
   let stated = statedFound?.value ?? answeredName(turns);
-  const spellings = spelledNamesIn(nameTexts, spellingAsked);
+  // 2026-10-23 client call: "you are an AI", heard as "u r n a i u r n",
+  // became the name "Urn Aiurn". Letters only count as a spelled NAME when
+  // there is a reason to read them as one: Grace asked for a spelling, the
+  // caller said they are spelling or giving their name, or the letters match
+  // the name they gave.
+  const spellings = spelledNamesIn(nameTexts, spellingAsked).filter(
+    (spelling) =>
+      spellingAsked ||
+      utterances[spelling.index]?.answersNameQuestion === true ||
+      SPELLING_CONTEXT.test(nameTexts[spelling.index] ?? "") ||
+      isOnlyASpelling(nameTexts[spelling.index] ?? "") ||
+      (statedFound !== null &&
+        spelling.words.some((word) =>
+          [
+            statedFound.value.toLowerCase().replace(/\s+/g, ""),
+            ...statedFound.value.toLowerCase().split(/\s+/),
+          ].some((stated) => likeness(word, stated) >= SAME_NAME_LIKENESS),
+        )),
+  );
   let spelledFound = spellings.at(-1) ?? null;
   // A three-letter spelled run with nothing to corroborate it is far more
   // often speech-recognition debris than a name. Found 2026-10-22 in a real
@@ -474,7 +493,14 @@ function spelledNamesIn(
 ): Array<{ words: string[]; index: number }> {
   const found: Array<{ words: string[]; index: number }> = [];
   for (const [index, text] of callerTexts.entries()) {
-    const words = spelledWordsIn(text, spellingAsked);
+    // "r e n a t a ... r e n a t a, d u b o i s": the same word spelled
+    // twice is one word, not a first name and a middle name.
+    const words = spelledWordsIn(text, spellingAsked)
+      .map((word) => {
+        const half = word.length / 2;
+        return half >= 3 && word.slice(0, half) === word.slice(half) ? word.slice(0, half) : word;
+      })
+      .filter((word, at, all) => at === 0 || word !== all[at - 1]);
     if (words.length > 0) {
       found.push({ words, index });
     }
@@ -528,6 +554,49 @@ function spelledIntoItsSlot(
   return result;
 }
 
+/**
+ * The whole utterance is letters ("a l e x a n d e r", "s for sam, i for
+ * india"): nobody says that by accident. The "u r n a i u r n damas" kind of
+ * debris always comes with ordinary words around it.
+ */
+function isOnlyASpelling(text: string): boolean {
+  const tokens = reducePhoneticSpelling(text)
+    .toLowerCase()
+    .replace(/[’']/g, "")
+    .replace(/[^a-z\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  // "it's y a s h", "no it's j o s h": a few words of lead-in, then letters.
+  while (tokens.length > 0 && SPELLING_LEAD_IN.has(tokens[0]!)) {
+    tokens.shift();
+  }
+  return (
+    tokens.length >= 3 &&
+    tokens.every((token) => token.length === 1 || token === "double" || token === "triple")
+  );
+}
+
+const SPELLING_LEAD_IN = new Set([
+  "its",
+  "it",
+  "is",
+  "thats",
+  "that",
+  "no",
+  "yes",
+  "yeah",
+  "okay",
+  "ok",
+  "so",
+  "um",
+  "uh",
+  "well",
+  "actually",
+]);
+
+/** The caller saying that what follows is their name, or a spelling. */
+const SPELLING_CONTEXT = /\b(spell|spelled|spelling|name|names)\b/i;
+
 /** How alike two words are, from 0 to 1: one minus the edit distance over the longer length. */
 const SAME_NAME_LIKENESS = 0.5;
 function likeness(a: string, b: string): number {
@@ -566,32 +635,43 @@ function likeness(a: string, b: string): number {
 function nameUtterances(
   callerTexts: readonly string[],
   turns: ReadonlyArray<{ speaker: string; text: string }>,
-): string[] {
+): Array<{ text: string; answersNameQuestion: boolean }> {
   const fromTurns = turns.filter((turn) => turn.speaker === "caller").map((turn) => turn.text);
   const matches =
     fromTurns.length === callerTexts.length &&
     fromTurns.every((text, index) => text === callerTexts[index]);
-  const said: string[] = [];
+  const said: Array<{ text: string; answersNameQuestion: boolean }> = [];
   if (matches) {
     let previousWasCaller = false;
+    let lastAgent = "";
     for (const turn of turns) {
       if (turn.speaker === "caller" && previousWasCaller && said.length > 0) {
-        said[said.length - 1] = `${said.at(-1)} ${turn.text}`;
+        said[said.length - 1]!.text = `${said.at(-1)!.text} ${turn.text}`;
       } else if (turn.speaker === "caller") {
-        said.push(turn.text);
+        said.push({
+          text: turn.text,
+          answersNameQuestion: NAME_QUESTION.test(lastAgent) || /\bspell\b/i.test(lastAgent),
+        });
+      } else {
+        lastAgent = turn.text.replace(/[’‘]/g, "'");
       }
-      previousWasCaller = turn.speaker === "caller";
+      // 2026-10-23 client call: "okay my name" / Grace: "Yes, I'm here" /
+      // "is barry allen". Grace was talked over two words in, so the caller
+      // never stopped: a reply cut off before its end does not separate what
+      // they said on either side of it. A finished reply ends in punctuation.
+      previousWasCaller =
+        turn.speaker === "caller" || (previousWasCaller && !/[.!?]["')\]]*\s*$/.test(turn.text));
     }
   } else {
-    said.push(...callerTexts);
+    said.push(...callerTexts.map((text) => ({ text, answersNameQuestion: false })));
   }
-  const joined: string[] = [];
-  for (const text of said) {
+  const joined: Array<{ text: string; answersNameQuestion: boolean }> = [];
+  for (const piece of said) {
     const before = joined.at(-1);
-    if (before !== undefined && endsMidSpelling(before) && isOnlyLetters(text)) {
-      joined[joined.length - 1] = `${before} ${text}`;
+    if (before !== undefined && endsMidSpelling(before.text) && isOnlyLetters(piece.text)) {
+      before.text = `${before.text} ${piece.text}`;
     } else {
-      joined.push(text);
+      joined.push({ ...piece });
     }
   }
   return joined;
@@ -822,6 +902,44 @@ const NOT_A_NAME_EXTRA = new Set([
   "completely",
   "glad",
   "happy",
+  // From the same 10-day sweep: "it's where is it" overwrote "Paul Allen"
+  // with "Where", "it's spelled" gave "Spelled", "this is seattle" gave
+  // "Seattle".
+  "where",
+  "what",
+  "when",
+  "who",
+  "why",
+  "how",
+  "which",
+  "whatever",
+  "spelled",
+  "spell",
+  "spelling",
+  "seattle",
+  "washington",
+  "tacoma",
+  "bellevue",
+  "redmond",
+  "kirkland",
+  "renton",
+  "everett",
+  "bothell",
+  "lynnwood",
+  "state",
+  "city",
+  "wrong",
+  "are",
+  "were",
+  "be",
+  "has",
+  "have",
+  "had",
+  "can",
+  "could",
+  "will",
+  "would",
+  "should",
 ]);
 
 /**
@@ -853,8 +971,65 @@ function canBeName(token: string): boolean {
   if (word.length >= 6 && word.endsWith("ing")) {
     return false;
   }
+  // 2026-10-23 client calls: "it's four twelve unit four twelve" gave the
+  // name Four Twelve, and "i am unable to understand" gave Unable, which was
+  // saved on the lead. A spoken number is never a first name, and these
+  // endings are adjectives far more often than names (Mable and Clive are
+  // shorter than the cut-off, so they still pass).
+  if (SPOKEN_NUMBERS.has(word)) {
+    return false;
+  }
+  if (word.length >= 6 && /(?:able|ible|ful|less|ous)$/.test(word)) {
+    return false;
+  }
   return !new RegExp(`^(?:${FIXTURE.source})$`, "i").test(word);
 }
+
+const SPOKEN_NUMBERS = new Set([
+  "zero",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+  "ten",
+  "eleven",
+  "twelve",
+  "thirteen",
+  "fourteen",
+  "fifteen",
+  "sixteen",
+  "seventeen",
+  "eighteen",
+  "nineteen",
+  "twenty",
+  "thirty",
+  "forty",
+  "fifty",
+  "sixty",
+  "seventy",
+  "eighty",
+  "ninety",
+  "hundred",
+  "thousand",
+  "double",
+  "triple",
+]);
+
+/**
+ * Words a name is almost never followed by. "i am unable TO understand", "i'm
+ * sorry ABOUT that": after a loose cue (i'm, i am, it's, this is) the word in
+ * the name slot is describing something, not naming anyone, when one of these
+ * comes straight after it. Not "and", "at", "from" or "with": "i'm Tom and I
+ * have a leak", "this is Tom at 4512 Maple", "Tom from the restaurant" are
+ * how people actually introduce themselves.
+ */
+const NOT_AFTER_A_NAME = /^\s+(?:to|about|that|of|if|because|so|the|a|an)\b/i;
+const LOOSE_CUE = /^(?:i'?m|i am|it'?s|it is|this is)\b/i;
 
 /** "the last name is Lindquist", "surname's Okonkwo". */
 const LAST_NAME_STATEMENT =
@@ -872,10 +1047,20 @@ function statedNameAt(callerTexts: readonly string[]): { value: string; index: n
   type Said = { index: number; at: number; first?: string; second?: string; last?: string };
   const said: Said[] = [];
   for (const [index, text] of callerTexts.entries()) {
-    const lower = text.toLowerCase();
+    // "my name is todd todd allen": a stutter, not a first and last name
+    // (2026-10-23; the save was then refused as "first and last name are
+    // identical" and the retry dropped Allen).
+    const lower = text.toLowerCase().replace(/\b([a-z']+)(?:[\s,.]+\1\b)+/g, "$1");
     for (const pattern of [NAME_STATEMENT, NAME_FIRST_STATEMENT]) {
       for (const match of lower.matchAll(pattern)) {
-        said.push({ index, at: match.index ?? 0, first: match[1] ?? "", second: match[2] ?? "" });
+        const at = match.index ?? 0;
+        const end = at + match[0].length;
+        const second = match[2] ?? "";
+        const firstEnd = second ? at + lower.slice(at, end - second.length).trimEnd().length : end;
+        if (LOOSE_CUE.test(match[0]) && NOT_AFTER_A_NAME.test(lower.slice(firstEnd))) {
+          continue;
+        }
+        said.push({ index, at, first: match[1] ?? "", second });
       }
     }
     for (const match of lower.matchAll(LAST_NAME_STATEMENT)) {
@@ -924,6 +1109,7 @@ function answeredName(turns: ReadonlyArray<{ speaker: string; text: string }>): 
     }
     const words = answer.text
       .toLowerCase()
+      .replace(/\b([a-z']+)(?:[\s,.]+\1\b)+/g, "$1")
       .replace(/^(it's|its|it is|i'm|im|yeah|yes|sure|oh|uh|um)[, ]+/g, "")
       .replace(/[^a-z\s'-]/g, " ")
       .split(/\s+/)

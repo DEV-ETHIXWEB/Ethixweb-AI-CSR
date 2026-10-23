@@ -817,3 +817,143 @@ describe("nameUpdateNote", () => {
     expect(nameUpdateNote([said])).toBeNull();
   });
 });
+
+/** 2026-10-23, the four client calls after 08:39, replayed line for line. */
+describe("names from the 2026-10-23 afternoon calls", () => {
+  function said(...lines: Array<[string, string]>) {
+    const turns = lines.map(([speaker, text], turnIndex) => ({
+      turnIndex,
+      speaker,
+      text,
+      confidence: null,
+      offsetMs: 0,
+      at: "",
+    }));
+    return buildCallNotes(
+      lines.filter(([who]) => who === "caller").map(([, text]) => text),
+      turns,
+    );
+  }
+
+  it("a stutter is not a last name: 'todd todd allen' is Todd Allen", () => {
+    expect(said(["caller", "well my name is todd todd allen"]).statedName).toBe("Todd Allen");
+  });
+
+  it("a unit number is not a name: 'it's four twelve unit four twelve'", () => {
+    const notes = said(
+      ["caller", "hi my name is anya kessler"],
+      ["agent", "Sure, go ahead. What's the rest of your address?"],
+      ["caller", "yes it's four twelve unit four twelve seattle washington nine eight one two one"],
+      ["agent", "You're all set."],
+      ["caller", "oh i'll have you registered my name is four are you basically an idiot"],
+    );
+    expect(notes.statedName).toBe("Anya Kessler");
+  });
+
+  it("'i am unable to understand' is not the name Unable", () => {
+    const notes = said(
+      ["caller", "my name is barry allen"],
+      ["agent", "Thanks, Barry."],
+      ["caller", "nable to understand i am i am unable to understand"],
+    );
+    expect(notes.statedName).toBe("Barry Allen");
+  });
+
+  it("letters inside a sentence are not a spelled name: 'u r n a i u r n damas'", () => {
+    const notes = said(
+      ["caller", "my name is omar hadad"],
+      ["agent", "Thanks, Omar."],
+      ["caller", "u r n a i u r n damas"],
+    );
+    expect(notes.spelledName).toBeNull();
+  });
+
+  it("'double d' is two d's: 'o m a r h a double d a d' is Omar Haddad", () => {
+    const notes = said(["caller", "my name is omar hadag"], ["caller", "o m a r h a double d a d"]);
+    expect(notes.spelledName).toEqual(["omar", "haddad"]);
+  });
+
+  it("a name split by Grace being talked over is read as one: 'okay my name' / 'is barry allen'", () => {
+    const notes = said(
+      ["caller", "okay my name"],
+      ["agent", "Yes, I'm here"],
+      ["caller", "is barry allen and i'm calling just because that i have i guess a leak"],
+    );
+    expect(notes.statedName).toBe("Barry Allen");
+  });
+
+  it("still keeps the introductions people really use", () => {
+    expect(said(["caller", "this is Tom at 4512 maple street"]).statedName).toBe("Tom");
+    expect(said(["caller", "i'm tom and i have a leak"]).statedName).toBe("Tom");
+    expect(said(["caller", "hi it's mable from the cafe"]).statedName).toBe("Mable");
+  });
+});
+
+/** Found by replaying every call of the last ten days through the name code. */
+describe("names from the ten-day replay", () => {
+  function said(...lines: Array<[string, string]>) {
+    const turns = lines.map(([speaker, text], turnIndex) => ({
+      turnIndex,
+      speaker,
+      text,
+      confidence: null,
+      offsetMs: 0,
+      at: "",
+    }));
+    return buildCallNotes(
+      lines.filter(([who]) => who === "caller").map(([, text]) => text),
+      turns,
+    );
+  }
+
+  it("a house number after 'it's' is not a name (18 of 91 calls had one)", () => {
+    expect(said(["caller", "it's eleven thirty three east pike street"]).statedName).toBeNull();
+    expect(said(["caller", "yes it's sixty five"]).statedName).toBeNull();
+  });
+
+  it("'it's where is it' does not overwrite the name given earlier", () => {
+    const notes = said(
+      ["caller", "hi grace good evening my name is paul allen"],
+      ["agent", "Is the water running right now?"],
+      ["caller", "it's where is it well the reason is somewhat damp"],
+    );
+    expect(notes.statedName).toBe("Paul Allen");
+  });
+
+  it("'the state name is ford' is not the caller's name", () => {
+    const notes = said(
+      ["caller", "hi my name is joseph"],
+      ["agent", "Can you please confirm the street name and house number?"],
+      ["caller", "and the state name"],
+      ["caller", "is ford l"],
+    );
+    expect(notes.statedName).toBe("Joseph");
+  });
+
+  it("'yes martha martha' is Martha", () => {
+    expect(
+      said(["agent", "Can I get your name, please?"], ["caller", "yes martha martha"]).statedName,
+    ).toBe("Martha");
+  });
+
+  it("a spelling said twice is one word", () => {
+    const notes = said(
+      ["agent", "Could you spell that for me?"],
+      ["caller", "yes it's r e n a t a"],
+      ["caller", "r e n a t a, d u b o i s"],
+    );
+    expect(notes.spelledName).toEqual(["renata", "dubois"]);
+  });
+
+  it("'it's y a s h' is a spelling even when nobody asked for one", () => {
+    expect(
+      said(["agent", "Can you tell me the address?"], ["caller", "it's y a s h"]).spelledName,
+    ).toEqual(["yash"]);
+  });
+
+  it("'it's spelled', 'it's wrong' and 'this is seattle' are not names", () => {
+    expect(said(["caller", "it's spelled"]).statedName).toBeNull();
+    expect(said(["caller", "it's wrong it's s k"]).statedName).toBeNull();
+    expect(said(["caller", "this is seattle five eight street"]).statedName).toBeNull();
+  });
+});
