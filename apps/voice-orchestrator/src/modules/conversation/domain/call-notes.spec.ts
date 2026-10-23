@@ -13,6 +13,15 @@ import {
  * own test calls). Names, numbers and addresses here are invented.
  */
 describe("buildCallNotes", () => {
+  it("never takes the ZIP for a house number with no street name (Akash's test call)", () => {
+    const notes = buildCallNotes([
+      "and the service address is one one nine zero federal avenue",
+      "seattle washington nine eight zero two one",
+      "well the street name is sixty street",
+    ]);
+    expect(notes.street).toBe("1190 federal avenue");
+  });
+
   it("keeps a name the caller spelled out, letter by letter, instead of a re-guessed one", () => {
     const notes = buildCallNotes([
       "okay renata r e n a t a last name is kowal k o w a l",

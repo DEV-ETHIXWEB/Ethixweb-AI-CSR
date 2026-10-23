@@ -1273,6 +1273,8 @@ const DIRECTIONS = new Set([
   "southwest",
 ]);
 
+const NOT_A_STREET_NAME = new Set(["the", "a", "an", "is", "my", "name", "and", "it", "its"]);
+
 function streetIn(text: string): string | null {
   // 2026-10-23 client call: "one seven four eight and it's / westlake avenue"
   // was saved as the street "1748 and it s westlake avenue". Apostrophes close
@@ -1293,6 +1295,13 @@ function streetIn(text: string): string | null {
       }
       if (suffix === house + 1 && !DIRECTIONS.has(tokens[house + 1] ?? "")) {
         // "1912 avenue" has no street name; keep looking.
+        continue;
+      }
+      // 2026-10-23, Akash's test call: "seattle washington nine eight zero
+      // two one" then "well the street name is sixty street" became the
+      // street "98021 the street": the ZIP as a house number, "the" as the
+      // name. Grace read it back as an address and saved it.
+      if (tokens.slice(house + 1, suffix).every((word) => NOT_A_STREET_NAME.has(word))) {
         continue;
       }
       let end = suffix;
