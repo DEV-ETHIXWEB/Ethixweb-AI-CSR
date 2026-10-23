@@ -264,6 +264,26 @@ describe("addressDisputeNote", () => {
     );
   });
 
+  it("takes a new house number the caller gives, rather than asking for it", () => {
+    const callerTexts = [
+      "twelve fifteen north ninety second street seattle nine eight one zero three",
+      "no sorry it's twelve fifty not twelve fifteen",
+    ];
+    expect(buildCallNotes(callerTexts).street).toBe("1250 north ninety second street");
+    const note = addressDisputeNote(callerTexts, [
+      "Let me make sure I have it right: 1-2-1-5 North Ninety Second Street, ZIP 98103. Is that right?",
+    ])!;
+    expect(note).toContain("it is 1250, not 1215");
+    expect(note).toContain("Do not ask for the house number again");
+  });
+
+  it("leaves the street alone when the numbers corrected are not its house number", () => {
+    expect(buildCallNotes(["4512 maple street", "it's 98103 not 98101"]).street).toBe(
+      "4512 maple street",
+    );
+    expect(addressDisputeNote(["4512 maple street", "it's 98103 not 98101"], [])).toBeNull();
+  });
+
   it("tells the model to stop treating the street in the notes as confirmed", () => {
     const note = addressDisputeNote(["no that's wrong"], [readback])!;
     expect(note).toContain("ignore it");
@@ -1052,5 +1072,25 @@ describe("nameRepeatedNote", () => {
       nameRepeatedNote(["my name is josh", "my name is yash"], ["Could you spell that?"]),
     ).toBeNull();
     expect(nameRepeatedNote(["my name is akash", "update my name to prateek"], [])).toBeNull();
+  });
+
+  it("asks for a spelling when the bare name in the notes is said again unasked", () => {
+    expect(
+      nameRepeatedNote(
+        ["hi my kitchen faucet is leaking", "yash patel", "yash patel"],
+        ["Can I get your name?", "Got it, Yash Patel. What's the street address?"],
+        "Yash Patel",
+      ),
+    ).toContain("spell their first name");
+  });
+
+  it("not when Grace asked for the name again, or something else is said", () => {
+    expect(
+      nameRepeatedNote(["yash patel", "yash patel"], ["Sorry, what was your name?"], "Yash Patel"),
+    ).toBeNull();
+    expect(
+      nameRepeatedNote(["yash patel", "seattle"], ["What city is that in?"], "Yash Patel"),
+    ).toBeNull();
+    expect(nameRepeatedNote(["yash patel", "yash patel"], ["What's the address?"])).toBeNull();
   });
 });

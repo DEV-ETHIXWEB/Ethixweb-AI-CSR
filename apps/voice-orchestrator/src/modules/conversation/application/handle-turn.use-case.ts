@@ -607,7 +607,7 @@ export class HandleTurnUseCase {
         : null;
     const nameRepeated =
       !isTrailingOff && !wantsItAgain && !pendingReadback && !nameDisputed && !nameUpdated
-        ? nameRepeatedNote(callerTextsSoFar, agentTextsSoFar)
+        ? nameRepeatedNote(callerTextsSoFar, agentTextsSoFar, notes.statedName)
         : null;
     const addressDisputed =
       !isTrailingOff &&

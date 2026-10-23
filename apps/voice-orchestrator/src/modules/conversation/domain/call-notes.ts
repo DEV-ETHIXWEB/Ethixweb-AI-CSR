@@ -1192,7 +1192,9 @@ function answeredName(turns: ReadonlyArray<{ speaker: string; text: string }>): 
 }
 
 function lastStreet(callerTexts: readonly string[]): string | null {
+  let correction: { to: string; from: string } | null = null;
   for (let i = callerTexts.length - 1; i >= 0; i -= 1) {
+    correction ??= houseNumberCorrection(callerTexts[i] ?? "");
     // The utterance on its own, then joined with the one before it, because
     // an address often arrives as "3810" and then "248th place south".
     const candidates = [
@@ -1202,11 +1204,29 @@ function lastStreet(callerTexts: readonly string[]): string | null {
     for (const candidate of candidates) {
       const street = streetIn(candidate);
       if (street) {
-        return withLaterUnit(street, callerTexts.slice(i + 1));
+        const [house, ...rest] = street.split(" ");
+        const corrected =
+          correction && house === correction.from ? [correction.to, ...rest].join(" ") : street;
+        return withLaterUnit(corrected, callerTexts.slice(i + 1));
       }
     }
   }
   return null;
+}
+
+/**
+ * 2026-10-23, test call through the live pipeline: Grace read back "1-2-1-5
+ * North Ninety Second Street", the caller said "no sorry it's twelve fifty
+ * not twelve fifteen", and the notes kept 1215, so Grace asked "what's the
+ * correct house number, then?", the number she had just been given. "X not
+ * Y", where Y is the house number on file, replaces it. Only this order:
+ * "not twelve fifteen, twelve fifty" runs the two numbers together.
+ */
+const HOUSE_NUMBER_CORRECTION = /\b(\d{1,6})\s*,?\s+not\s+(\d{1,6})\b/;
+
+function houseNumberCorrection(text: string): { to: string; from: string } | null {
+  const match = collapseSpokenDigits(text.toLowerCase()).match(HOUSE_NUMBER_CORRECTION);
+  return match?.[1] && match[2] && match[1] !== match[2] ? { to: match[1], from: match[2] } : null;
 }
 
 /**
@@ -1431,6 +1451,18 @@ export function addressDisputeNote(
   if (!latest) {
     return null;
   }
+  // The new house number is already in the notes (see lastStreet); asking
+  // for it again is asking for what the caller just said.
+  const correction = houseNumberCorrection(latest);
+  const before = lastStreet(callerTexts.slice(0, -1));
+  if (correction && before?.split(" ")[0] === correction.from) {
+    return (
+      `[The caller corrected the house number: it is ${correction.to}, not ${correction.from}. ` +
+      "The street in the call notes above already has the corrected number. Your whole reply: " +
+      "read that street address back once, the house number digit by digit, and ask if that's " +
+      "right. Do not ask for the house number again.]"
+    );
+  }
   const disputedInWords = ADDRESS_DISPUTED.test(latest);
   const negatedAReadback =
     OPENING_NEGATION.test(latest) &&
@@ -1500,6 +1532,7 @@ export function nameDisputeNote(
 export function nameRepeatedNote(
   callerTexts: readonly string[],
   agentTexts: readonly string[],
+  notedName: string | null = null,
 ): string | null {
   const latest = (callerTexts.at(-1) ?? "").trim();
   if (!latest || NAME_UPDATE.test(latest) || spelledWordsIn(latest, true).length > 0) {
@@ -1511,7 +1544,9 @@ export function nameRepeatedNote(
   const now = statedNameAt([latest]);
   const before = statedNameAt(callerTexts.slice(0, -1));
   if (!now || !before) {
-    return null;
+    return saidTheNotedNameUnasked(latest, agentTexts.at(-1) ?? "", notedName)
+      ? NAME_REPEATED
+      : null;
   }
   // "my name is akash" then "it's akash kumar" is the last name arriving,
   // not the name being misheard.
@@ -1520,11 +1555,35 @@ export function nameRepeatedNote(
   if (nowFirst === beforeFirst && nowRest.join(" ") !== beforeRest.join(" ")) {
     return null;
   }
-  return (
-    "[The caller has said their name again, so it may have been misheard. Your whole reply: " +
-    "ask them to spell their first name, letter by letter. Then use exactly the letters they " +
-    "give, never a familiar-sounding name instead.]"
-  );
+  return NAME_REPEATED;
+}
+
+const NAME_REPEATED =
+  "[The caller has said their name again, so it may have been misheard. Your whole reply: " +
+  "ask them to spell their first name, letter by letter. Then use exactly the letters they " +
+  "give, never a familiar-sounding name instead.]";
+
+/**
+ * 2026-10-23, test call through the live pipeline: "yash patel" answered the
+ * name question, then "yash patel" again when Grace asked for the street.
+ * Neither has a cue ("my name is"), so the check above never saw a name, and
+ * Grace asked for the address again. The bare name in the notes, said again
+ * when Grace had not asked for it, is the same signal.
+ */
+function saidTheNotedNameUnasked(
+  latest: string,
+  lastAgentText: string,
+  notedName: string | null,
+): boolean {
+  if (!notedName || NAME_QUESTION.test(lastAgentText)) {
+    return false;
+  }
+  const words = latest
+    .toLowerCase()
+    .replace(/[^a-z\s'-]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  return words.length > 0 && words.every(canBeName) && words.join(" ") === notedName.toLowerCase();
 }
 
 /** "can you update my full name", "change the name to", "fix my last name". */
