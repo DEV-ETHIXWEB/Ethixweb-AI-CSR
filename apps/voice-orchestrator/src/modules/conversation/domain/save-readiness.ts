@@ -1,5 +1,5 @@
 import { extractStreet } from "./address-check";
-import { buildCallNotes } from "./call-notes";
+import { buildCallNotes, withoutAccents } from "./call-notes";
 import { collapseSpokenDigits } from "./service-area";
 
 /**
@@ -428,11 +428,15 @@ export function callbackNumberNote(
   // address and number at once". Name and address first; once Grace has
   // read those back, the number on its own (the branch just below).
   if (letters && !nameAndAddressReadBack(agentTexts, name, address)) {
+    // 2026-10-24, Yash: "the surname is not being spelled". Told to spell
+    // "the name" with both names' letters in brackets, gpt-4o-mini read back
+    // "Richard, R-I-C-H-A-R-D" and dropped Mason. It is now handed the line.
+    const atAddress = spokenAddress.replace(/^, the address \((.*)\)$/, ", at $1");
+    const line = `Let me make sure I have it right: ${letters}${atAddress}. Is that right?`;
     return (
       "[You now have everything you need. Confirm it in TWO short questions, one per turn, and " +
-      "this turn is ONLY the first: read back the name, spelled out " +
-      `(${letters})${spokenAddress}, and ask if that is right. Say every letter and digit one at ` +
-      "a time. Do not mention the phone number yet; that is the next question. This is the ONLY " +
+      `this turn is ONLY the first. Say exactly: "${line}" Every name is spelled, the last name ` +
+      "too. Do not mention the phone number yet; that is the next question. This is the ONLY " +
       "time the name and address are confirmed. Ask nothing else.]"
     );
   }
@@ -513,16 +517,14 @@ function nameLetters(name?: {
   if (!words || words.length === 0) {
     return null;
   }
-  return words
-    .map((word) =>
-      word
-        .replace(/[^a-z]/gi, "")
-        .toUpperCase()
-        .split("")
-        .join("-"),
-    )
+  const spelled = words
+    .map((word) => withoutAccents(word).replace(/[^a-z]/gi, ""))
     .filter((word) => word.length > 0)
-    .join(", ");
+    .map(
+      (word) =>
+        `${word[0]!.toUpperCase()}${word.slice(1).toLowerCase()}, ${word.toUpperCase().split("").join("-")}`,
+    );
+  return spelled.length > 0 ? spelled.join(", ") : null;
 }
 
 /**

@@ -419,6 +419,17 @@ describe("the closing confirmation", () => {
     expect(note).not.toContain("206-555-0147");
   });
 
+  it("2026-10-24, Yash: hands Grace the line, with the last name spelled too", () => {
+    const note = callbackNumberNote(
+      "+12065550147",
+      { spelled: null, stated: "Richard Mason" },
+      { street: "1450 westlake avenue", zip: "98901" },
+    );
+    expect(note).toContain(
+      '"Let me make sure I have it right: Richard, R-I-C-H-A-R-D, Mason, M-A-S-O-N, at 1-4-5-oh westlake avenue, ZIP 9-8-9-oh-1. Is that right?"',
+    );
+  });
+
   it("then, once Grace has read those back, asks about the number on its own", () => {
     const note = callbackNumberNote(
       "+12065550147",
@@ -450,7 +461,7 @@ describe("the closing confirmation", () => {
       spelled: ["siobhan", "okonkwo"],
       stated: "Siobhan Okonkwo",
     });
-    expect(note).toContain("S-I-O-B-H-A-N, O-K-O-N-K-W-O");
+    expect(note).toContain("Siobhan, S-I-O-B-H-A-N, Okonkwo, O-K-O-N-K-W-O");
   });
 
   /**
