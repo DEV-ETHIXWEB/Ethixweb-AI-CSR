@@ -39,6 +39,10 @@ export const DEFAULT_EMERGENCY_KEYWORDS: ReadonlyArray<{
   { pattern: "sewer backup", severity: "critical", action: "forward_call" },
   { pattern: "sewage backup", severity: "critical", action: "forward_call" },
   { pattern: "flooding", severity: "critical", action: "forward_call" },
+  // 2026-10-24, Yash's test call: "oh wait my sink just exploded" (heard as
+  // "sync") mid-call, and Grace went on asking for the septic tank address.
+  { pattern: "exploded", severity: "critical", action: "forward_call" },
+  { pattern: "blew up", severity: "critical", action: "forward_call" },
   { pattern: "flooded", severity: "critical", action: "forward_call" },
   { pattern: "water everywhere", severity: "critical", action: "forward_call" },
   { pattern: "smells gas", severity: "critical", action: "forward_call" },

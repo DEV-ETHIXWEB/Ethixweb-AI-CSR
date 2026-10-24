@@ -2409,6 +2409,42 @@ describe("HandleTurnUseCase", () => {
     expect(result.toolCallsExecuted).toEqual(["escalateEmergency"]);
   });
 
+  it('2026-10-24, Yash\'s test call: "my sync just exploded" mid-call is checked again', async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const escalateHandler = {
+      execute: jest.fn().mockResolvedValue({
+        isEmergency: false,
+        severity: "medium",
+        action: "standard_lead",
+        transferDestination: null,
+      }),
+    };
+    const { useCase } = buildUseCase({
+      repository,
+      registeredTools: [{ name: "escalateEmergency", handler: escalateHandler }],
+    });
+    await useCase.execute(
+      baseCommand({
+        transcript: "i want to remove the old septic tank and install the new one",
+        idempotencyKey: "turn-1",
+        allowedTools: ["escalateEmergency"],
+      }),
+    );
+    await useCase.execute(
+      baseCommand({
+        transcript: "oh wait my sync just exploded",
+        idempotencyKey: "turn-2",
+        allowedTools: ["escalateEmergency"],
+      }),
+    );
+
+    expect(escalateHandler.execute).toHaveBeenCalledTimes(2);
+    expect(escalateHandler.execute.mock.calls[1]?.[0]).toEqual({
+      description: "oh wait my sync just exploded",
+    });
+  });
+
   /**
    * Found forensically reviewing a SECOND real call, minutes after the
    * caller separately, live, complained about being talked over: rapid

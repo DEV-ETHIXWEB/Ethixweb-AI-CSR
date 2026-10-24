@@ -176,6 +176,8 @@ describe("EscalateEmergencyUseCase", () => {
     "the toilet is bubbling and sewage keeps backing up, no big deal",
     "so there's water pouring out of the ceiling, kinda annoying",
     "my basement has water up to my ankles, not a huge deal",
+    // 2026-10-24, Yash's test call, as transcribed.
+    "oh wait my sync just exploded",
   ])("treats a casual-toned emergency as an emergency: %s", async (description) => {
     const useCase = buildUseCase();
 

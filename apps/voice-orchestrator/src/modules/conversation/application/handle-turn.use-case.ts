@@ -2536,6 +2536,9 @@ function looksEmergencyAdjacent(transcript: string): boolean {
     "electrical smell",
     "smoke",
     "sparking",
+    // 2026-10-24: "my sink just exploded"; see core-api's default rules.
+    "exploded",
+    "blew up",
   ];
   return triggers.some((trigger) => lower.includes(trigger));
 }
