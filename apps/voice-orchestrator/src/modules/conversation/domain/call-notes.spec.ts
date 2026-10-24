@@ -13,6 +13,13 @@ import {
  * own test calls). Names, numbers and addresses here are invented.
  */
 describe("buildCallNotes", () => {
+  it('2026-10-24 test calls: an accented surname is kept whole; "better than" is no name', () => {
+    expect(buildCallNotes(["my name is alejandro gonzález"]).statedName).toBe("Alejandro Gonzalez");
+    expect(
+      buildCallNotes(["well my name is marcus william", "it's better than i do"]).statedName,
+    ).toBe("Marcus William");
+  });
+
   it("never takes the ZIP for a house number with no street name (Akash's test call)", () => {
     const notes = buildCallNotes([
       "and the service address is one one nine zero federal avenue",

@@ -177,9 +177,11 @@ const NAME_QUESTION =
  * Grace kept asking for a name she already had.
  */
 export function buildCallNotes(
-  callerTexts: readonly string[],
-  turns: ReadonlyArray<{ speaker: string; text: string }> = [],
+  rawCallerTexts: readonly string[],
+  rawTurns: ReadonlyArray<{ speaker: string; text: string }> = [],
 ): CallNotes {
+  const callerTexts = rawCallerTexts.map(withoutAccents);
+  const turns = rawTurns.map((turn) => ({ ...turn, text: withoutAccents(turn.text) }));
   const spellingAsked = turns.some(
     (turn) => turn.speaker === "agent" && /\bspell\b/i.test(turn.text),
   );
@@ -456,8 +458,17 @@ function splitForFields(fullName: string): string {
 }
 
 /** "Siobhan Okonkwo" -> "S-I-O-B-H-A-N, O-K-O-N-K-W-O". */
+/**
+ * 2026-10-24, Yash's test call: "my name is alejandro gonzález" went into the
+ * notes as "Alejandro Gonz", and Grace spelled it "G-O-N-Z". Every name rule
+ * here reads a-z; an accented letter ended the word. "á" is read as "a".
+ */
+export function withoutAccents(text: string): string {
+  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
 export function spellOut(name: string): string {
-  return name
+  return withoutAccents(name)
     .split(/\s+/)
     .map((word) =>
       word
@@ -1067,7 +1078,9 @@ const SPOKEN_NUMBERS = new Set([
  * have a leak", "this is Tom at 4512 Maple", "Tom from the restaurant" are
  * how people actually introduce themselves.
  */
-const NOT_AFTER_A_NAME = /^\s+(?:to|about|that|of|if|because|so|the|a|an)\b/i;
+// "than": 2026-10-24, Prateek's test call: "it's better than i do" became
+// the name "Better Than", and Grace asked him to spell it mid-address.
+const NOT_AFTER_A_NAME = /^\s+(?:to|about|that|of|if|because|so|the|a|an|than)\b/i;
 const LOOSE_CUE = /^(?:i'?m|i am|it'?s|it is|this is)\b/i;
 
 /** "the last name is Lindquist", "surname's Okonkwo". */
