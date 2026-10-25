@@ -1449,6 +1449,80 @@ function streetIn(text: string): string | null {
       break;
     }
   }
+  return found ?? streetBeforeZip(tokens);
+}
+
+/**
+ * 2026-10-25, the client's test calls: "five one four west main nine eight
+ * three seven one washington" and "five four zero seven southford port
+ * seattle nine eight one one eight" were read back and confirmed, but have
+ * no street type, so the notes never held a street and Grace asked for the
+ * address again and again ("i already gave you the address ... look back
+ * into your memory"). A house number of three or more digits and one to four
+ * words straight before a five-digit ZIP is a street too, less any city or
+ * state at its end ("3 kids 98101" is not).
+ */
+const LOCALITY_WORDS = new Set([
+  "seattle",
+  "washington",
+  "wa",
+  "tacoma",
+  "bellevue",
+  "kent",
+  "renton",
+  "everett",
+  "kirkland",
+  "redmond",
+  "bothell",
+  "auburn",
+  "burien",
+  "lynnwood",
+  "shoreline",
+  "issaquah",
+  "sammamish",
+  "puyallup",
+  "lakewood",
+  "edmonds",
+]);
+
+/** "98103 not 98101" is a ZIP being corrected, not "98103 Not" street. */
+const NEVER_IN_A_STREET = new Set([
+  ...NOT_A_STREET_NAME,
+  "not",
+  "no",
+  "or",
+  "but",
+  "was",
+  "zip",
+  "code",
+  "number",
+  "phone",
+  "call",
+  "me",
+  "at",
+]);
+
+function streetBeforeZip(tokens: readonly string[]): string | null {
+  let found: string | null = null;
+  for (let house = 0; house < tokens.length; house += 1) {
+    if (!/^\d{3,6}$/.test(tokens[house] ?? "")) {
+      continue;
+    }
+    let end = house + 1;
+    while (end < tokens.length && end - house <= 5 && /^[a-z][a-z-]*$/.test(tokens[end] ?? "")) {
+      end += 1;
+    }
+    if (!/^\d{5}$/.test(tokens[end] ?? "")) {
+      continue;
+    }
+    const words = tokens.slice(house + 1, end);
+    while (words.length > 0 && LOCALITY_WORDS.has(words.at(-1)!)) {
+      words.pop();
+    }
+    if (words.length >= 1 && words.length <= 4 && !words.some((w) => NEVER_IN_A_STREET.has(w))) {
+      found = [tokens[house], ...words].join(" ");
+    }
+  }
   return found;
 }
 

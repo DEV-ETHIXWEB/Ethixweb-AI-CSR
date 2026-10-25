@@ -114,3 +114,26 @@ describe("2026-10-25 test calls: the problem is kept in the caller's own words",
     expect(notes).toContain("intermittent leak in my basement");
   });
 });
+
+describe("2026-10-25 test calls: an address with no street type is still an address", () => {
+  it.each([
+    [
+      "okay it's five one four west main nine eight three seven one washington bye",
+      "514 west main",
+    ],
+    [
+      "with the street address is five four zero seven southford port seattle nine eight one one eight",
+      "5407 southford port",
+    ],
+    ["it's 1200 pine street seattle 98101", "1200 pine street"],
+  ])("%p", (said, street) => {
+    expect(buildCallNotes([said]).street).toBe(street);
+  });
+
+  it.each(["i have 3 kids 98101", "seattle washington nine eight zero two one"])(
+    "but not %p",
+    (said) => {
+      expect(buildCallNotes([said]).street).toBeNull();
+    },
+  );
+});
