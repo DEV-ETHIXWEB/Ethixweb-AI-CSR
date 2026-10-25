@@ -205,6 +205,49 @@ describe("CallSessionOrchestrator", () => {
       expect(orchestratorClient.interruptCalls[0]?.req.tenantId).toBe("tenant-1");
     });
 
+    it("2026-10-24, Prateek: after talking over the start of a reply, the caller gets a moment before the next one", async () => {
+      const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      tts.chunkBytes = 16_000;
+      tts.chunkDelayMs = 0;
+      const reply = (responseText: string) => ({
+        conversationId: "conv-1",
+        responseText,
+        toolCallsExecuted: [],
+        interrupted: false,
+        state: "qualifying" as const,
+      });
+      orchestratorClient.turnResponses = [
+        reply("Got it, Marcus. Can you please provide the service address?"),
+        reply("Thanks, Marcus William."),
+        reply("Got it."),
+      ];
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+
+      // Before any talk-over, a finished utterance goes straight through.
+      session.emitFinalTranscript("well my name is marcus", 0.95);
+      await flushMicrotasks();
+      expect(orchestratorClient.turnCalls).toHaveLength(1);
+      await new Promise((r) => setTimeout(r, 30));
+
+      // "william" lands over the first moment of her reply.
+      session.emitSpeechStarted();
+      session.emitInterimSpeech("william");
+      await flushMicrotasks();
+      session.emitFinalTranscript("william my last name is william", 0.95);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(orchestratorClient.turnCalls).toHaveLength(1);
+      await new Promise((r) => setTimeout(r, 1100));
+      expect(orchestratorClient.turnCalls).toHaveLength(2);
+
+      // A one- or two-word answer never waits.
+      await new Promise((r) => setTimeout(r, 30));
+      session.emitFinalTranscript("yes", 0.95);
+      await flushMicrotasks();
+      expect(orchestratorClient.turnCalls).toHaveLength(3);
+    });
+
     it("REAL-CALL REGRESSION 9ecc6846: stops Grace when the caller talks while her reply is still PLAYING, even though it finished SENDING instantly", async () => {
       const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
       const sink = new FakeMediaStreamSink();

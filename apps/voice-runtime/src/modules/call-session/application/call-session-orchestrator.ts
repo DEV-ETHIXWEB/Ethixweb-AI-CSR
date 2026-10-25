@@ -108,6 +108,25 @@ const SPEAKING_HOLD_EXTENSION_MS = 1500;
 /** No hold, however it was extended, runs longer than this. */
 const MAX_FRAGMENT_HOLD_MS = 10_000;
 
+/**
+ * 2026-10-24, Prateek: "sometimes it interrupts and when I speak then she
+ * speaks and this cycle kept repeating for 3 times, and when I speak slowly
+ * like an old man it interrupts". His call: "well my name is marcus" was
+ * finished by Deepgram at a pause, Grace began her reply, and "william"
+ * came over it; then the same with "and my service address is basically".
+ * A caller who has talked over the first seconds of a reply pauses mid-
+ * thought, so for the rest of the call a finished-sounding utterance waits
+ * this long first (extended while they keep talking). Other callers keep
+ * the immediate reply; one- and two-word answers never wait.
+ */
+const PATIENT_HOLD_MS = 1000;
+/** Talking over a reply this soon after it began counts for PATIENT_HOLD_MS. */
+const EARLY_TALK_OVER_MS = 2500;
+
+function wordCount(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
 /** Bounds a capacity-429 wait loop — a caller genuinely on hold this long has almost certainly already hung up or should hit the tenant's configured overflowNumber instead of waiting forever. Not a documented constant, an INFERRED safety limit (same honesty convention as voice-orchestrator's own MAX_TOOL_ITERATIONS). */
 const MAX_CAPACITY_RETRY_ATTEMPTS = 3;
 /** Bounds a turn's ambiguous-outcome retry loop (docs/28 §G: retry the SAME idempotencyKey on timeout/5xx). Not calling shared-kernel's withRetry directly: its exponential-backoff timing (up to 64s between attempts) is wrong for a caller on a live line waiting to hear a response — a live call needs a much tighter, capped retry, not the platform-wide async-job default. */
@@ -422,6 +441,10 @@ export class CallSessionOrchestrator {
   private lastFinalTranscriptAt: number | null = null;
   /** Counts finished caller utterances; see rearmIfNoTurnFollows. */
   private finalTranscriptCount = 0;
+  /** When the caller first heard the reply now playing; see PATIENT_HOLD_MS. */
+  private replyAudioStartedAt = 0;
+  /** How many replies this caller has talked over in their first seconds; see PATIENT_HOLD_MS. */
+  private talkedOverReplyStarts = 0;
   /** The reply being waited for, until its first audio goes out; see recordSentAudio. */
   private turnLatency: { committedAt: number; heldMs: number; log: StructuredLogger } | null = null;
   private ended = false;
@@ -736,6 +759,10 @@ export class CallSessionOrchestrator {
     const strength = fragmentStrength(result.transcript);
     const addressComing = addressStillComing(this.pendingFragment.transcript, this.lastSpokenText);
     if (strength === "none" && !addressComing) {
+      if (this.talkedOverReplyStarts > 0 && wordCount(this.pendingFragment.transcript) > 2) {
+        this.armFragmentHold(params, sink, log, PATIENT_HOLD_MS);
+        return;
+      }
       this.fragmentHold = null;
       this.commitPendingFragment(params, sink, log);
       return;
@@ -1542,6 +1569,16 @@ export class CallSessionOrchestrator {
           conversationId: this.conversationId,
         },
       );
+      if (Date.now() - this.replyAudioStartedAt < EARLY_TALK_OVER_MS) {
+        this.talkedOverReplyStarts += 1;
+        this.logger.info(
+          "caller talked over the start of a reply — waiting longer before replying",
+          {
+            conversationId: this.conversationId,
+            times: this.talkedOverReplyStarts,
+          },
+        );
+      }
       this.stopAudibleAudio(sink);
       if (this.conversationId) {
         this.orchestrator
@@ -1754,6 +1791,7 @@ export class CallSessionOrchestrator {
     if (this.turnLatency) {
       const { committedAt, heldMs, log } = this.turnLatency;
       this.turnLatency = null;
+      this.replyAudioStartedAt = Date.now();
       const toFirstAudioMs = Date.now() - committedAt;
       log.info("turn latency", { heldMs, toFirstAudioMs, totalMs: heldMs + toFirstAudioMs });
     }
