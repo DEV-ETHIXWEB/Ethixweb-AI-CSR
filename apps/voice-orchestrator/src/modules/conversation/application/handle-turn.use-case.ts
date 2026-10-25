@@ -898,7 +898,15 @@ export class HandleTurnUseCase {
       ? tools.filter((tool) => tool.name !== "escalateEmergency")
       : tools;
 
-    for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+    // See IN_DANGER. Not left to the model: 2026-10-25, live test, it said
+    // the line and then asked "Can you let me know your name?".
+    if (inDanger) {
+      responseText = IN_DANGER_LINE;
+      onChunk?.(responseText);
+      pushMessage({ role: "assistant", content: responseText });
+    }
+
+    for (let iteration = 0; !inDanger && iteration < MAX_TOOL_ITERATIONS; iteration++) {
       // See SILENT_TURN_BUDGET_MS: a turn that has run this long without
       // producing a single spoken word is the shape voice-runtime turns
       // into "Sorry, I'm having trouble right now." Stop here while a
@@ -2740,10 +2748,10 @@ const NAME_NUDGE_AFTER_CALLER_TURNS = 3;
  */
 const IN_DANGER =
   /\b(suicid\w*|kill(?:ing)? myself|end my life|(?:shot|shoot|shooting|cut|cutting|hurt|hurting) myself|overdos\w*|i(?:'m| am) bleeding|bleeding (?:a lot|badly|everywhere)|can'?t breathe|not breathing|heart attack|unconscious|passed out|stroke)\b/i;
-const IN_DANGER_NOTE =
-  '[Safety first: the caller may be in danger. Your whole reply, exactly: "If you or anyone ' +
-  'there is in danger, please hang up and call 911 right now. You can also call or text 988, ' +
-  'the crisis line, any time." Say nothing about plumbing in this reply.]';
+const IN_DANGER_LINE =
+  "If you or anyone there is in danger, please hang up and call 911 right now. You can also " +
+  "call or text 988, the crisis line, any time.";
+const IN_DANGER_NOTE = `[Safety first: the caller may be in danger. You said: "${IN_DANGER_LINE}"]`;
 
 const NAME_MISSING_NOTE =
   "[System note: you still do not have this caller's name and have not asked for it. " +

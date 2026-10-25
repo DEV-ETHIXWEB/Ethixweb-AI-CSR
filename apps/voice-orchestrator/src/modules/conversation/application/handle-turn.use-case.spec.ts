@@ -5054,12 +5054,14 @@ describe("2026-10-25, the client's test call: a caller in danger", () => {
     const aiProvider = new FakeAiProvider();
     const { useCase } = buildUseCase({ aiProvider, repository });
 
-    await useCase.execute(baseCommand({ transcript: said }));
+    const result = await useCase.execute(baseCommand({ transcript: said }));
 
-    const sent =
-      aiProvider.requests[0]?.messages.filter((m) => m.role === "user").at(-1)?.content ?? "";
-    expect(sent).toContain("call 911 right now");
-    expect(sent).toContain("988");
+    // Exactly the line, and nothing from the model (live test: it added
+    // "Can you let me know your name?").
+    expect(result.responseText).toBe(
+      "If you or anyone there is in danger, please hang up and call 911 right now. You can also call or text 988, the crisis line, any time.",
+    );
+    expect(aiProvider.requests).toHaveLength(0);
   });
 
   it("not for ordinary plumbing words", async () => {
