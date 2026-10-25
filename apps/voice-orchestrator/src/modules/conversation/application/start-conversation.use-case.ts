@@ -76,8 +76,11 @@ export function buildOpeningGreeting(businessName: string | null): string {
   // heard "Grace at All Phase Plumbing Main Office". The company name is
   // everything before the first spaced dash.
   const business = businessName?.split(/\s+[—–-]\s+/)[0]?.trim();
+  // The comma after the name: 2026-10-25, callers keep hearing "Chris" ("hi
+  // this is chris"); the pause sets the name apart. voice-runtime also says
+  // the greeting slowly, as the client asked.
   return business
-    ? `Hi, this is ${name} at ${business}. What can I help you with?`
+    ? `Hi, this is ${name}, at ${business}. What can I help you with?`
     : `Hi, this is ${name}. What can I help you with?`;
 }
 

@@ -721,7 +721,10 @@ export class CallSessionOrchestrator {
     // ttsPlaying/onSpeechStarted mechanism `speak()` already uses for
     // every later turn, not a special case for this one.
     if (greeting) {
-      await this.speak(greeting, sink);
+      // 2026-10-25, the client, after asking for it again "a bit slower":
+      // "please use that slower tone always ... hi this is grace at all
+      // phase plumbing what can i help you".
+      await this.speak(`[slowly] ${greeting}`, sink);
       this.armSilenceCheckIn(sink);
     } else {
       // Only reachable against an older voice-orchestrator deployment

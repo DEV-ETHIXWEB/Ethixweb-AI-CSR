@@ -124,7 +124,7 @@ describe("StartConversationUseCase", () => {
       callerAni: "+15551234567",
     });
 
-    expect(greeting).toBe("Hi, this is Grace at All Phase Plumbing. What can I help you with?");
+    expect(greeting).toBe("Hi, this is Grace, at All Phase Plumbing. What can I help you with?");
     expect(conversation.messages).toEqual([
       { role: "user", content: expect.stringContaining("The call has just connected") },
       { role: "assistant", content: greeting },
@@ -142,14 +142,14 @@ describe("StartConversationUseCase", () => {
 
   it("speaks the company name without the branch label the business record carries", () => {
     expect(buildOpeningGreeting("All Phase Plumbing — Main Office")).toBe(
-      "Hi, this is Grace at All Phase Plumbing. What can I help you with?",
+      "Hi, this is Grace, at All Phase Plumbing. What can I help you with?",
     );
     expect(buildOpeningGreeting("Acme Drains - Tacoma")).toBe(
-      "Hi, this is Grace at Acme Drains. What can I help you with?",
+      "Hi, this is Grace, at Acme Drains. What can I help you with?",
     );
     // A hyphen INSIDE a name is not a branch separator.
     expect(buildOpeningGreeting("Rock-Solid Plumbing")).toBe(
-      "Hi, this is Grace at Rock-Solid Plumbing. What can I help you with?",
+      "Hi, this is Grace, at Rock-Solid Plumbing. What can I help you with?",
     );
   });
 
