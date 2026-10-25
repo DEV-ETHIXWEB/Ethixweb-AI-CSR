@@ -851,15 +851,21 @@ export class HandleTurnUseCase {
     // guarantee, one round trip less.
     let emergencyPreChecked = false;
     let emergencyPreCheckOutput: unknown;
+    // 2026-10-25, the client's test call: "a pipe under my kitchen sink just
+    // burst ... water is actively spraying out right now" was cut short when
+    // he went on talking, and his next words ("this is my second call ...
+    // nobody ever showed up") were checked alone: no emergency, no transfer.
+    // Everything the caller has said since Grace last spoke is checked.
+    const emergencyText = callerWordsSinceGraceSpoke(conversation, command.transcript);
     if (
       command.allowedTools.includes("escalateEmergency") &&
       (!hasCalledEscalateEmergency(conversation) ||
-        (looksEmergencyAdjacent(command.transcript) &&
-          conversation.lastEmergencyCheckedTranscript !== command.transcript))
+        (looksEmergencyAdjacent(emergencyText) &&
+          conversation.lastEmergencyCheckedTranscript !== emergencyText))
     ) {
-      const call = buildEscalationBackstopCall(command.transcript);
+      const call = buildEscalationBackstopCall(emergencyText);
       conversation.emergencyEverChecked = true;
-      conversation.lastEmergencyCheckedTranscript = command.transcript;
+      conversation.lastEmergencyCheckedTranscript = emergencyText;
       toolCallsExecuted.push(call.name);
       pushMessage({ role: "assistant", content: "", toolCalls: [call] });
       const ran = await this.runTool(
@@ -1031,10 +1037,10 @@ export class HandleTurnUseCase {
         if (
           command.allowedTools.includes("escalateEmergency") &&
           (!hasCalledEscalateEmergency(conversation) ||
-            (looksEmergencyAdjacent(command.transcript) &&
-              conversation.lastEmergencyCheckedTranscript !== command.transcript))
+            (looksEmergencyAdjacent(emergencyText) &&
+              conversation.lastEmergencyCheckedTranscript !== emergencyText))
         ) {
-          backstops.push(buildEscalationBackstopCall(command.transcript));
+          backstops.push(buildEscalationBackstopCall(emergencyText));
         }
         if (backstops.length > 0) {
           toolCalls = backstops;
@@ -1120,7 +1126,7 @@ export class HandleTurnUseCase {
         toolCallsExecuted.push(toolCall.name);
         if (toolCall.name === "escalateEmergency") {
           conversation.emergencyEverChecked = true;
-          conversation.lastEmergencyCheckedTranscript = command.transcript;
+          conversation.lastEmergencyCheckedTranscript = emergencyText;
         }
         if (toolCall.name === "searchCustomer") {
           conversation.searchCustomerEverChecked = true;
@@ -2474,6 +2480,19 @@ function hasCalledEscalateEmergency(conversation: Conversation): boolean {
   return conversation.messages.some((message) =>
     message.toolCalls?.some((toolCall) => toolCall.name === "escalateEmergency"),
   );
+}
+
+/** The caller's lines since Grace last spoke (turns cut short leave theirs behind), ending with this one. */
+function callerWordsSinceGraceSpoke(conversation: Conversation, latest: string): string {
+  const lines: string[] = [];
+  for (let i = conversation.transcript.length - 1; i >= 0; i -= 1) {
+    const entry = conversation.transcript[i]!;
+    if (entry.speaker !== "caller") {
+      break;
+    }
+    lines.unshift(entry.text);
+  }
+  return lines.length > 0 && lines.at(-1) === latest ? lines.join(" ") : latest;
 }
 
 function buildEscalationBackstopCall(transcript: string): AiToolCallRequest {

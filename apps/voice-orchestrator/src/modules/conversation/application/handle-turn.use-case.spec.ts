@@ -2409,6 +2409,49 @@ describe("HandleTurnUseCase", () => {
     expect(result.toolCallsExecuted).toEqual(["escalateEmergency"]);
   });
 
+  it("2026-10-25, the client: a burst pipe said in a turn cut short is still checked", async () => {
+    const repository = new FakeConversationRepository();
+    const at = new Date().toISOString();
+    repository.seed(
+      baseConversation({
+        emergencyEverChecked: true,
+        transcript: [
+          {
+            turnIndex: 0,
+            speaker: "caller",
+            text: "a pipe under my kitchen sink just burst and water is actively spraying out right now",
+            confidence: null,
+            offsetMs: 0,
+            at,
+          },
+        ],
+      }),
+    );
+    const escalateHandler = {
+      execute: jest.fn().mockResolvedValue({
+        isEmergency: true,
+        severity: "critical",
+        action: "forward_call",
+        transferDestination: "+12065550100",
+      }),
+    };
+    const { useCase } = buildUseCase({
+      repository,
+      registeredTools: [{ name: "escalateEmergency", handler: escalateHandler }],
+    });
+
+    const result = await useCase.execute(
+      baseCommand({
+        transcript: "and honestly this is my second call and nobody ever showed up",
+        allowedTools: ["escalateEmergency"],
+      }),
+    );
+
+    expect(escalateHandler.execute).toHaveBeenCalledTimes(1);
+    expect(escalateHandler.execute.mock.calls[0]?.[0].description).toContain("actively spraying");
+    expect(result.escalation?.action).toBe("forward_call");
+  });
+
   it('2026-10-24, Yash\'s test call: "my sync just exploded" mid-call is checked again', async () => {
     const repository = new FakeConversationRepository();
     repository.seed(baseConversation());
