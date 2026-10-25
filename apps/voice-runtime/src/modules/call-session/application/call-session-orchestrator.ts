@@ -548,6 +548,9 @@ export class CallSessionOrchestrator {
    */
   async onCallStart(params: CallSessionParams, sink: MediaStreamSink): Promise<void> {
     const log = this.logger.child({ tenantId: params.tenantId, callId: params.callId });
+    // See ElevenLabsTtsProvider.warmUp: the first reply's voice is otherwise
+    // cold after an idle stretch.
+    this.tts.warmUp?.();
 
     let conversationId: string;
     let greeting: string | undefined;

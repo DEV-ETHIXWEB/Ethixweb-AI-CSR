@@ -205,6 +205,12 @@ describe("CallSessionOrchestrator", () => {
       expect(orchestratorClient.interruptCalls[0]?.req.tenantId).toBe("tenant-1");
     });
 
+    it("2026-10-24: warms the voice up as the call starts", async () => {
+      const { orchestrator, tts } = buildOrchestratorUnderTest();
+      await orchestrator.onCallStart(baseParams(), new FakeMediaStreamSink());
+      expect(tts.warmUpCalls).toBe(1);
+    });
+
     it("2026-10-24, Prateek: after talking over the start of a reply, the caller gets a moment before the next one", async () => {
       const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
       const sink = new FakeMediaStreamSink();

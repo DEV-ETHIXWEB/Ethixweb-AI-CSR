@@ -80,10 +80,68 @@ const MAX_CACHED_UTTERANCES = 64;
 const INACTIVITY_TIMEOUT_S = 120;
 const SPARE_MAX_AGE_MS = 100_000;
 
+/**
+ * 2026-10-24 test calls: the first reply of a call took 1.7-1.9 s to its
+ * first audio after the voice had been idle for hours (later replies: 0.3 s;
+ * a call two minutes after another: 0.3 s from the start). Opening the socket
+ * early (above) does not help; the cold part is ElevenLabs' own first render.
+ * So at call start, while the greeting plays, one throwaway word is rendered
+ * and discarded, unless something was rendered within this long.
+ */
+const WARM_FOR_MS = 60_000;
+const WARM_UP_TEXT = "Okay.";
+
+function streamUrl(voiceId: string): string {
+  const modelId = process.env["ELEVENLABS_MODEL_ID"] ?? "eleven_turbo_v2_5";
+  return `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?output_format=ulaw_8000&model_id=${modelId}&inactivity_timeout=${INACTIVITY_TIMEOUT_S}`;
+}
+
 @Injectable()
 export class ElevenLabsTtsProvider implements TextToSpeechProvider {
   private readonly audioCache = new Map<string, Buffer[]>();
   private spare: { url: string; socket: WebSocket; openedAt: number } | null = null;
+  private lastRenderAt = 0;
+
+  /** See WARM_FOR_MS. Never throws; nothing it renders is played. */
+  warmUp(): void {
+    const apiKey = process.env["ELEVENLABS_API_KEY"];
+    const voiceId = process.env["ELEVENLABS_VOICE_ID"];
+    if (!apiKey || !voiceId || Date.now() - this.lastRenderAt < WARM_FOR_MS) {
+      return;
+    }
+    this.lastRenderAt = Date.now();
+    const socket = new WebSocket(streamUrl(voiceId));
+    const giveUp = setTimeout(() => socket.close(), 10_000);
+    socket.on("error", () => undefined);
+    socket.on("close", () => clearTimeout(giveUp));
+    socket.on("open", () => {
+      socket.send(
+        JSON.stringify({
+          text: " ",
+          voice_settings: {
+            stability: DEFAULT_VOICE_DELIVERY_SETTINGS.stability,
+            similarity_boost: DEFAULT_VOICE_DELIVERY_SETTINGS.similarityBoost,
+            style: DEFAULT_VOICE_DELIVERY_SETTINGS.style,
+            speed: DEFAULT_VOICE_DELIVERY_SETTINGS.speed,
+          },
+          xi_api_key: apiKey,
+        }),
+      );
+      socket.send(JSON.stringify({ text: `${WARM_UP_TEXT} `, flush: true }));
+      socket.send(JSON.stringify({ text: "" }));
+    });
+    socket.on("message", (data: WebSocket.RawData) => {
+      try {
+        const text = Buffer.isBuffer(data) ? data.toString("utf8") : "";
+        const message = JSON.parse(text) as Record<string, unknown>;
+        if (message["isFinal"] === true) {
+          socket.close();
+        }
+      } catch {
+        socket.close();
+      }
+    });
+  }
 
   /** The socket opened ahead of time, if it still suits; otherwise a new one. */
   private takeSocket(url: string): WebSocket {
@@ -143,7 +201,7 @@ export class ElevenLabsTtsProvider implements TextToSpeechProvider {
             text,
           ].join("|")
         : null;
-    const url = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?output_format=ulaw_8000&model_id=${modelId}&inactivity_timeout=${INACTIVITY_TIMEOUT_S}`;
+    const url = streamUrl(voiceId);
     const cached = cacheKey ? this.audioCache.get(cacheKey) : undefined;
     if (cacheKey && cached) {
       // A replayed clip (the greeting, mostly) is where a call starts, so the
@@ -162,6 +220,7 @@ export class ElevenLabsTtsProvider implements TextToSpeechProvider {
     }
 
     const socket = this.takeSocket(url);
+    this.lastRenderAt = Date.now();
     const recorded: Buffer[] = [];
     let renderCompleted = false;
 

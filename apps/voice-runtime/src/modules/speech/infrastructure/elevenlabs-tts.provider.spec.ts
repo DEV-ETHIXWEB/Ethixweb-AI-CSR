@@ -416,3 +416,29 @@ describe("ElevenLabsTtsProvider", () => {
     });
   });
 });
+
+describe("ElevenLabsTtsProvider.warmUp (2026-10-24: a cold first reply)", () => {
+  beforeEach(() => {
+    process.env["ELEVENLABS_API_KEY"] = "test-elevenlabs-key";
+    process.env["ELEVENLABS_VOICE_ID"] = "test-voice-id";
+    lastSocket = undefined;
+  });
+
+  it("renders one throwaway word on its own socket and closes it when done", () => {
+    const provider = new ElevenLabsTtsProvider();
+    provider.warmUp();
+    const socket = lastSocket!;
+    socket.simulateOpen();
+    expect(socket.sent.some((frame) => frame.includes('"Okay. "'))).toBe(true);
+    socket.simulateFinal();
+    expect(socket.closeCallCount).toBe(1);
+  });
+
+  it("does nothing again within a minute", () => {
+    const provider = new ElevenLabsTtsProvider();
+    provider.warmUp();
+    const first = lastSocket;
+    provider.warmUp();
+    expect(lastSocket).toBe(first);
+  });
+});

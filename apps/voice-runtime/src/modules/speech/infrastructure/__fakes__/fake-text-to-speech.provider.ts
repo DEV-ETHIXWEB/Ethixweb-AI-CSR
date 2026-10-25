@@ -12,6 +12,11 @@ import {
  */
 export class FakeTextToSpeechProvider implements TextToSpeechProvider {
   readonly synthesizeCalls: string[] = [];
+  warmUpCalls = 0;
+
+  warmUp(): void {
+    this.warmUpCalls += 1;
+  }
   /** Parallel to `synthesizeCalls` (same index) — the voice settings each call actually received, so emotional-delivery tests can assert on the resolved stability/style/speed, not just the spoken text. */
   readonly voiceSettingsCalls: VoiceDeliverySettings[] = [];
   chunksPerCall = 3;

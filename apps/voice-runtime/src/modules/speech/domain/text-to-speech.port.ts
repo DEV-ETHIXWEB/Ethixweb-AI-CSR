@@ -66,6 +66,8 @@ export interface TextToSpeechProvider {
     signal?: AbortSignal,
     voiceSettings?: VoiceDeliverySettings,
   ): AsyncIterable<Buffer>;
+  /** Readies the voice for a call about to start, without producing audio. Best-effort; optional. */
+  warmUp?(): void;
 }
 
 export const TEXT_TO_SPEECH_PROVIDER = Symbol("TEXT_TO_SPEECH_PROVIDER");
