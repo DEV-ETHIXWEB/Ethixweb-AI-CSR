@@ -1684,6 +1684,16 @@ export function addressDisputeNote(
   if (!disputedInWords && !negatedAReadback) {
     return null;
   }
+  // 2026-10-25, the client: the closing line read back his name AND address,
+  // he said "no", and Grace asked "is it the house number, street name, or
+  // the ZIP?". It was the name. A bare "no" to both asks which one.
+  if (!disputedInWords && SPELLED_IN_A_READBACK.test(agentTexts.at(-1) ?? "")) {
+    return (
+      "[The caller says something you just read back is wrong, and you read back both their name " +
+      "and their address. Your whole reply: ask which one needs fixing, the name or the address, " +
+      "in one short question.]"
+    );
+  }
   return (
     "[The caller is telling you the service address is wrong. The street in the call notes above " +
     "is NOT confirmed: ignore it. Your whole reply: ask for the one part they are correcting " +
@@ -1691,6 +1701,9 @@ export function addressDisputeNote(
     "the call, and do not say they are all set until they have confirmed the corrected address.]"
   );
 }
+
+/** "D-O-N-A-L-D": a name spelled out in Grace's own reply. */
+const SPELLED_IN_A_READBACK = /\b[A-Z](?:-[A-Z]){2,}\b/;
 
 /** "that's not my name", "you got my name wrong", "wrong name". */
 const NAME_DISPUTED =

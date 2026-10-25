@@ -1,4 +1,4 @@
-import { buildCallNotes, formatCallNotes } from "./call-notes";
+import { addressDisputeNote, buildCallNotes, formatCallNotes } from "./call-notes";
 
 /**
  * 2026-10-25, the client's test calls: every name below was saved or said
@@ -136,4 +136,24 @@ describe("2026-10-25 test calls: an address with no street type is still an addr
       expect(buildCallNotes([said]).street).toBeNull();
     },
   );
+});
+
+describe('2026-10-25 test call: "no" to a read-back of both name and address', () => {
+  it("asks which one is wrong", () => {
+    const note = addressDisputeNote(
+      ["well it's five four zero seven south hood court seattle nine eight one one eight", "no"],
+      [
+        "Let me make sure I have it right: Donald, D-O-N-A-L-D, Burke, B-U-R-K-E, at 5-4-oh-7 south hood court, ZIP 9-8-1-1-8. Is that right?",
+      ],
+    )!;
+    expect(note).toContain("the name or the address");
+  });
+
+  it("an address-only read-back still asks for the part of the address", () => {
+    const note = addressDisputeNote(
+      ["4512 maple street", "no"],
+      ["So that's 4-5-1-2 Maple Street, 9-8-0-3-2?"],
+    )!;
+    expect(note).toContain("service address is wrong");
+  });
 });
