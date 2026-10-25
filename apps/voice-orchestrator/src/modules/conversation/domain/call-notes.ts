@@ -830,6 +830,35 @@ const NOT_A_NAME_EXTRA = new Set([
   // 2026-10-25: "this is chris said ...", "it's plus one eight seven ...".
   "said",
   "plus",
+  // 2026-10-25, replaying every recorded call: "i'm doing good", "i am if you
+  // can repeat", "i'm lonely", "i am new", "this is jordan quick question",
+  // "this is george cancel my appointment", "add it" (for a last name), "it's
+  // huge", "i am old". Ordinary words that follow "I'm" and "it's" all day.
+  // Not Will, Hope, Faith or Grace, which are names too.
+  "doing",
+  "if",
+  "new",
+  "lonely",
+  "quick",
+  "cancel",
+  "add",
+  "huge",
+  "old",
+  "fine",
+  "good",
+  "sorry",
+  "calling",
+  "looking",
+  "trying",
+  "having",
+  "going",
+  "getting",
+  "done",
+  "ready",
+  "busy",
+  "tired",
+  "glad",
+  "happy",
   "at",
   "in",
   "on",
@@ -1329,6 +1358,7 @@ function lastStreet(callerTexts: readonly string[]): string | null {
     const candidates = [
       callerTexts[i] ?? "",
       `${callerTexts[i - 1] ?? ""} ${callerTexts[i] ?? ""}`,
+      numberedStreetAfterHouse(callerTexts[i - 1] ?? "", callerTexts[i] ?? ""),
     ];
     for (const candidate of candidates) {
       const street = streetIn(candidate);
@@ -1341,6 +1371,28 @@ function lastStreet(callerTexts: readonly string[]): string | null {
     }
   }
   return null;
+}
+
+/**
+ * 2026-10-25, replaying every recorded call: "well fifty three one two", then
+ * "one hundred fifty six drive northeast". Joined, the two numbers run into
+ * one (5312156) and no street parses; alone, "156 drive" has no name. When
+ * one utterance is only a house number and the next opens with a number
+ * straight before a street type, that number is the street's: "5312 156th
+ * drive northeast".
+ */
+function numberedStreetAfterHouse(before: string, now: string): string {
+  const house = collapseSpokenDigits(before.toLowerCase())
+    .replace(/\b(?:well|so|um|uh|okay|ok|it'?s|its|it is|the address is|my address is)\b/g, " ")
+    .trim();
+  const street = collapseSpokenDigits(now.toLowerCase()).trim();
+  const number = street.match(/^(\d{1,3})\s+([a-z]+)\b(.*)$/);
+  if (!/^\d{3,6}$/.test(house) || !number || !STREET_SUFFIXES.has(number[2]!)) {
+    return "";
+  }
+  const n = Number(number[1]);
+  const ending = n % 100 >= 11 && n % 100 <= 13 ? "th" : (["th", "st", "nd", "rd"][n % 10] ?? "th");
+  return `${house} ${n}${ending} ${number[2]}${number[3]}`;
 }
 
 /**

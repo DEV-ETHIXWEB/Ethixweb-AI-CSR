@@ -157,3 +157,42 @@ describe('2026-10-25 test call: "no" to a read-back of both name and address', (
     expect(note).toContain("service address is wrong");
   });
 });
+
+describe("2026-10-25, replaying every recorded call", () => {
+  it.each([
+    ["i'm doing good i wanted to know what kind of information do you have"],
+    ["same as i am if you can repeat my address"],
+    ["but i'm lonely"],
+  ])("%p is no name", (said) => {
+    expect(nameAfter([said])).toBeNull();
+  });
+
+  it.each([
+    ["hey grace this is jordan quick question before i book anything", "Jordan"],
+    ["hi grace this is george cancel my appointment", "George"],
+  ])("%p is %p", (said, name) => {
+    expect(nameAfter([said])).toBe(name);
+  });
+
+  it('"add it" answering "your last name?" is no surname', () => {
+    expect(
+      nameAfter(
+        ["hey my name is paul and i need a gas line installed", "add it"],
+        ["Got it. Can I get your last name, Paul?"],
+      ),
+    ).toBe("Paul");
+  });
+
+  it.each([
+    ["twelve hundred pine street seattle", "1200 pine street"],
+    ["two hundred and five main street", "205 main street"],
+  ])("%p is the street %p", (said, street) => {
+    expect(buildCallNotes([said]).street).toBe(street);
+  });
+
+  it("a house number, then a numbered street said as a number", () => {
+    expect(
+      buildCallNotes(["well fifty three one two", "one hundred fifty six drive northeast"]).street,
+    ).toBe("5312 156th drive northeast");
+  });
+});
