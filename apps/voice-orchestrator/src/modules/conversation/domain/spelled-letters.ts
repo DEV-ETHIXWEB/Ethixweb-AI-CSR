@@ -25,6 +25,11 @@
 /** "S for Sam", "I as in India", "B like Boy" -> the letter alone. */
 const PHONETIC_LETTER = /\b([a-z])\s+(?:for|as in|like)\s+[a-z']+\b/gi;
 
+// Not "are", "you" or "why": 2026-10-25, a caller's "why are you interrupting
+// me", after Grace had asked for a spelling, was read as the letters Y-R-U
+// and glued onto his name ("Vasquezyru"); "you you are welcome" became "Uur".
+// They are three of the commonest words there are, and speech recognition
+// writes those spelled letters as "y", "r" and "u" anyway.
 const LETTER_NAMES: Record<string, string> = {
   ay: "a",
   aye: "a",
@@ -52,16 +57,13 @@ const LETTER_NAMES: Record<string, string> = {
   cue: "q",
   queue: "q",
   ar: "r",
-  are: "r",
   ess: "s",
   es: "s",
   tee: "t",
   tea: "t",
   yoo: "u",
-  you: "u",
   vee: "v",
   ex: "x",
-  why: "y",
   wye: "y",
   zee: "z",
   zed: "z",

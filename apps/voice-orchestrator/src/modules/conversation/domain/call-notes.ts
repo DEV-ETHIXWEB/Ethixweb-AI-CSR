@@ -55,8 +55,9 @@ export interface CallNotes {
  * Split in two because the name can come before or after the cue:
  * an introduction PHRASE then the name, or the name then "here"/"speaking".
  */
+// (?<!'s ): "my mother's name is bear" is not the caller's name (2026-10-25).
 const NAME_STATEMENT =
-  /\b(?<!\b(?:last|family|second|street|state|city|road|business|company|restaurant|building|property|shop|store) )(?:my name is|my name's|name is|i go by|my first name is|first name is|i'?m|i am|this is|it'?s|it is|you'?re speaking (?:with|to)|speaking with|call me|(?:update|change|correct|fix) (?:my |the )?name to)\s+(?:actually\s+|really\s+|just\s+|gonna be\s+|going to be\s+)?([a-z][a-z'-]+)(?:\s+([a-z][a-z'-]+))?/gi;
+  /\b(?<!\b(?:last|family|second|street|state|city|road|business|company|restaurant|building|property|shop|store) )(?<!'s )(?:my name is|my name's|name is|i go by|my first name is|first name is|i'?m|i am|this is|it'?s|it is|you'?re speaking (?:with|to)|speaking with|call me|(?:update|change|correct|fix) (?:my |the )?name to)\s+(?:actually\s+|really\s+|just\s+|gonna be\s+|going to be\s+)?([a-z][a-z'-]+)(?:\s+([a-z][a-z'-]+))?/gi;
 
 /** The trailing form: "Tom Harris here", "Dana speaking". */
 const NAME_FIRST_STATEMENT =
@@ -190,7 +191,10 @@ export function buildCallNotes(
   );
   const utterances = nameUtterances(callerTexts, turns);
   const nameTexts = utterances.map((utterance) => utterance.text);
-  const statedFound = statedNameAt(nameTexts);
+  const statedFound = statedNameAt(
+    nameTexts,
+    utterances.map((utterance) => utterance.askedForName),
+  );
   let stated = statedFound?.value ?? answeredName(turns);
   // 2026-10-23 client call: "you are an AI", heard as "u r n a i u r n",
   // became the name "Urn Aiurn". Letters only count as a spelled NAME when
@@ -551,7 +555,13 @@ function spelledIntoItsSlot(
     }
     return toFirst >= toLast ? 0 : 1;
   };
-  const slot = slotOf(word);
+  // 2026-10-25, the client: "name is donald burke b e r g not p". "berg" is
+  // not close enough to "burke" to place by sound, and taking it as the
+  // whole name dropped Donald. Letters said in the same breath as a full
+  // name, unlike the first name, spell the last.
+  const sameBreath = spellings.at(-1)?.index === statedIndex;
+  const slot =
+    slotOf(word) ?? (sameBreath && likeness(word, statedWords[0]!) < SAME_NAME_LIKENESS ? 1 : null);
   if (slot === null) {
     return [word];
   }
@@ -649,12 +659,12 @@ function likeness(a: string, b: string): number {
 function nameUtterances(
   callerTexts: readonly string[],
   turns: ReadonlyArray<{ speaker: string; text: string }>,
-): Array<{ text: string; answersNameQuestion: boolean }> {
+): Array<{ text: string; answersNameQuestion: boolean; askedForName: boolean }> {
   const fromTurns = turns.filter((turn) => turn.speaker === "caller").map((turn) => turn.text);
   const matches =
     fromTurns.length === callerTexts.length &&
     fromTurns.every((text, index) => text === callerTexts[index]);
-  const said: Array<{ text: string; answersNameQuestion: boolean }> = [];
+  const said: Array<{ text: string; answersNameQuestion: boolean; askedForName: boolean }> = [];
   if (matches) {
     let previousWasCaller = false;
     let lastAgent = "";
@@ -665,6 +675,7 @@ function nameUtterances(
         said.push({
           text: turn.text,
           answersNameQuestion: NAME_QUESTION.test(lastAgent) || /\bspell\b/i.test(lastAgent),
+          askedForName: NAME_QUESTION.test(lastAgent),
         });
       } else {
         lastAgent = turn.text.replace(/[’‘]/g, "'");
@@ -677,9 +688,11 @@ function nameUtterances(
         turn.speaker === "caller" || (previousWasCaller && !/[.!?]["')\]]*\s*$/.test(turn.text));
     }
   } else {
-    said.push(...callerTexts.map((text) => ({ text, answersNameQuestion: false })));
+    said.push(
+      ...callerTexts.map((text) => ({ text, answersNameQuestion: false, askedForName: false })),
+    );
   }
-  const joined: Array<{ text: string; answersNameQuestion: boolean }> = [];
+  const joined: Array<{ text: string; answersNameQuestion: boolean; askedForName: boolean }> = [];
   for (const piece of said) {
     const before = joined.at(-1);
     if (before !== undefined && endsMidSpelling(before.text) && isOnlyLetters(piece.text)) {
@@ -758,6 +771,9 @@ function endsMidSpelling(text: string): boolean {
  * name before this existed (2026-10-22), because "at" was in neither list.
  */
 const NOT_A_NAME_EXTRA = new Set([
+  // 2026-10-25: "this is chris said ...", "it's plus one eight seven ...".
+  "said",
+  "plus",
   "at",
   "in",
   "on",
@@ -1098,8 +1114,18 @@ const LAST_NAME_STATEMENT =
  * wherever it appeared. A last-name statement now sets the last name only,
  * and a first name restated on its own keeps the last name it already had.
  */
-function statedNameAt(callerTexts: readonly string[]): { value: string; index: number } | null {
-  type Said = { index: number; at: number; first?: string; second?: string; last?: string };
+function statedNameAt(
+  callerTexts: readonly string[],
+  askedForName: readonly boolean[] = [],
+): { value: string; index: number } | null {
+  type Said = {
+    index: number;
+    at: number;
+    first?: string;
+    second?: string;
+    last?: string;
+    loose?: boolean;
+  };
   const said: Said[] = [];
   for (const [index, text] of callerTexts.entries()) {
     // "my name is todd todd allen": a stutter, not a first and last name
@@ -1137,7 +1163,9 @@ function statedNameAt(callerTexts: readonly string[]): { value: string; index: n
         ) {
           continue;
         }
-        said.push({ index, at, first: match[1] ?? "", second });
+        // "it's actually prateek" is a correction, said on purpose.
+        const loose = LOOSE_CUE.test(match[0]) && !/\b(?:actually|really)\b/.test(match[0]);
+        said.push({ index, at, first: match[1] ?? "", second, loose });
       }
     }
     for (const match of lower.matchAll(LAST_NAME_STATEMENT)) {
@@ -1156,7 +1184,10 @@ function statedNameAt(callerTexts: readonly string[]): { value: string; index: n
   const surnameOf = new Map<string, string>();
   for (const item of said) {
     if (item.last !== undefined) {
-      if (canBeName(item.last)) {
+      // "winter" (from "the last name is winter bond") is the start of the
+      // "Winterbone" already given, not a different surname (2026-10-25).
+      const cut = last !== null && last.toLowerCase().startsWith(item.last.toLowerCase());
+      if (canBeName(item.last) && !cut) {
         last = capitalize(item.last);
         index = item.index;
       }
@@ -1164,6 +1195,25 @@ function statedNameAt(callerTexts: readonly string[]): { value: string; index: n
     }
     const name = item.first ?? "";
     if (!canBeName(name)) {
+      continue;
+    }
+    // 2026-10-25, the client's test calls: with "Michael" already given,
+    // "i am old", "this is the third time", "i am doing this", "it's huge"
+    // and "it's plus one eight seven..." each replaced it, and Grace called
+    // him Old, This, Doing This and Huge, and saved the request as "This".
+    // After "I am" / "it's" / "this is", a word replaces a name already given
+    // only when it answers Grace asking for the name (not for a spelling: the
+    // answer to that is letters), or sounds like
+    // the first or last name it corrects ("it's vasquez" for "Tasquez").
+    if (item.loose && first && askedForName[item.index] !== true) {
+      const heard = name.toLowerCase();
+      if (likeness(heard, first.toLowerCase()) >= SAME_NAME_LIKENESS) {
+        first = capitalize(name);
+        index = item.index;
+      } else if (last && likeness(heard, last.toLowerCase()) >= SAME_NAME_LIKENESS) {
+        last = capitalize(name);
+        index = item.index;
+      }
       continue;
     }
     const second = item.second && canBeName(item.second) ? capitalize(item.second) : null;
