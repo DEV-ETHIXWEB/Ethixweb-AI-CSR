@@ -1145,6 +1145,12 @@ function statedNameAt(callerTexts: readonly string[]): { value: string; index: n
   let first: string | null = null;
   let last: string | null = null;
   let index = -1;
+  // 2026-10-24, Prateek's test call: "my name is marcus william", then a
+  // garbled spelling heard as "it's martha ...", then "my name is marcus".
+  // Martha cleared the surname, and the notes told Grace "a first name only,
+  // no last name". A first name said again gets back the surname it was
+  // given with.
+  const surnameOf = new Map<string, string>();
   for (const item of said) {
     if (item.last !== undefined) {
       if (canBeName(item.last)) {
@@ -1160,8 +1166,9 @@ function statedNameAt(callerTexts: readonly string[]): { value: string; index: n
     const second = item.second && canBeName(item.second) ? capitalize(item.second) : null;
     if (second) {
       last = second;
+      surnameOf.set(name.toLowerCase(), second);
     } else if (first?.toLowerCase() !== name.toLowerCase()) {
-      last = null;
+      last = surnameOf.get(name.toLowerCase()) ?? null;
     }
     first = capitalize(name);
     index = item.index;

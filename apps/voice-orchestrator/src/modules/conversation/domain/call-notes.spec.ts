@@ -18,6 +18,16 @@ describe("buildCallNotes", () => {
     expect(
       buildCallNotes(["well my name is marcus william", "it's better than i do"]).statedName,
     ).toBe("Marcus William");
+    expect(
+      buildCallNotes([
+        "well my name is marcus william",
+        "yes it's martha",
+        "well my name is marcus yeah",
+      ]).statedName,
+    ).toBe("Marcus William");
+    expect(buildCallNotes(["my name is marcus william", "sorry my name is john"]).statedName).toBe(
+      "John",
+    );
   });
 
   it("never takes the ZIP for a house number with no street name (Akash's test call)", () => {
