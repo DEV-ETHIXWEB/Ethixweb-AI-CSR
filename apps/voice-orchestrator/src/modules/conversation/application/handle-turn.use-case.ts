@@ -2825,7 +2825,8 @@ function annotateServiceAreaResult(
 const OUTSIDE_THE_AREA_NOTE =
   "[The caller is outside the area this business serves. Your whole reply: say kindly and " +
   "plainly that it is outside the area you cover, so you can't send someone there, and suggest " +
-  "they call a plumber local to them. Do not take their name, address or number.]";
+  "they call a plumber local to them, and wish them luck getting it sorted. Do not take " +
+  "their name, address or number.]";
 
 /** H2: same rationale as `annotateServiceAreaResult`, for `getBusinessHours`. */
 function annotateBusinessHoursResult(

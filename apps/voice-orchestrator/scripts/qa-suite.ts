@@ -489,8 +489,15 @@ const UNIVERSAL: Check[] = [
   {
     label: "no reply longer than 35 words (length is latency on a phone)",
     run: (ctx) => {
-      const long = ctx.turns.find((t) => t.agent.split(/\s+/).filter(Boolean).length > 35);
-      return long ? `${long.agent.split(/\s+/).length}-word reply: "${long.agent.trim()}"` : null;
+      // A number said digit by digit ("9, 0, 2, 1, 0") is one word here, as
+      // it was before digits were spoken one at a time.
+      const words = (text: string) =>
+        text
+          .replace(/\b\d(?:,\s*\d\b)+/g, "0")
+          .split(/\s+/)
+          .filter(Boolean).length;
+      const long = ctx.turns.find((t) => words(t.agent) > 35);
+      return long ? `${words(long.agent)}-word reply: "${long.agent.trim()}"` : null;
     },
   },
   {
