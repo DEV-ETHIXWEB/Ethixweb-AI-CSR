@@ -583,3 +583,23 @@ describe("one question per reply", () => {
     expect(said).toContain("Can I get your name?");
   });
 });
+
+describe("2026-10-26: Grace never promises someone is on the way", () => {
+  it.each([
+    "You're all set, and help is on the way.",
+    "We've got your info and someone's on the way to you now.",
+    "We're dispatching someone out to you right now.",
+    "Most emergency calls in the Seattle area get there within 60 to 90 minutes.",
+  ])("%p", (said) => {
+    expect(apply(said)).toContain("The team will call you to confirm when someone can come out.");
+    expect(apply(said)).not.toMatch(/on the way|dispatching|within 60/);
+  });
+
+  it.each([
+    "I'm getting you connected to someone right now who can dispatch a tech to you.",
+    "The team will call you shortly to confirm timing.",
+    "A technician will come out and locate where the leak is coming from.",
+  ])("leaves %p alone", (said) => {
+    expect(apply(said)).toBe(said);
+  });
+});

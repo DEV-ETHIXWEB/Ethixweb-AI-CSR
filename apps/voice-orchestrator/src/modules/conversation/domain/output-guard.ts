@@ -26,6 +26,17 @@ export const SAFE_TIMING_LINE = "The team will confirm the timing with you.";
 export const SAFE_PREFERENCE_LINE =
   "I'll note that preference, and the team will confirm the time.";
 export const SAFE_CAUSE_LINE = "A technician will need to look at that to confirm.";
+
+/**
+ * Grace cannot send anyone: the team calls back and books the visit. Found
+ * 2026-10-26 in the recorded calls and a live test: "help is on the way",
+ * "someone's on the way to you now", "we're dispatching someone out to you
+ * right now", "most emergency calls ... get there within 60 to 90 minutes".
+ * Each is a promise of a visit nobody has agreed to.
+ */
+export const SAFE_DISPATCH_LINE = "The team will call you to confirm when someone can come out.";
+const DISPATCH_CLAIM =
+  /\b(dispatch(?:ing|ed)? (?:someone|a (?:tech|technician|plumber)|them|a team)|(?:help|someone|somebody|a (?:tech|technician|plumber)|they|the team|our team)(?: is|'s| are|'re)? (?:already )?on (?:the|their|his|her) way|(?:is|are) heading (?:out|over|your way)|(?:get|be) (?:there|out there|to you) (?:within|in) |arriv(?:e|ing) (?:within|in) |sending (?:someone|a (?:tech|technician|plumber)) (?:out|over|now|right))/i;
 export const SAFE_CHANGE_LINE =
   "I can't change appointments from here, but I'll pass this to the team and they'll confirm it with you.";
 
@@ -134,6 +145,7 @@ export type GuardAction =
   | "timing_promise"
   | "change_claim"
   | "cause_claim"
+  | "dispatch_claim"
   | "slow_readback"
   | "repeated_statement"
   | "word_limit"
@@ -684,6 +696,16 @@ export class OutputGuard {
           }
           continue;
         }
+      }
+      // Not a transfer ("I'm getting you connected to someone who can dispatch a tech"): that
+      // connection is real, and replacing it mid-transfer would confuse the caller.
+      if (!isQuestion(sentence) && DISPATCH_CLAIM.test(plain) && !/\bconnect/i.test(plain)) {
+        this.actions.push("dispatch_claim");
+        if (!this.used.has(SAFE_DISPATCH_LINE)) {
+          this.used.add(SAFE_DISPATCH_LINE);
+          out.push(`${SAFE_DISPATCH_LINE} `);
+        }
+        continue;
       }
       if (!isQuestion(sentence) && CAUSE_CLAIM.test(plain)) {
         this.actions.push("cause_claim");
