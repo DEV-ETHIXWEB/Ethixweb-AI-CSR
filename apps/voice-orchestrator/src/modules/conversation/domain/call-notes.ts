@@ -1,4 +1,4 @@
-import { spokenPhoneDigits } from "./save-readiness";
+import { PROBLEM_ASKED, PROBLEM_WORDS, spokenPhoneDigits } from "./save-readiness";
 import { collapseSpokenDigits, withoutFillerAfterNumbers } from "./service-area";
 import { reducePhoneticSpelling, spelledWordsIn } from "./spelled-letters";
 import { STREET_SUFFIXES } from "./street-name";
@@ -34,6 +34,8 @@ export interface CallNotes {
   timing: string | null;
   /** Each distinct fixture the caller named, in the words they used, first mention first. */
   fixtures: string[];
+  /** What they called about, in their own words; see problemInTheirWords. */
+  problemInWords: string | null;
 }
 
 /**
@@ -281,6 +283,7 @@ export function buildCallNotes(
     property: propertyType(callerTexts),
     timing: lastMatch(callerTexts, TIMING),
     fixtures: mentionedFixtures(callerTexts),
+    problemInWords: problemInTheirWords(callerTexts, turns),
   };
 }
 
@@ -303,6 +306,53 @@ export function buildCallNotes(
 const FIXTURE =
   /\b((?:kitchen|bathroom|master|guest|hall|upstairs|downstairs|basement|outside|outdoor|front|back|main|second|half)\s+)?(water heater|hot water tank|hot water|garbage disposal|disposal|toilet|sink|faucet|tap|shower|bathtub|tub|drain|pipe|sewer line|sewer|septic|sump pump|water line|gas line|main line|valve|spigot|hose bib|sprinkler|boiler|radiator|water softener|dishwasher|washing machine|washer)s?\b/gi;
 const MAX_FIXTURES = 3;
+
+/**
+ * 2026-10-25, the client's test calls: "what plumbing issue are you facing"
+ * after he had described it at length ("a galvanized half inch cold water
+ * pipe ... corroding the copper ... we tried and tried and could not get it
+ * off"), and again on another call after "an intermittent leak in my
+ * basement". Neither names a fixture, so the notes carried nothing about the
+ * problem and only the message history did, which is capped. Kept in the
+ * caller's own words: what answered "what's going on", and anything that
+ * reads as a problem, first said first.
+ */
+const PROBLEM_WORDS_MAX = 400;
+const NOT_THE_PROBLEM = /\b(interrupt\w*|let me (?:finish|complete)|be patient|my name is)\b/i;
+
+function problemInTheirWords(
+  callerTexts: readonly string[],
+  turns: ReadonlyArray<{ speaker: string; text: string }>,
+): string | null {
+  const pieces: string[] = [];
+  const take = (text: string): void => {
+    const trimmed = text.trim();
+    if (trimmed && !NOT_THE_PROBLEM.test(trimmed) && !pieces.includes(trimmed)) {
+      pieces.push(trimmed);
+    }
+  };
+  if (turns.length > 0) {
+    let lastAgent = "";
+    for (const turn of turns) {
+      if (turn.speaker !== "caller") {
+        lastAgent = turn.text;
+        continue;
+      }
+      const answersTheQuestion =
+        PROBLEM_ASKED.test(lastAgent) && turn.text.split(/\s+/).length >= 5;
+      if (answersTheQuestion || PROBLEM_WORDS.test(turn.text)) {
+        take(turn.text);
+      }
+    }
+  } else {
+    callerTexts.filter((text) => PROBLEM_WORDS.test(text)).forEach(take);
+  }
+  const joined = pieces.join(" ").replace(/"/g, "'");
+  if (!joined) {
+    return null;
+  }
+  return joined.length > PROBLEM_WORDS_MAX ? `${joined.slice(0, PROBLEM_WORDS_MAX)}...` : joined;
+}
 
 function mentionedFixtures(callerTexts: readonly string[]): string[] {
   const found: string[] = [];
@@ -419,16 +469,22 @@ export function formatCallNotes(notes: CallNotes): string | null {
   // thing the notes did not carry, so it survived only in message history,
   // which compaction caps. One problem is now stated too; the "keep them
   // separate" rule still only applies when there is more than one.
+  const inTheirWords = notes.problemInWords
+    ? ` What they called about, in their own words: "${notes.problemInWords}". Never ask them` +
+      " what the problem is again; questions about it are still welcome."
+    : "";
   const problems =
     notes.fixtures.length > 1
       ? ` The caller has raised more than one separate problem: ${notes.fixtures.join("; ")}.` +
         " Keep them separate, name each one as the caller did, and never let one stand for the" +
         " other. Questions about each problem are still welcome; it is only the details above" +
-        " that must not be asked for again."
-      : notes.fixtures.length === 1
-        ? ` What they called about: the ${notes.fixtures[0]}. Questions about it are still` +
-          " welcome; it is only the details above that must not be asked for again."
-        : "";
+        " that must not be asked for again." +
+        inTheirWords
+      : inTheirWords ||
+        (notes.fixtures.length === 1
+          ? ` What they called about: the ${notes.fixtures[0]}. Questions about it are still` +
+            " welcome; it is only the details above that must not be asked for again."
+          : "");
   if (facts.length === 0) {
     return problems ? `[Call notes.${problems}]` : null;
   }

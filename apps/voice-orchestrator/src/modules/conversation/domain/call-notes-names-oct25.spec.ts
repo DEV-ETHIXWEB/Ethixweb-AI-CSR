@@ -1,4 +1,4 @@
-import { buildCallNotes } from "./call-notes";
+import { buildCallNotes, formatCallNotes } from "./call-notes";
 
 /**
  * 2026-10-25, the client's test calls: every name below was saved or said
@@ -84,5 +84,33 @@ describe("2026-10-25 test calls: names", () => {
         [SPELL],
       ),
     ).toBe("Harold Winterbone");
+  });
+});
+
+describe("2026-10-25 test calls: the problem is kept in the caller's own words", () => {
+  it("keeps a problem that names no fixture, so Grace never asks for it again", () => {
+    const turns = [
+      { speaker: "agent", text: "Got it, Michael. What seems to be the problem today?" },
+      {
+        speaker: "caller",
+        text: "so we have a galvanized half inch cold water pipe that was adapted to some copper and it ended up corroding the copper out",
+      },
+      { speaker: "agent", text: "Got it. Can I get the address?" },
+      { speaker: "caller", text: "why did you interrupt me let me finish" },
+    ];
+    const callerTexts = turns.filter((t) => t.speaker === "caller").map((t) => t.text);
+    const notes = formatCallNotes(buildCallNotes(callerTexts, turns))!;
+    expect(notes).toContain("galvanized half inch cold water pipe");
+    expect(notes).toContain("Never ask them what the problem is again");
+    expect(notes).not.toContain("let me finish");
+  });
+
+  it("an intermittent leak in the basement", () => {
+    const notes = formatCallNotes(
+      buildCallNotes([
+        "i have an intermittent leak in my basement and i need someone to look at it",
+      ]),
+    )!;
+    expect(notes).toContain("intermittent leak in my basement");
   });
 });

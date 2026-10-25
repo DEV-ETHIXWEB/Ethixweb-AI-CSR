@@ -108,7 +108,7 @@ describe("buildCallNotes", () => {
    */
   it("carries the problem from the moment the caller gives it", () => {
     expect(formatCallNotes(buildCallNotes(["hi", "my sink is leaking"]))).toContain(
-      "What they called about: the sink",
+      'What they called about, in their own words: "my sink is leaking"',
     );
   });
 
@@ -253,7 +253,7 @@ describe("several problems in one call", () => {
     const notes = buildCallNotes(["my water heater is leaking"]);
     expect(notes.fixtures).toEqual(["water heater"]);
     const text = formatCallNotes(notes)!;
-    expect(text).toContain("What they called about: the water heater");
+    expect(text).toContain('in their own words: "my water heater is leaking"');
     expect(text).not.toContain("never let one stand for the other");
   });
 
