@@ -5042,3 +5042,36 @@ describe("a US phone number is passed in +1 form whatever the model wrote", () =
     },
   );
 });
+
+describe("2026-10-25, the client's test call: a caller in danger", () => {
+  it.each([
+    "get the call i will suicide i will do a suicide",
+    "no i i am doing this i have one in my hand and i'm shooting myself",
+    "i have shot myself and i am bleeding bye bye bye",
+  ])("%p gets the safety line and nothing about plumbing", async (said) => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    await useCase.execute(baseCommand({ transcript: said }));
+
+    const sent =
+      aiProvider.requests[0]?.messages.filter((m) => m.role === "user").at(-1)?.content ?? "";
+    expect(sent).toContain("call 911 right now");
+    expect(sent).toContain("988");
+  });
+
+  it("not for ordinary plumbing words", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    await useCase.execute(baseCommand({ transcript: "the pipe is bleeding water everywhere" }));
+
+    expect(
+      aiProvider.requests[0]?.messages.filter((m) => m.role === "user").at(-1)?.content ?? "",
+    ).not.toContain("911");
+  });
+});

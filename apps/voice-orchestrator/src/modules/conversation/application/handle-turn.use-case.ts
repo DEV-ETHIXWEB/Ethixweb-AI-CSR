@@ -673,7 +673,10 @@ export class HandleTurnUseCase {
     // whole point is that the caller has not finished talking yet.
     const owesAnAnswer = !isTrailingOff && callerAskedAQuestion(command.transcript);
     const directive = (note: string): string => (owesAnAnswer ? answerFirst(note) : note);
+    // See IN_DANGER. Above every other note: nothing else matters this turn.
+    const inDanger = IN_DANGER.test(command.transcript);
     const directiveFired =
+      inDanger ||
       isTrailingOff ||
       wantsItAgain ||
       pendingReadback !== null ||
@@ -685,7 +688,9 @@ export class HandleTurnUseCase {
       needsName ||
       needsCallbackNumber ||
       owesAnAnswer;
-    if (isTrailingOff) {
+    if (inDanger) {
+      annotatedTranscript = `${IN_DANGER_NOTE} ${annotatedTranscript}`;
+    } else if (isTrailingOff) {
       annotatedTranscript = `${TRAILING_FRAGMENT_NOTE} ${annotatedTranscript}`;
     } else if (wantsItAgain) {
       annotatedTranscript = `${REPEAT_NOTE} ${annotatedTranscript}`;
@@ -2726,6 +2731,20 @@ const CLOSE_CONSENT_NOTE =
 const NAME_ASKED_PATTERN = /\b(your name|who am i speaking|what'?s your name|who is this)\b/i;
 const NAME_GIVEN_PATTERN = /\b(my name|name is|name's|i am|i'm|this is|call me)\b/i;
 const NAME_NUDGE_AFTER_CALLER_TURNS = 3;
+/**
+ * 2026-10-25, the client's test call: "i will do a suicide", then "i have
+ * one in my hand and i'm shooting myself", then "i have shot myself and i
+ * am bleeding". Grace answered the first two by asking about the plumbing
+ * issue. Whether or not it is real, the one right reply is the same: get
+ * them to emergency help, and nothing else.
+ */
+const IN_DANGER =
+  /\b(suicid\w*|kill(?:ing)? myself|end my life|(?:shot|shoot|shooting|cut|cutting|hurt|hurting) myself|overdos\w*|i(?:'m| am) bleeding|bleeding (?:a lot|badly|everywhere)|can'?t breathe|not breathing|heart attack|unconscious|passed out|stroke)\b/i;
+const IN_DANGER_NOTE =
+  '[Safety first: the caller may be in danger. Your whole reply, exactly: "If you or anyone ' +
+  'there is in danger, please hang up and call 911 right now. You can also call or text 988, ' +
+  'the crisis line, any time." Say nothing about plumbing in this reply.]';
+
 const NAME_MISSING_NOTE =
   "[System note: you still do not have this caller's name and have not asked for it. " +
   "In THIS reply, the ONLY question you ask is for their name, after a brief acknowledgment. " +
