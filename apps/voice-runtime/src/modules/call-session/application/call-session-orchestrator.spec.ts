@@ -1656,6 +1656,37 @@ describe("CallSessionOrchestrator", () => {
      * indefinite silence with no fallback and no safety net. This and
      * the next test prove the fix for both failure paths.
      */
+    it("2026-10-24, Yash's test call: words heard that never become a turn re-arm the check-in", async () => {
+      jest.useFakeTimers();
+      try {
+        const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+        orchestratorClient.turnResponses = [
+          {
+            conversationId: "conv-1",
+            responseText: "What's the address?",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+        ];
+        await orchestrator.onCallStart(baseParams(), sink);
+        const session = stt.sessions[0]!;
+        session.emitFinalTranscript("my sink is leaking", 0.9);
+        await jest.advanceTimersByTimeAsync(0);
+        process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = "100";
+        // The caller answers; the words are heard, then Deepgram's finish
+        // carries none, so no final transcript ever arrives.
+        session.emitSpeechStarted();
+        session.emitInterimSpeech("twelve fifteen north");
+        await jest.advanceTimersByTimeAsync(20_000);
+        expect(tts.synthesizeCalls).toContain("Take your time. I'm still here.");
+      } finally {
+        delete process.env["SILENCE_CHECK_IN_TIMEOUT_MS"];
+        jest.useRealTimers();
+      }
+    });
+
     it("speaks an honest fallback and re-arms the silence check-in when no transfer destination is configured at all — never leaves the caller in silence during a real emergency", async () => {
       delete process.env["EMERGENCY_TRANSFER_NUMBER"];
       jest.useFakeTimers();

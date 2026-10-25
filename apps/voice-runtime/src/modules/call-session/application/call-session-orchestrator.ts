@@ -327,6 +327,9 @@ const MAX_SILENCE_CHECK_INS = 2;
 const CALLER_ACTIVE_GRACE_MS = 3000;
 const MAX_SILENCE_CHECK_IN_DEFERRALS = 4;
 
+/** How long after the last heard words a turn must have started; see rearmIfNoTurnFollows. */
+const UNANSWERED_SPEECH_REARM_MS = 5000;
+
 /**
  * The one class that actually drives a phone call end to end — receives
  * Twilio Media Stream lifecycle events + STT results from the WebSocket
@@ -417,6 +420,8 @@ export class CallSessionOrchestrator {
   private lastSpokenText = "";
   /** When Deepgram last delivered finished words; see turnLatency. */
   private lastFinalTranscriptAt: number | null = null;
+  /** Counts finished caller utterances; see rearmIfNoTurnFollows. */
+  private finalTranscriptCount = 0;
   /** The reply being waited for, until its first audio goes out; see recordSentAudio. */
   private turnLatency: { committedAt: number; heldMs: number; log: StructuredLogger } | null = null;
   private ended = false;
@@ -446,6 +451,8 @@ export class CallSessionOrchestrator {
    * when confirmation never arrives.
    */
   private pendingBargeInTimer: ReturnType<typeof setTimeout> | null = null;
+  /** See UNANSWERED_SPEECH_REARM_MS. */
+  private unansweredSpeechTimer: ReturnType<typeof setTimeout> | null = null;
   /** See `DEFAULT_SILENCE_CHECK_IN_TIMEOUT_MS`'s own comment for the full design. */
   private silenceCheckInTimer: ReturnType<typeof setTimeout> | null = null;
   /** How many check-ins this silence episode has already produced — reset by `armSilenceCheckIn`, which only runs when Grace speaks for a REAL reason (i.e. a new episode). See `MAX_SILENCE_CHECK_INS`. */
@@ -704,6 +711,7 @@ export class CallSessionOrchestrator {
     log: StructuredLogger,
   ): void {
     this.lastFinalTranscriptAt = Date.now();
+    this.finalTranscriptCount += 1;
     this.pendingFragment = this.pendingFragment
       ? {
           transcript: joinFragments(this.pendingFragment.transcript, result.transcript),
@@ -1301,6 +1309,7 @@ export class CallSessionOrchestrator {
     // (see armSilenceCheckIn's call sites at the end of a turn).
     this.lastCallerActivityAt = Date.now();
     this.disarmSilenceCheckIn();
+    this.rearmIfNoTurnFollows(sink);
     if (transcript.trim().length > 0) {
       this.extendHoldWhileSpeaking();
     }
@@ -1316,6 +1325,37 @@ export class CallSessionOrchestrator {
     clearTimeout(this.pendingBargeInTimer);
     this.pendingBargeInTimer = null;
     this.handleBargeIn(params, sink);
+  }
+
+  /**
+   * The check-in was just disarmed because words were heard. If they never
+   * become a turn (Deepgram finished the utterance with nothing usable), it
+   * is armed again, or nothing would ever speak: 2026-10-24, Yash's test call
+   * sat in silence for twenty seconds while he talked, until he hung up.
+   */
+  private rearmIfNoTurnFollows(sink: MediaStreamSink): void {
+    if (this.unansweredSpeechTimer) {
+      clearTimeout(this.unansweredSpeechTimer);
+    }
+    const finalsSoFar = this.finalTranscriptCount;
+    this.unansweredSpeechTimer = setTimeout(() => {
+      this.unansweredSpeechTimer = null;
+      const turnSince = this.finalTranscriptCount > finalsSoFar;
+      if (
+        this.ended ||
+        turnSince ||
+        this.activeTurnAbort ||
+        this.pendingFragment ||
+        this.isAudible() ||
+        this.silenceCheckInTimer
+      ) {
+        return;
+      }
+      this.logger.info("words were heard but no turn followed — silence check-in armed again", {
+        conversationId: this.conversationId,
+      });
+      this.armSilenceCheckIn(sink);
+    }, UNANSWERED_SPEECH_REARM_MS);
   }
 
   /**
@@ -1553,6 +1593,10 @@ export class CallSessionOrchestrator {
     if (this.pendingBargeInTimer) {
       clearTimeout(this.pendingBargeInTimer);
       this.pendingBargeInTimer = null;
+    }
+    if (this.unansweredSpeechTimer) {
+      clearTimeout(this.unansweredSpeechTimer);
+      this.unansweredSpeechTimer = null;
     }
     if (this.fragmentCoalesceTimer) {
       clearTimeout(this.fragmentCoalesceTimer);
