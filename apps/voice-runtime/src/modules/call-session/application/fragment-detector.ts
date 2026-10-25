@@ -138,6 +138,14 @@ const TRAILING_WORDS = new Set([
   "its",
   "i'm",
   "im",
+  // 2026-10-24 test calls, each answered before the caller finished:
+  // "that's" (then "i can get a number today for my"), "my name's" (then
+  // "alejandro montalde"), "and my service address is basically" (then
+  // "one one nine zero").
+  "that's",
+  "thats",
+  "name's",
+  "basically",
 ]);
 
 /**
@@ -153,6 +161,23 @@ const TRAILING_WORDS = new Set([
  * piece; these words are stranded particles there, not openings.
  */
 const LONG_UTTERANCE_WORDS = 5;
+/** What can come before an unfinished "my name"; see fragmentStrength. */
+const BEFORE_MY_NAME = new Set([
+  "hi",
+  "hello",
+  "hey",
+  "okay",
+  "ok",
+  "so",
+  "and",
+  "yes",
+  "yeah",
+  "well",
+  "um",
+  "uh",
+  "grace",
+  "sure",
+]);
 const ENDS_A_SENTENCE = new Set(["on", "in", "at", "was", "are", "am"]);
 /**
  * The rest of the trailing words that often end a complete sentence ("what
@@ -161,6 +186,9 @@ const ENDS_A_SENTENCE = new Set(["on", "in", "at", "was", "are", "am"]);
  * "is"/"to" keep the long hold at any length ("the address is", "i want to").
  */
 const SOFT_TRAILING_WORDS = new Set([
+  // "it's been leaking for a week basically" is finished; "my address is
+  // basically" is not. A long one gets the short hold.
+  "basically",
   "about",
   "for",
   "with",
@@ -538,6 +566,18 @@ export function fragmentStrength(transcript: string): FragmentStrength {
     return "strong";
   }
   const last = normalizeWord(words[words.length - 1]!);
+  // 2026-10-24, Prateek's test call: "hi my name", a pause, then "robert
+  // fightingson". Grace had already begun "I didn't quite catch...". Only
+  // after a greeting or filler: "what's my name" and "do you know my name"
+  // are whole questions (both in the last two weeks of real calls).
+  if (
+    last === "name" &&
+    words.length >= 2 &&
+    normalizeWord(words[words.length - 2]!) === "my" &&
+    words.slice(0, -2).every((word) => BEFORE_MY_NAME.has(normalizeWord(word)))
+  ) {
+    return "strong";
+  }
   // A spelled-out name ending in "a" ("s u m a l i a"): that "a" is a letter,
   // not the article (2026-10-14 tester call).
   const spelling = words.length >= 2 && normalizeWord(words[words.length - 2]!).length === 1;

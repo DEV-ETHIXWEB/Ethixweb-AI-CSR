@@ -134,6 +134,25 @@ describe("looksLikeIncompleteFragment", () => {
 
 describe("fragmentStrength (client feedback: silent hold for a caller who is still talking)", () => {
   it.each([
+    ["hi my name", "strong"],
+    ["my name's", "strong"],
+    ["that's", "strong"],
+    ["and my service address is basically", "weak"],
+    ["my address is basically", "strong"],
+    ["it's been leaking for about a week basically", "weak"],
+    ["okay my name", "strong"],
+    ["my name is marcus", "none"],
+    ["what's my name", "none"],
+    ["do you know my name", "none"],
+    ["can you spell out my name", "none"],
+    ["i've already told you my name", "none"],
+    ["i want to change the names", "none"],
+    ["yes that's right", "none"],
+  ] as const)("2026-10-24 test calls: %p is %p", (text, expected) => {
+    expect(fragmentStrength(text)).toBe(expected);
+  });
+
+  it.each([
     ["let me check on", "strong"],
     ["wrong my name is", "strong"],
     ["the issue is", "strong"],
