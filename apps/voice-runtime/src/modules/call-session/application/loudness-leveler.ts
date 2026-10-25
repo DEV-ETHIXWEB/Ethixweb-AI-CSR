@@ -81,7 +81,7 @@ export function decode(chunk: Buffer): Int16Array {
 /** 16-bit PCM to G.711 mu-law. */
 export function encode(sample: number): number {
   const sign = sample < 0 ? 0x80 : 0;
-  let magnitude = Math.min(Math.abs(sample), MAX_SAMPLE) + 0x84;
+  const magnitude = Math.min(Math.abs(sample), MAX_SAMPLE) + 0x84;
   let exponent = 7;
   for (let mask = 0x4000; (magnitude & mask) === 0 && exponent > 0; mask >>= 1) {
     exponent -= 1;
