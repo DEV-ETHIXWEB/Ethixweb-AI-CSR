@@ -1110,6 +1110,34 @@ describe("nameRepeatedNote", () => {
     ).toContain("spell their first name");
   });
 
+  it("2026-10-25 test run: a name said once, split in two, is not a repeat", () => {
+    expect(
+      nameRepeatedNote(
+        [
+          "hi my water heater stopped",
+          "do you guys even do tankless conversions",
+          "yes it's",
+          "sarah miller",
+        ],
+        ["Can I have your name, please?", "Yes, we do. What's your full name, please?"],
+        "Sarah Miller",
+      ),
+    ).toBeNull();
+  });
+
+  it("2026-10-25 test run: a repeat counts when Grace already said the name back", () => {
+    expect(
+      nameRepeatedNote(
+        ["hi my kitchen faucet is leaking", "yash patel", "yash patel"],
+        [
+          "Got it, a leaking kitchen faucet. Is this happening right now?",
+          "Thanks, Yash. Can I have the address where the kitchen faucet is leaking?",
+        ],
+        null,
+      ),
+    ).toContain("spell their first name");
+  });
+
   it("not when Grace asked for the name again, or something else is said", () => {
     expect(
       nameRepeatedNote(["yash patel", "yash patel"], ["Sorry, what was your name?"], "Yash Patel"),

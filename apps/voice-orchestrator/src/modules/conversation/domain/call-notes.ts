@@ -168,8 +168,11 @@ const BUSINESS_WORDS = /\b(business|commercial|office|restaurant|store|shop|buil
 const TIMING =
   /\b(as soon as possible|asap|right away|right now|today|tonight|tomorrow( morning| afternoon| evening)?|this week|next week|anytime|any time|whenever|no rush|not urgent)\b/gi;
 
+// "your full name" and "your first and last name": 2026-10-25, "What's your
+// full name, please?" went unrecognised, so a bare answer to it was not read
+// as a name answer.
 const NAME_QUESTION =
-  /\b(your name|who am i speaking|what'?s your name|can i (get|have|grab) your name|and your name)\b/i;
+  /\b(your (?:full |first and last )?name|who am i speaking|what'?s your name|can i (get|have|grab) your name|and your name)\b/i;
 
 /**
  * `turns`, when given, lets a bare answer to "What's your name?" count as the
@@ -1573,9 +1576,7 @@ export function nameRepeatedNote(
   const now = statedNameAt([latest]);
   const before = statedNameAt(callerTexts.slice(0, -1));
   if (!now || !before) {
-    return saidTheNotedNameUnasked(latest, agentTexts.at(-1) ?? "", notedName)
-      ? NAME_REPEATED
-      : null;
+    return saidTheNameAgainUnasked(callerTexts, agentTexts, notedName) ? NAME_REPEATED : null;
   }
   // "my name is akash" then "it's akash kumar" is the last name arriving,
   // not the name being misheard.
@@ -1596,23 +1597,44 @@ const NAME_REPEATED =
  * 2026-10-23, test call through the live pipeline: "yash patel" answered the
  * name question, then "yash patel" again when Grace asked for the street.
  * Neither has a cue ("my name is"), so the check above never saw a name, and
- * Grace asked for the address again. The bare name in the notes, said again
- * when Grace had not asked for it, is the same signal.
+ * Grace asked for the address again. A bare name said again, when Grace had
+ * not asked for it, is the same signal.
+ *
+ * 2026-10-25, the same test run again: "yes it's" / "sarah miller" (one
+ * answer split in two) was taken for a repeat, and Grace asked her to spell a
+ * name she had said once. Said AGAIN means an earlier caller line was the same
+ * name. And it must be a name: the notes have it, or Grace already said it
+ * back ("Thanks, Yash"), which also covers a first "yash patel" given in
+ * answer to a different question.
  */
-function saidTheNotedNameUnasked(
-  latest: string,
-  lastAgentText: string,
+function saidTheNameAgainUnasked(
+  callerTexts: readonly string[],
+  agentTexts: readonly string[],
   notedName: string | null,
 ): boolean {
-  if (!notedName || NAME_QUESTION.test(lastAgentText)) {
+  if (NAME_QUESTION.test(agentTexts.at(-1) ?? "")) {
     return false;
   }
-  const words = latest
-    .toLowerCase()
-    .replace(/[^a-z\s'-]/g, " ")
-    .split(/\s+/)
-    .filter(Boolean);
-  return words.length > 0 && words.every(canBeName) && words.join(" ") === notedName.toLowerCase();
+  const bare = (text: string): string =>
+    withoutAccents(text)
+      .toLowerCase()
+      .replace(/[^a-z\s'-]/g, " ")
+      .split(/\s+/)
+      .filter(Boolean)
+      .join(" ");
+  const latest = bare(callerTexts.at(-1) ?? "");
+  const words = latest.split(" ").filter(Boolean);
+  if (words.length === 0 || words.length > 3 || !words.every(canBeName)) {
+    return false;
+  }
+  if (!callerTexts.slice(0, -1).some((text) => bare(text) === latest)) {
+    return false;
+  }
+  const first = words[0]!;
+  return (
+    (notedName !== null && bare(notedName) === latest) ||
+    agentTexts.some((text) => new RegExp(`\\b${first}\\b`, "i").test(withoutAccents(text)))
+  );
 }
 
 /** "can you update my full name", "change the name to", "fix my last name". */
