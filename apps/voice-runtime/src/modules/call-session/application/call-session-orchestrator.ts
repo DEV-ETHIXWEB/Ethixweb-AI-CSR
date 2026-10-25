@@ -119,9 +119,26 @@ const MAX_FRAGMENT_HOLD_MS = 10_000;
  * this long first (extended while they keep talking). Other callers keep
  * the immediate reply; one- and two-word answers never wait.
  */
-const PATIENT_HOLD_MS = 1000;
+//
+// 2026-10-25, the client's own test calls ("I am old, I am not able to speak
+// very fast, so please be patient and let me complete my phrase"): one
+// second was too short. In 28% of that evening's turns the caller was talking
+// again within 1.5 s of Grace's turn starting, mid-thought. And the patience
+// began only after an audible talk-over. Now it begins on any of three signs,
+// it is longer for a statement, and a question still gets a prompt answer
+// ("how did you get my address?" went unanswered for 25 s while the caller
+// waited).
+const PATIENT_HOLD_MS = 2000;
+const PATIENT_QUESTION_HOLD_MS = 700;
 /** Talking over a reply this soon after it began counts for PATIENT_HOLD_MS. */
 const EARLY_TALK_OVER_MS = 2500;
+/** A reply abandoned before it was heard because the caller went on talking: this many mean a mid-thought pauser. */
+const ABORTS_BEFORE_PATIENCE = 2;
+/** The caller saying it outright. */
+const ASKS_NOT_TO_BE_INTERRUPTED =
+  /\b(interrupt\w*|interested me|let me (?:finish|complete|speak|talk)|cut(?:ting)? me off|be patient|(?:speak|talk)(?:ing)? (?:slow|slower|slowly)|i am old|i'?m old|talking over me)\b/i;
+const QUESTION_OPENING =
+  /^(?:(?:okay|ok|so|and|but|well|hey|grace|um|uh|oh|then|now)\s+){0,2}(?:what|why|how|when|where|who|which|can|could|would|will|do|does|did|is|are|am|should)\b/i;
 
 function wordCount(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
@@ -445,6 +462,18 @@ export class CallSessionOrchestrator {
   private replyAudioStartedAt = 0;
   /** How many replies this caller has talked over in their first seconds; see PATIENT_HOLD_MS. */
   private talkedOverReplyStarts = 0;
+  /** Replies abandoned before being heard because the caller went on; see ABORTS_BEFORE_PATIENCE. */
+  private midThoughtAborts = 0;
+  /** The caller asked not to be interrupted; see PATIENT_HOLD_MS. */
+  private askedForPatience = false;
+
+  private waitsLonger(): boolean {
+    return (
+      this.talkedOverReplyStarts > 0 ||
+      this.askedForPatience ||
+      this.midThoughtAborts >= ABORTS_BEFORE_PATIENCE
+    );
+  }
   /** The reply being waited for, until its first audio goes out; see recordSentAudio. */
   private turnLatency: { committedAt: number; heldMs: number; log: StructuredLogger } | null = null;
   private ended = false;
@@ -738,6 +767,12 @@ export class CallSessionOrchestrator {
   ): void {
     this.lastFinalTranscriptAt = Date.now();
     this.finalTranscriptCount += 1;
+    // The caller's finished words prove they are talking: Grace stops now,
+    // not when a hold below runs out. 2026-10-25: with a two-second patience
+    // hold, her stale reply would otherwise have kept playing over them.
+    if (this.isAudible() || this.activeTurnAbort) {
+      this.handleBargeIn(params, sink);
+    }
     this.pendingFragment = this.pendingFragment
       ? {
           transcript: joinFragments(this.pendingFragment.transcript, result.transcript),
@@ -762,8 +797,18 @@ export class CallSessionOrchestrator {
     const strength = fragmentStrength(result.transcript);
     const addressComing = addressStillComing(this.pendingFragment.transcript, this.lastSpokenText);
     if (strength === "none" && !addressComing) {
-      if (this.talkedOverReplyStarts > 0 && wordCount(this.pendingFragment.transcript) > 2) {
-        this.armFragmentHold(params, sink, log, PATIENT_HOLD_MS);
+      if (ASKS_NOT_TO_BE_INTERRUPTED.test(this.pendingFragment.transcript)) {
+        this.askedForPatience = true;
+      }
+      if (this.waitsLonger() && wordCount(this.pendingFragment.transcript) > 2) {
+        this.armFragmentHold(
+          params,
+          sink,
+          log,
+          QUESTION_OPENING.test(this.pendingFragment.transcript)
+            ? PATIENT_QUESTION_HOLD_MS
+            : PATIENT_HOLD_MS,
+        );
         return;
       }
       this.fragmentHold = null;
@@ -1549,6 +1594,7 @@ export class CallSessionOrchestrator {
       this.logger.info("barge-in: aborting in-flight turn (mechanism 1)", {
         conversationId: this.conversationId,
       });
+      this.midThoughtAborts += 1;
       this.activeTurnAbort.abort();
       this.activeTurnAbort = null;
       if (this.ttsAbort) {

@@ -211,6 +211,45 @@ describe("CallSessionOrchestrator", () => {
       expect(tts.warmUpCalls).toBe(1);
     });
 
+    it("2026-10-25, the client: asking not to be interrupted makes Grace wait, but a question is still answered promptly", async () => {
+      const { orchestrator, orchestratorClient, stt } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      const reply = (responseText: string) => ({
+        conversationId: "conv-1",
+        responseText,
+        toolCallsExecuted: [],
+        interrupted: false,
+        state: "qualifying" as const,
+      });
+      orchestratorClient.turnResponses = [
+        reply("Sorry about that. Please go ahead."),
+        reply("Got it."),
+        reply("Your name is Michael."),
+      ];
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+
+      // The request itself already gets the longer wait.
+      session.emitFinalTranscript("i am old please be patient and let me complete my phrase", 0.95);
+      await new Promise((r) => setTimeout(r, 1000));
+      expect(orchestratorClient.turnCalls).toHaveLength(0);
+      await new Promise((r) => setTimeout(r, 1100));
+      expect(orchestratorClient.turnCalls).toHaveLength(1);
+      await new Promise((r) => setTimeout(r, 50));
+
+      // A statement now waits two seconds...
+      session.emitFinalTranscript("so we have a galvanized half inch cold water pipe", 0.95);
+      await new Promise((r) => setTimeout(r, 1000));
+      expect(orchestratorClient.turnCalls).toHaveLength(1);
+      await new Promise((r) => setTimeout(r, 1100));
+      expect(orchestratorClient.turnCalls).toHaveLength(2);
+
+      // ...and a question less than one.
+      session.emitFinalTranscript("okay what is my name then", 0.95);
+      await new Promise((r) => setTimeout(r, 800));
+      expect(orchestratorClient.turnCalls).toHaveLength(3);
+    }, 10_000);
+
     it("2026-10-24, Prateek: after talking over the start of a reply, the caller gets a moment before the next one", async () => {
       const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
       const sink = new FakeMediaStreamSink();
@@ -244,7 +283,7 @@ describe("CallSessionOrchestrator", () => {
       session.emitFinalTranscript("william my last name is william", 0.95);
       await new Promise((r) => setTimeout(r, 50));
       expect(orchestratorClient.turnCalls).toHaveLength(1);
-      await new Promise((r) => setTimeout(r, 1100));
+      await new Promise((r) => setTimeout(r, 2100));
       expect(orchestratorClient.turnCalls).toHaveLength(2);
 
       // A one- or two-word answer never waits.
@@ -405,12 +444,12 @@ describe("CallSessionOrchestrator", () => {
           state: "qualifying",
         },
       ];
-      session.emitFinalTranscript("second thing customer said, right after interrupting", 0.9);
+      session.emitFinalTranscript("second thing customer said, right after that", 0.9);
       await flushMicrotasks();
 
       expect(orchestratorClient.turnCalls).toHaveLength(2);
       expect(orchestratorClient.turnCalls[1]?.req.transcript).toBe(
-        "second thing customer said, right after interrupting",
+        "second thing customer said, right after that",
       );
       // The old (aborted, hung) turn never produced a response to
       // speak — the new turn's response is the ONLY one spoken, proving
