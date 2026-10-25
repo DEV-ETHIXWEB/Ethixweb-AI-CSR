@@ -130,13 +130,6 @@ const SPEECH_FINAL_MAX_WAIT_MS = 12_000;
  */
 const UTTERANCE_END_MS = 1000;
 
-/**
- * Interim words below this are left alone (see `lastInterim`). Yash's lost
- * address came in at 0.67 and 0.75; line noise that Deepgram turns into a
- * word or two is far less sure of itself.
- */
-const MIN_INTERIM_CONFIDENCE = 0.5;
-
 @Injectable()
 export class DeepgramSttProvider implements SpeechToTextProvider {
   constructor(@Inject(APP_LOGGER) private readonly logger: StructuredLogger) {}
@@ -205,15 +198,6 @@ class DeepgramSttSession implements SpeechToTextSession {
   private finalizedSegments: Array<{ transcript: string; confidence: number }> = [];
   /** See `SPEECH_FINAL_FALLBACK_MS`'s own comment for why this exists. */
   private pendingFallback: { transcript: string; confidence: number } | null = null;
-  /**
-   * 2026-10-24, Yash's test call: the caller gave the address, interim results
-   * carried the words ("len 29"), and Deepgram's speech_final came back EMPTY.
-   * Every utterance after that did too. Nothing reached the turn, and Grace
-   * sat silent for twenty seconds while he talked, until he hung up. The last
-   * interim words of an utterance are kept until it is delivered, and used
-   * when its finish carries none.
-   */
-  private lastInterim: { transcript: string; confidence: number } | null = null;
   private pendingFallbackTimer: ReturnType<typeof setTimeout> | null = null;
   /** When the words now waiting on a speech_final started waiting; see SPEECH_FINAL_MAX_WAIT_MS. */
   private pendingFallbackSince = 0;
@@ -395,7 +379,6 @@ class DeepgramSttSession implements SpeechToTextSession {
       return;
     }
     const accumulated = this.takeAccumulatedUtterance();
-    this.lastInterim = null;
     const pending = accumulated
       ? { transcript: accumulated.transcript, confidence: accumulated.confidence }
       : this.pendingFallback;
@@ -405,24 +388,6 @@ class DeepgramSttSession implements SpeechToTextSession {
       { reason, transcriptLength: pending.transcript.length, confidence: pending.confidence },
     );
     this.finalHandler?.(pending);
-  }
-
-  /** See `lastInterim`. A no-op when there are none, or they are too unsure to be words. */
-  private deliverLastInterim(reason: "utterance_end" | "empty_speech_final"): void {
-    const interim = this.lastInterim;
-    this.lastInterim = null;
-    if (!interim || interim.confidence < MIN_INTERIM_CONFIDENCE) {
-      return;
-    }
-    this.logger.warn(
-      "Deepgram finished an utterance with no final words — using its interim words",
-      {
-        reason,
-        transcriptLength: interim.transcript.length,
-        confidence: interim.confidence,
-      },
-    );
-    this.finalHandler?.(interim);
   }
 
   private clearPendingFallback(): void {
@@ -482,10 +447,6 @@ class DeepgramSttSession implements SpeechToTextSession {
     // See UTTERANCE_END_MS. Normally speech_final has already delivered the
     // utterance and nothing is pending, so this does nothing.
     if (message["type"] === "UtteranceEnd") {
-      if (!this.pendingFallback) {
-        this.deliverLastInterim("utterance_end");
-        return;
-      }
       this.deliverPendingWithoutSpeechFinal("utterance_end");
       return;
     }
@@ -512,9 +473,6 @@ class DeepgramSttSession implements SpeechToTextSession {
         // from noise).
         if (transcript.trim().length > 0) {
           this.interimSpeechHandler?.(transcript);
-          if (message["is_final"] !== true) {
-            this.lastInterim = { transcript, confidence };
-          }
         }
         // SPEECH_FINAL_FALLBACK_MS safety net — see that constant's own
         // comment. Only an `is_final: true` chunk counts (Deepgram's
@@ -549,11 +507,6 @@ class DeepgramSttSession implements SpeechToTextSession {
         this.accumulateSegment(transcript, confidence);
       }
       const utterance = this.takeAccumulatedUtterance();
-      if (!utterance && this.lastInterim) {
-        this.deliverLastInterim("empty_speech_final");
-        return;
-      }
-      this.lastInterim = null;
       if (!utterance) {
         // Deepgram emits a final, empty-transcript result at the tail of
         // silence — not a caller utterance, must not reach /turns as an
