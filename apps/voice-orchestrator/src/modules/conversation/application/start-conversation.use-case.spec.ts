@@ -9,6 +9,7 @@ import { FakeConversationRepository } from "./__fakes__/fake-conversation-reposi
 import { FakeEventBus } from "./__fakes__/fake-event-bus";
 import { createNoopLogger } from "./__fakes__/fake-logger";
 import { FakeTenantStatusProvider } from "./__fakes__/fake-tenant-status";
+import { ToolRegistry } from "../../tool-broker/application/tool-registry";
 import { buildOpeningGreeting, StartConversationUseCase } from "./start-conversation.use-case";
 
 function fakeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
@@ -57,6 +58,34 @@ function buildUseCase(profile: AgentProfile = fakeProfile()) {
 }
 
 describe("StartConversationUseCase", () => {
+  it("2026-10-24: warms the model up with the call's own prompt, one token, not awaited", async () => {
+    const aiProvider = new FakeAiProvider();
+    const useCase = new StartConversationUseCase(
+      new FakeConversationRepository(),
+      new AssembleSystemPromptUseCase({ getActiveProfile: async () => fakeProfile() }),
+      new FakeEventBus(),
+      new FakeCoreApiClient(),
+      new FakeCallAdmissionPort(),
+      new FakeCapacityConfigProvider(),
+      new FakeTenantStatusProvider(),
+      createNoopLogger(),
+      aiProvider,
+      new ToolRegistry(),
+    );
+
+    const { conversation } = await useCase.execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      callId: "call-1",
+      callerAni: "+15551234567",
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(aiProvider.requests).toHaveLength(1);
+    expect(aiProvider.requests[0]?.systemPrompt).toBe(conversation.systemPrompt);
+    expect(aiProvider.requests[0]?.maxTokens).toBe(1);
+  });
+
   it("creates a conversation in the greeting state with an assembled system prompt and the profile's model", async () => {
     const { useCase, eventBus } = buildUseCase();
 

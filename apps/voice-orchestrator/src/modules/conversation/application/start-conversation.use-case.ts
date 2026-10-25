@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { StructuredLogger } from "@ethixweb/shared-kernel";
 import { APP_LOGGER } from "../../../shared/observability/app-logger.module";
 import { setSpanAttributes } from "../../../shared/observability/tracing";
@@ -25,6 +25,8 @@ import {
   TENANT_STATUS_PROVIDER,
   type TenantStatusProvider,
 } from "../../capacity/domain/tenant-status.port";
+import { AI_PROVIDER_ROUTER, type AiProviderPort } from "../../ai-provider/domain/ai-provider.port";
+import { ToolRegistry } from "../../tool-broker/application/tool-registry";
 import type { Conversation } from "../domain/conversation.entity";
 import {
   CONVERSATION_REPOSITORY,
@@ -148,7 +150,46 @@ export class StartConversationUseCase {
     @Inject(CAPACITY_CONFIG_PROVIDER) private readonly capacityConfig: CapacityConfigProvider,
     @Inject(TENANT_STATUS_PROVIDER) private readonly tenantStatus: TenantStatusProvider,
     @Inject(APP_LOGGER) private readonly logger: StructuredLogger,
+    @Optional() @Inject(AI_PROVIDER_ROUTER) private readonly aiProvider?: AiProviderPort,
+    @Optional() private readonly toolRegistry?: ToolRegistry,
   ) {}
+
+  /**
+   * 2026-10-24 test calls: the first reply's completion took 2.2-2.9 s; later
+   * ones about 1 s. The system prompt is built per call, so OpenAI's prompt
+   * cache is cold for the first turn, and so is the connection. One
+   * throwaway, one-token completion with the same prompt and tools, sent
+   * while the greeting plays, warms both. Measured: a ~7k-token prompt sent
+   * again is served from cache even with a tool fewer (6016 of 7079 tokens),
+   * and its first token came back ~0.5-1 s sooner. Best-effort: never awaited,
+   * never fails the call.
+   */
+  private warmUpModel(conversation: Conversation): void {
+    if (!this.aiProvider || !this.toolRegistry) {
+      return;
+    }
+    const tools = this.toolRegistry.list().map((definition) => ({
+      name: definition.name,
+      description: definition.description,
+      parameters: definition.jsonSchema,
+    }));
+    const stream = this.aiProvider.streamCompletion({
+      model: conversation.llmModel,
+      systemPrompt: conversation.systemPrompt,
+      messages: [...conversation.messages, { role: "user", content: "[warm-up, say: ok]" }],
+      ...(tools.length > 0 ? { tools } : {}),
+      maxTokens: 1,
+    });
+    void (async () => {
+      try {
+        for await (const chunk of stream) {
+          void chunk;
+        }
+      } catch {
+        // A warm-up that fails changes nothing.
+      }
+    })();
+  }
 
   /**
    * Hard-capped so a slow core-api can never hold up the greeting: past the
@@ -353,6 +394,7 @@ export class StartConversationUseCase {
       }
 
       const conversation = await this.publishStarted(saved, now);
+      this.warmUpModel(conversation);
       return { conversation, greeting };
     } catch (error) {
       await this.callAdmission
