@@ -166,8 +166,10 @@ export class StartConversationUseCase {
    */
   private warmUpModel(conversation: Conversation): void {
     if (!this.aiProvider || !this.toolRegistry) {
+      this.logger.warn("model warm-up skipped: no AI provider or tool registry wired in");
       return;
     }
+    const startedAt = Date.now();
     const tools = this.toolRegistry.list().map((definition) => ({
       name: definition.name,
       description: definition.description,
@@ -181,10 +183,17 @@ export class StartConversationUseCase {
       maxTokens: 1,
     });
     void (async () => {
+      let firstChunkMs: number | null = null;
       try {
         for await (const chunk of stream) {
+          firstChunkMs ??= Date.now() - startedAt;
           void chunk;
         }
+        this.logger.info("model warm-up finished", {
+          conversationId: conversation.id,
+          firstChunkMs,
+          totalMs: Date.now() - startedAt,
+        });
       } catch {
         // A warm-up that fails changes nothing.
       }
