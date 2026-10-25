@@ -141,30 +141,46 @@ function readNumberGroup(
     // "forty five" is 45; "forty oh" is not a number anyone says, so a zero
     // after a tens word is left to start its own group.
     if (ones !== undefined && ones !== "0") {
-      return { digits: String(tens + Number(ones)), consumed: 2 };
+      return withHundreds(cores, at, tens + Number(ones), 2);
     }
-    return { digits: String(tens), consumed: 1 };
+    return withHundreds(cores, at, tens, 1);
   }
   const teen = TEEN_WORDS[word];
   if (teen !== undefined) {
-    return { digits: String(teen), consumed: 1 };
+    return withHundreds(cores, at, teen, 1);
   }
   const ones = DIGIT_WORDS[word];
   if (ones === undefined) {
     return null;
   }
-  if ((cores[at + 1] ?? "") !== "hundred") {
-    return { digits: ones, consumed: 1 };
+  return withHundreds(cores, at, Number(ones), 1);
+}
+
+/**
+ * "two hundred" -> 200, "two hundred fifty six" -> 256, and, 2026-10-25 from
+ * replaying every recorded call: "twelve hundred pine street" came out as
+ * "12 hundred pine street" and "two hundred and five main street" as
+ * "5 main street". A teen or a tens number before "hundred" counts too, and
+ * so does an "and" after it.
+ */
+function withHundreds(
+  cores: readonly string[],
+  at: number,
+  value: number,
+  consumed: number,
+): { digits: string; consumed: number } {
+  if ((cores[at + consumed] ?? "") !== "hundred") {
+    return { digits: String(value), consumed };
   }
-  // "two hundred" -> 200, "two hundred fifty six" -> 256.
-  let value = Number(ones) * 100;
-  let consumed = 2;
-  const after = readNumberGroup(cores, at + 2);
+  let total = value * 100;
+  let used = consumed + 1;
+  const skipAnd = (cores[at + used] ?? "") === "and" ? 1 : 0;
+  const after = readNumberGroup(cores, at + used + skipAnd);
   if (after && after.digits.length <= 2) {
-    value += Number(after.digits);
-    consumed += after.consumed;
+    total += Number(after.digits);
+    used += skipAnd + after.consumed;
   }
-  return { digits: String(value), consumed };
+  return { digits: String(total), consumed: used };
 }
 
 /**
