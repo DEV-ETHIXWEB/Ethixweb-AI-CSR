@@ -126,7 +126,7 @@ describe("parseDelivery", () => {
 
   it("a phone area code in parentheses is NOT stripped — it is under the 3-word floor and callers are read these back", () => {
     const result = parseDelivery("Let me confirm that: (206) 895-6963?");
-    expect(result.segments[0]!.text).toBe("Let me confirm that: (206) 895-6963?");
+    expect(result.segments[0]!.text).toBe("Let me confirm that: 2, 0, 6, 8, 9, 5, 6, 9, 6, 3?");
   });
 
   it("a meta-aside as the ENTIRE turn leaves nothing to speak, same as a bare cue", () => {
@@ -281,7 +281,7 @@ describe("silenceBuffer", () => {
         .map((segment) => segment.text)
         .join("")
         .trim(),
-    ).toBe("1200 Pine Street, Seattle.");
+    ).toBe("1, 2, 0, 0, Pine Street, Seattle.");
   });
 });
 
