@@ -1326,6 +1326,43 @@ function statedNameAt(
   return first ? { value: last ? `${first} ${last}` : first, index } : null;
 }
 
+/**
+ * 2026-10-26, real-model QA: "Beverly Hills, California" and "Portland,
+ * Oregon", each said in answer to "can I get your name?", became the names
+ * "Beverly Hills" and "Portland Oregon". An answer naming a place is not a
+ * name.
+ */
+const PLACE_WORDS = new Set([
+  "hills",
+  "beach",
+  "heights",
+  "springs",
+  "valley",
+  "county",
+  "city",
+  "island",
+  "seattle",
+  "tacoma",
+  "bellevue",
+  "washington",
+  "oregon",
+  "california",
+  "florida",
+  "texas",
+  "idaho",
+  "nevada",
+  "arizona",
+  "colorado",
+  "utah",
+  "montana",
+  "alaska",
+  "hawaii",
+  "portland",
+  "spokane",
+  "vancouver",
+  "miami",
+]);
+
 function answeredName(turns: ReadonlyArray<{ speaker: string; text: string }>): string | null {
   let found: string | null = null;
   for (let i = 1; i < turns.length; i += 1) {
@@ -1353,6 +1390,7 @@ function answeredName(turns: ReadonlyArray<{ speaker: string; text: string }>): 
       words.length >= 1 &&
       words.length <= 3 &&
       words.every((word) => canBeName(word)) &&
+      !words.some((word) => PLACE_WORDS.has(word)) &&
       !new RegExp(FIXTURE.source, "i").test(whole)
     ) {
       found = words.map(capitalize).join(" ");

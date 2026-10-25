@@ -25,6 +25,7 @@ import {
   classifyZip,
   coveredZipsFromPrompt,
   detectServiceAreaFromTranscript,
+  namesAnotherState,
 } from "../domain/service-area";
 import { Inject, Injectable } from "@nestjs/common";
 import type { IdempotencyStore, StructuredLogger } from "@ethixweb/shared-kernel";
@@ -493,6 +494,17 @@ export class HandleTurnUseCase {
         zip: spokenZip.zip,
         inServiceArea: spokenZip.verdict !== "outside",
       };
+    }
+    // 2026-10-26, real-model QA (svc-06, svc-07): told only "zip 90210 is
+    // NOT within the service area", Grace went on with the intake; and
+    // "I'm calling from Portland, Oregon" was never checked at all. The turn
+    // a caller is first found to be outside the area says what to do.
+    const otherState = namesAnotherState(command.transcript);
+    const newlyOutside =
+      (spokenZip?.verdict === "outside" && spokenZip.zip !== zipBeforeThisTurn) ||
+      otherState !== null;
+    if (newlyOutside) {
+      annotatedTranscript = `${OUTSIDE_THE_AREA_NOTE} ${annotatedTranscript}`;
     }
     if (conversation.lastServiceAreaCheck) {
       // H2: same "inject every remaining turn" reliability rationale as
@@ -2809,6 +2821,11 @@ function annotateServiceAreaResult(
     : `[already confirmed this call: ${zipPhrase} is NOT within the service area — don't re-ask or contradict this; a DIFFERENT zip the caller gives would need its own fresh getServiceAreas check]`;
   return `${note} ${transcript}`;
 }
+
+const OUTSIDE_THE_AREA_NOTE =
+  "[The caller is outside the area this business serves. Your whole reply: say kindly and " +
+  "plainly that it is outside the area you cover, so you can't send someone there, and suggest " +
+  "they call a plumber local to them. Do not take their name, address or number.]";
 
 /** H2: same rationale as `annotateServiceAreaResult`, for `getBusinessHours`. */
 function annotateBusinessHoursResult(

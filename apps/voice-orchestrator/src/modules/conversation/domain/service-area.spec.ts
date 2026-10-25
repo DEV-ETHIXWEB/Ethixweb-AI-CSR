@@ -3,6 +3,7 @@ import {
   collapseSpokenDigits,
   coveredZipsFromPrompt,
   detectServiceAreaFromTranscript,
+  namesAnotherState,
 } from "./service-area";
 
 // The live knowledge row's shape, abbreviated: a real ZIP list plus the
@@ -170,5 +171,22 @@ describe("collapseSpokenDigits with compound spoken numbers", () => {
     ["we're open 24/7 right", "we're open 24/7 right"],
   ])("does not invent a number out of ordinary speech: %p", (said, expected) => {
     expect(collapseSpokenDigits(said)).toBe(expected);
+  });
+});
+
+describe("namesAnotherState (2026-10-26, real-model QA svc-07 and svc-09)", () => {
+  it.each([
+    ["I'm calling from Portland, Oregon, my water heater is leaking.", "oregon"],
+    ["I'm in Miami, Florida. Can you send someone out today?", "florida"],
+  ])("%p is in %p", (said, state) => {
+    expect(namesAnotherState(said)).toBe(state);
+  });
+
+  it.each([
+    "my brother in california told me",
+    "I'm in Black Diamond",
+    "we're in seattle washington",
+  ])("%p is not", (said) => {
+    expect(namesAnotherState(said)).toBeNull();
   });
 });

@@ -271,6 +271,19 @@ const STREET_CONTEXT =
 const US_STATE_NAMES =
   /\b(alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming)\b/i;
 
+/**
+ * The US state, other than Washington, the caller says they are in, or null.
+ * "I'm calling from Portland, Oregon", "I'm in Miami, Florida". Only after a
+ * word that places the caller there, so "my brother in California" or "a
+ * Florida number" do not count.
+ */
+const IN_A_STATE =
+  /\b(?:i'?m|i am|we'?re|we are|calling|located|live|living|based|house is|home is)\s+(?:in|from|out of|at)\s+(?:[a-z.]+[\s,]+){0,3}?(alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|west virginia|wisconsin|wyoming)\b/i;
+
+export function namesAnotherState(transcript: string): string | null {
+  return IN_A_STATE.exec(transcript)?.[1]?.toLowerCase() ?? null;
+}
+
 export function detectServiceAreaFromTranscript(
   transcript: string,
   covered: ReadonlySet<string>,

@@ -254,3 +254,19 @@ describe("a sales pitch is not a problem (real-model QA, vendor-08)", () => {
     expect(notes ?? "").not.toContain("What they called about");
   });
 });
+
+describe("2026-10-26, real-model QA: a place is not a name", () => {
+  it.each(["Beverly Hills, California.", "Portland, Oregon."])("%p", (said) => {
+    expect(nameAfter([said], [])).toBeNull();
+    expect(
+      buildCallNotes(
+        ["my toilet is overflowing", said],
+        [
+          { speaker: "caller", text: "my toilet is overflowing" },
+          { speaker: "agent", text: "Can I get your name?" },
+          { speaker: "caller", text: said },
+        ],
+      ).statedName,
+    ).toBeNull();
+  });
+});
