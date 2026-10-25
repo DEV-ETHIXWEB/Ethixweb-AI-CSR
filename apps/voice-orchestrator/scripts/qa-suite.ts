@@ -2451,7 +2451,11 @@ const SCENARIOS: Scenario[] = [
         /\b(house number|correct (number|address)|what('?s| is) the (correct|right))\b/,
         2,
       ),
-      saysSomewhere("says the new house number back", /1-?2-?5-?(0|oh)\b|twelve fifty/i),
+      // "1-2-5-oh" or, as the output guard writes it, "1, 2, 5, 0".
+      saysSomewhere(
+        "says the new house number back",
+        /1[-, ]*2[-, ]*5[-, ]*(0|oh)\b|twelve fifty/i,
+      ),
     ],
   },
   {
@@ -2766,7 +2770,9 @@ const SCENARIOS: Scenario[] = [
     id: "v38-04-address-before-commit",
     category: "address",
     turns: ["My water heater is leaking, I'm Marcus.", "It's 13005 SE 245th Street, Kent."],
-    checks: [neverAsksAbout("does not re-ask the address it just confirmed", ASKS_ADDRESS)],
+    // From the address turn on: asking for it after "my water heater is
+    // leaking" is the next step, not a re-ask.
+    checks: [neverAsksAfter("does not re-ask the address it just confirmed", ASKS_ADDRESS, 1)],
   },
   // -------------------------------------------------------------------
   // 20. FEEL — built line by line from the client's call (d2b845c4, "still
