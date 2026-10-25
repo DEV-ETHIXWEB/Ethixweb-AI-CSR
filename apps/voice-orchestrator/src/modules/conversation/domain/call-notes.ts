@@ -319,6 +319,13 @@ const MAX_FIXTURES = 3;
  */
 const PROBLEM_WORDS_MAX = 400;
 const NOT_THE_PROBLEM = /\b(interrupt\w*|let me (?:finish|complete)|be patient|my name is)\b/i;
+/**
+ * A vendor's pitch is not a customer's problem: "we help local plumbing shops
+ * get more calls" went into the notes as what the caller called about, and
+ * Grace saved the salesperson as a customer (real-model QA, vendor-08).
+ */
+const SALES_PITCH =
+  /\b(we (?:help|do|offer|provide|work with)|shops like yours|businesses like yours|companies like yours|your (?:business|company|shop)|more (?:calls|customers|leads)|marketing|seo|google (?:ads|visibility|listing))\b/i;
 
 function problemInTheirWords(
   callerTexts: readonly string[],
@@ -327,7 +334,12 @@ function problemInTheirWords(
   const pieces: string[] = [];
   const take = (text: string): void => {
     const trimmed = text.trim();
-    if (trimmed && !NOT_THE_PROBLEM.test(trimmed) && !pieces.includes(trimmed)) {
+    if (
+      trimmed &&
+      !NOT_THE_PROBLEM.test(trimmed) &&
+      !SALES_PITCH.test(trimmed) &&
+      !pieces.includes(trimmed)
+    ) {
       pieces.push(trimmed);
     }
   };

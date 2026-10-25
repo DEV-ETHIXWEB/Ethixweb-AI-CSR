@@ -242,3 +242,15 @@ describe("2026-10-25, replaying every recorded call: what is not the name said a
     ).toContain("spell their first name");
   });
 });
+
+describe("a sales pitch is not a problem (real-model QA, vendor-08)", () => {
+  it("leaves the pitch out of what they called about", () => {
+    const notes = formatCallNotes(
+      buildCallNotes([
+        "Hi, it's Mapcard Business. We help local plumbing shops get more calls.",
+        "We do Google visibility and AI phone agents for shops like yours.",
+      ]),
+    );
+    expect(notes ?? "").not.toContain("What they called about");
+  });
+});
