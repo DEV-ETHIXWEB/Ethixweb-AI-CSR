@@ -4,6 +4,7 @@ import {
   leadProblemBlockedReason,
   saveBlockedReason,
   shouldNudgeForCallbackNumber,
+  spokenPhoneDigits,
   readsBackStreet,
   zipMissingNote,
   NUMBER_ASKED,
@@ -695,5 +696,21 @@ describe("a missed appointment is a reason to call", () => {
     ["no one showed up yesterday"],
   ])("%p", (said) => {
     expect(leadProblemBlockedReason({ callerTexts: [said], agentTexts: [] })).toBeNull();
+  });
+});
+
+describe("spokenPhoneDigits (2026-10-26 live test)", () => {
+  it("a number with a digit lost is not taken as a number", () => {
+    expect(
+      spokenPhoneDigits(["it's plus one eight seven two seven eight four nine nine nine"]),
+    ).toBeNull();
+  });
+
+  it.each([
+    ["it's plus one eight seven two two seven eight four nine nine nine", "8722784999"],
+    ["call me at 206 555 0147", "2065550147"],
+    ["one two zero six five five five zero one four seven", "2065550147"],
+  ])("%p is %p", (said, digits) => {
+    expect(spokenPhoneDigits([said])).toBe(digits);
   });
 });

@@ -131,7 +131,13 @@ export const PHONE_NOT_CONFIRMED_ERROR = {
 export function spokenPhoneDigits(callerTexts: readonly string[]): string | null {
   for (let i = callerTexts.length - 1; i >= 0; i -= 1) {
     const collapsed = collapseSpokenDigits(callerTexts[i] ?? "");
-    const match = collapsed.match(/(?:\+?1[\s.-]*)?\(?(\d{3})\)?[\s.-]*(\d{3})[\s.-]*(\d{4})\b/);
+    // A US area code and exchange never start with 0 or 1. 2026-10-26, live
+    // test: "plus one eight seven two seven eight four nine nine nine" (a
+    // digit lost by speech recognition) was taken as 187-278-4999, and Grace
+    // read back "1-8-7-2-7-8-4-9-9-9" as the caller's number.
+    const match = collapsed.match(
+      /(?:\+?1[\s.-]*)?\(?([2-9]\d{2})\)?[\s.-]*([2-9]\d{2})[\s.-]*(\d{4})\b/,
+    );
     if (match) {
       return `${match[1]}${match[2]}${match[3]}`;
     }
