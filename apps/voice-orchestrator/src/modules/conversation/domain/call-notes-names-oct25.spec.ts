@@ -1,4 +1,9 @@
-import { addressDisputeNote, buildCallNotes, formatCallNotes } from "./call-notes";
+import {
+  addressDisputeNote,
+  buildCallNotes,
+  formatCallNotes,
+  nameRepeatedNote,
+} from "./call-notes";
 
 /**
  * 2026-10-25, the client's test calls: every name below was saved or said
@@ -194,5 +199,46 @@ describe("2026-10-25, replaying every recorded call", () => {
     expect(
       buildCallNotes(["well fifty three one two", "one hundred fifty six drive northeast"]).street,
     ).toBe("5312 156th drive northeast");
+  });
+});
+
+describe("2026-10-25, replaying every recorded call: what is not a street", () => {
+  it.each([
+    "oh by the way is someone coming today",
+    "two oh four not two oh four six two oh four fifteenth avenue northeast",
+    "nine two two zero eight ave nine eight one zero three",
+  ])("%p", (said) => {
+    expect(buildCallNotes([said]).street ?? "").not.toMatch(/^0 |by the way| not | ave$/);
+  });
+
+  it("still finds the street in a correction said in full", () => {
+    expect(buildCallNotes(["no it's six two zero four fifteenth avenue northeast"]).street).toBe(
+      "6204 fifteenth avenue northeast",
+    );
+  });
+});
+
+describe("2026-10-25, replaying every recorded call: what is not the name said again", () => {
+  it("a street name said twice, echoed back by Grace", () => {
+    expect(
+      nameRepeatedNote(
+        ["yes", "twenty six fifty four", "button", "button"],
+        ["What's the street name?", "Button, is that B, U, T, T, O, N?"],
+        null,
+      ),
+    ).toBeNull();
+  });
+
+  it.each([
+    [["my name is petronella tasquez", "it's vasquez"]],
+    [["hey grace this is jordan", "it's wiki patrick fossett and just to be clear"]],
+  ])("%p", (callerTexts) => {
+    expect(nameRepeatedNote(callerTexts, ["Got it."], null)).toBeNull();
+  });
+
+  it("but a name said again is", () => {
+    expect(
+      nameRepeatedNote(["my name is kevin dunn", "kevin kevin dunn it's kevin dunn"], ["Got it."]),
+    ).toContain("spell their first name");
   });
 });

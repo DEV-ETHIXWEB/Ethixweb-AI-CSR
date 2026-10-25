@@ -1454,7 +1454,8 @@ const DIRECTIONS = new Set([
   "southwest",
 ]);
 
-const NOT_A_STREET_NAME = new Set(["the", "a", "an", "is", "my", "name", "and", "it", "its"]);
+const NOT_A_STREET_NAME = new Set(["the", "a", "an", "is", "my", "name", "and", "it", "its", "by"]);
+const CORRECTION_WORDS = new Set(["not", "no", "or"]);
 
 function streetIn(text: string): string | null {
   // 2026-10-23 client call: "one seven four eight and it's / westlake avenue"
@@ -1467,7 +1468,8 @@ function streetIn(text: string): string | null {
     .filter(Boolean);
   let found: string | null = null;
   for (let house = 0; house < tokens.length; house += 1) {
-    if (!/^\d{1,6}$/.test(tokens[house] ?? "")) {
+    // No house number starts with 0: "oh by the way" became "0 by the way".
+    if (!/^[1-9]\d{0,5}$/.test(tokens[house] ?? "")) {
       continue;
     }
     for (let suffix = house + 1; suffix <= house + 5 && suffix < tokens.length; suffix += 1) {
@@ -1483,6 +1485,11 @@ function streetIn(text: string): string | null {
       // street "98021 the street": the ZIP as a house number, "the" as the
       // name. Grace read it back as an address and saved it.
       if (tokens.slice(house + 1, suffix).every((word) => NOT_A_STREET_NAME.has(word))) {
+        continue;
+      }
+      // "two oh four not two oh four six two oh four fifteenth avenue": a
+      // correction, not one street (2026-10-25, replaying every call).
+      if (tokens.slice(house + 1, suffix).some((word) => CORRECTION_WORDS.has(word))) {
         continue;
       }
       let end = suffix;
@@ -1557,7 +1564,7 @@ const NEVER_IN_A_STREET = new Set([
 function streetBeforeZip(tokens: readonly string[]): string | null {
   let found: string | null = null;
   for (let house = 0; house < tokens.length; house += 1) {
-    if (!/^\d{3,6}$/.test(tokens[house] ?? "")) {
+    if (!/^[1-9]\d{2,5}$/.test(tokens[house] ?? "")) {
       continue;
     }
     let end = house + 1;
@@ -1571,7 +1578,9 @@ function streetBeforeZip(tokens: readonly string[]): string | null {
     while (words.length > 0 && LOCALITY_WORDS.has(words.at(-1)!)) {
       words.pop();
     }
-    if (words.length >= 1 && words.length <= 4 && !words.some((w) => NEVER_IN_A_STREET.has(w))) {
+    // "92208 ave" is a street type with no name.
+    const named = words.some((w) => !STREET_SUFFIXES.has(w) && !DIRECTIONS.has(w));
+    if (named && words.length <= 4 && !words.some((w) => NEVER_IN_A_STREET.has(w))) {
       found = [tokens[house], ...words].join(" ");
     }
   }
@@ -1827,11 +1836,20 @@ export function nameRepeatedNote(
   // not the name being misheard.
   const [nowFirst, ...nowRest] = now.value.toLowerCase().split(/\s+/);
   const [beforeFirst, ...beforeRest] = before.value.toLowerCase().split(/\s+/);
+  // 2026-10-25: "it's vasquez" (fixing the surname) and "it's wiki patrick
+  // ..." are not the name said again. After a loose "it's" / "I'm", only the
+  // same first name is a repeat; see statedNameAt.
+  if (!STRONG_NAME_CUE.test(latest) && nowFirst !== beforeFirst) {
+    return null;
+  }
   if (nowFirst === beforeFirst && nowRest.join(" ") !== beforeRest.join(" ")) {
     return null;
   }
   return NAME_REPEATED;
 }
+
+const STRONG_NAME_CUE =
+  /\b(?:my name is|my name's|name is|my first name is|first name is|call me|i go by|it'?s actually|it is actually)\b/i;
 
 const NAME_REPEATED =
   "[The caller has said their name again, so it may have been misheard. Your whole reply: " +
@@ -1878,7 +1896,14 @@ function saidTheNameAgainUnasked(
   const first = words[0]!;
   return (
     (notedName !== null && bare(notedName) === latest) ||
-    agentTexts.some((text) => new RegExp(`\\b${first}\\b`, "i").test(withoutAccents(text)))
+    // As a person is addressed ("Thanks, Yash"), not an answer echoed back:
+    // "Button, is that B-U-T-T-O-N?" was a street name said twice.
+    agentTexts.some((text) =>
+      new RegExp(
+        `\\b(?:thanks|thank you|got it|okay|ok|great|perfect|nice to meet you|hi|hello)[,!.]?\\s+${first}\\b`,
+        "i",
+      ).test(withoutAccents(text)),
+    )
   );
 }
 
