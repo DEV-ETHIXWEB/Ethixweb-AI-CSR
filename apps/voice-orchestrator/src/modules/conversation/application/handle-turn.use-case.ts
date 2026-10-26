@@ -28,6 +28,8 @@ import {
   detectServiceAreaFromTranscript,
   namesAnotherState,
   namesPlaceOutside,
+  namesServedPlace,
+  servedPlacesFromPrompt,
   outsidePlacesFromPrompt,
 } from "../domain/service-area";
 import { Inject, Injectable } from "@nestjs/common";
@@ -514,8 +516,23 @@ export class HandleTurnUseCase {
     const newlyOutside =
       (spokenZip?.verdict === "outside" && spokenZip.zip !== zipBeforeThisTurn) ||
       otherState !== null;
+    // A main city ("in Seattle") is said with nearly every address; it gets
+    // the note only when the caller is asking about coverage. The towns the
+    // rules say to take anyway (Black Diamond) always do: those are the ones
+    // the model turned away.
+    const servedPlace = newlyOutside
+      ? null
+      : namesServedPlace(command.transcript, servedPlacesFromPrompt(conversation.systemPrompt));
+    const servedNoteNeeded =
+      servedPlace !== null &&
+      (ASKS_ABOUT_COVERAGE.test(command.transcript) ||
+        !(/CITIES SERVED:\s*([^.\n]+)/i.exec(conversation.systemPrompt)?.[1] ?? "")
+          .toLowerCase()
+          .includes(servedPlace));
     if (newlyOutside) {
       annotatedTranscript = `${OUTSIDE_THE_AREA_NOTE} ${annotatedTranscript}`;
+    } else if (servedNoteNeeded && servedPlace) {
+      annotatedTranscript = `[${servedPlace.replace(/\b[a-z]/g, (c) => c.toUpperCase())} is in the area you serve, by your service-area list. Say yes, you can help there; if it is not one of the main cities, add that the team will confirm coverage when they call. Never turn them away.] ${annotatedTranscript}`;
     }
     if (conversation.lastServiceAreaCheck) {
       // H2: same "inject every remaining turn" reliability rationale as
@@ -2888,6 +2905,9 @@ function annotateServiceAreaResult(
     : `[already confirmed this call: ${zipPhrase} is NOT within the service area — don't re-ask or contradict this; a DIFFERENT zip the caller gives would need its own fresh getServiceAreas check]`;
   return `${note} ${transcript}`;
 }
+
+const ASKS_ABOUT_COVERAGE =
+  /\b(come out|come to|service|serve|cover|go out|work in|in your area|somewhere you)\b/i;
 
 const OUTSIDE_THE_AREA_NOTE =
   "[The caller is outside the area this business serves. Your whole reply, in two short " +

@@ -6,6 +6,8 @@ import {
   namesAnotherState,
   outsidePlacesFromPrompt,
   namesPlaceOutside,
+  servedPlacesFromPrompt,
+  namesServedPlace,
 } from "./service-area";
 
 // The live knowledge row's shape, abbreviated: a real ZIP list plus the
@@ -216,5 +218,32 @@ describe("outsidePlacesFromPrompt / namesPlaceOutside (real-model QA svc-08)", (
     ["my sister lives in everett", null],
   ])("%p -> %p", (said, place) => {
     expect(namesPlaceOutside(said, outsidePlacesFromPrompt(prompt))).toBe(place);
+  });
+});
+
+describe("servedPlacesFromPrompt / namesServedPlace (real-model QA svc-05)", () => {
+  const prompt =
+    "CITIES SERVED: Seattle, Tacoma, Kent, Tukwila.\n\nIF THE ZIP IS NOT ON THE LIST, that is NOT a no. If the town is anywhere else in Washington - places like Carnation, Duvall, Black Diamond, Gig Harbor - TAKE THE JOB and say the team will confirm coverage when they call back.";
+
+  it("reads both of the business's own lists", () => {
+    expect(servedPlacesFromPrompt(prompt)).toEqual([
+      "seattle",
+      "tacoma",
+      "kent",
+      "tukwila",
+      "carnation",
+      "duvall",
+      "black diamond",
+      "gig harbor",
+    ]);
+  });
+
+  it.each([
+    ["I'm in Black Diamond, is that somewhere you come out to?", "black diamond"],
+    ["I'm out in Carnation", "carnation"],
+    ["my name is kent", null],
+    ["the water is in the kitchen", null],
+  ])("%p -> %p", (said, place) => {
+    expect(namesServedPlace(said, servedPlacesFromPrompt(prompt))).toBe(place);
   });
 });

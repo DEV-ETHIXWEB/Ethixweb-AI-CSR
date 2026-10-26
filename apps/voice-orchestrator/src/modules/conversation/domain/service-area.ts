@@ -302,6 +302,33 @@ export function outsidePlacesFromPrompt(systemPrompt: string): string[] {
     .filter((place) => /^[a-z][a-z ]{2,}$/.test(place));
 }
 
+/**
+ * The cities and towns the business's own service-area text says to serve:
+ * its "CITIES SERVED: ..." list, and its "places like ... - TAKE THE JOB"
+ * list. 2026-10-26, real-model QA svc-05: told by that text to take the job
+ * in Black Diamond, gpt-4o-mini turned the caller away every time.
+ */
+export function servedPlacesFromPrompt(systemPrompt: string): string[] {
+  const lists = [
+    /CITIES SERVED:\s*([^.\n]+)/i.exec(systemPrompt)?.[1],
+    /\bplaces like ([^.]+?)\s+[-–—]\s+TAKE THE JOB/i.exec(systemPrompt)?.[1],
+  ];
+  return lists
+    .flatMap((list) => (list ?? "").split(","))
+    .map((place) => place.trim().toLowerCase())
+    .filter((place) => /^[a-z][a-z ]{2,}$/.test(place));
+}
+
+/** The caller places themselves in one of `places` ("I'm in Black Diamond", "out in Carnation"). */
+export function namesServedPlace(transcript: string, places: readonly string[]): string | null {
+  const lower = transcript.toLowerCase();
+  return (
+    places.find((place) =>
+      new RegExp(`\\b(?:in|from|near|around|at)\\s+${place}\\b`).test(lower),
+    ) ?? null
+  );
+}
+
 /** The caller says they are in one of `places` ("I'm up in Everett"). */
 export function namesPlaceOutside(transcript: string, places: readonly string[]): string | null {
   const lower = transcript.toLowerCase();
