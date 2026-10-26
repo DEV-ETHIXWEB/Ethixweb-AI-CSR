@@ -37,6 +37,41 @@ export const SAFE_CAUSE_LINE = "A technician will need to look at that to confir
 export const SAFE_DISPATCH_LINE = "The team will call you to confirm when someone can come out.";
 const DISPATCH_CLAIM =
   /\b(dispatch(?:ing|ed)? (?:someone|a (?:tech|technician|plumber)|them|a team)|(?:help|someone|somebody|a (?:tech|technician|plumber)|they|the team|our team)(?: is|'s| are|'re)? (?:already )?on (?:the|their|his|her) way|(?:is|are) heading (?:out|over|your way)|(?:get|be) (?:there|out there|to you) (?:within|in) |arriv(?:e|ing) (?:within|in) |sending (?:someone|a (?:tech|technician|plumber)) (?:out|over|now|right))/i;
+/**
+ * Whether the visit or estimate costs anything is not published either way
+ * (the business's own knowledge says never to claim it). 2026-10-26, the
+ * client's test scripts on the production model: "It's not a free service",
+ * said to someone asking about a remodel estimate, and on another run "the
+ * estimate visit is typically done for free".
+ */
+export const SAFE_FEE_LINE = "The team will confirm any charge for the visit when they call.";
+const VISIT_WORDS =
+  /\b(estimates?|visits?|quotes?|consultations?|assessments?|diagnos\w*|trip|service call|come out|coming out)\b/i;
+const FEE_WORDS = /\b(free|complimentary|charge|fee|no cost|costs? (?:nothing|about|around|\$))\b/i;
+const IS_FREE = /\b(?:it'?s|it is|that'?s|that is|is|are)\s+(?:not\s+)?(?:a\s+)?free\b/i;
+const FEE_HEDGE =
+  /\b(confirm\w*|not sure|can'?t (?:say|tell)|don'?t know|(?:isn'?t|not) published|let you know|whether|asking|wondering)\b/i;
+/**
+ * Whether the technician calls before arriving is not in the business's
+ * knowledge. 2026-10-26, the client's test scripts, every run on the
+ * production model: "The technician typically calls before arriving",
+ * said to a caller relying on it to unlock her gate.
+ */
+export const SAFE_CALL_AHEAD_LINE = "I'll note that you'd like a call before they arrive.";
+const CALL_AHEAD_CLAIM =
+  /\b(?:technicians?|techs?|plumbers?|they|he|she)\b(?:\s+(?:will|usually|typically|always|normally|generally|do|does|should))*\s+(?:give you a )?calls?\b[^.?!]{0,20}\b(?:before|ahead|prior|on (?:their|the) way)\b/i;
+const CALL_AHEAD_HEDGE =
+  /\b(note|ask|request|make sure|let them know|can'?t|cannot|not sure|don'?t know)\b/i;
+/**
+ * What a price covers (labor, parts, the fixture) is not in the business's
+ * knowledge. 2026-10-26, the client's test scripts on the production model:
+ * "does that price include the toilet itself?" got "labor only" on one run
+ * and "includes the installation, the toilet is separate" on another.
+ */
+export const SAFE_SCOPE_LINE = "The technician's quote will spell out exactly what's included.";
+const PRICE_SCOPE_CLAIM =
+  /\b(?:price|quote|cost|rate)s?\b[^.?!;]{0,25}\b(?:covers?|includes?|including)\b|\b(?:purchased?|bought|buy|paid for)\b[^.?!;]{0,20}\bseparately\b|\b(?:toilet|unit|fixture|parts?|materials?|equipment)(?: itself)? (?:is|are|would be) (?:typically |usually |generally )?(?:separate|extra|not included)\b/i;
+const PRICE_SCOPE_HEDGE = /\b(whether|note|ask|not sure|don'?t know|can'?t say|confirm)\b/i;
 export const SAFE_CHANGE_LINE =
   "I can't change appointments from here, but I'll pass this to the team and they'll confirm it with you.";
 
@@ -77,7 +112,7 @@ const CHANGE_CLAIM =
 
 /** A guess at what causes or links problems, which cannot be known from a phone call. */
 const CAUSE_CLAIM =
-  /\b(could|might|may|probably|likely|usually|possibly|sounds like|typically)\b[^.?!]{0,60}\b(connected|related|linked|ties? to|tied to|caused by|due to|the same (issue|problem|clog|drain|line|cause|leak))\b|\b(usually|probably|typically|often) (a|the) (worn|faulty|clogged|bad|broken|loose|cracked)\b|\b(usually|probably|typically) (ties|points) to\b/i;
+  /\b(could|might|may|probably|likely|usually|possibly|sounds like|typically)\b[^.?!]{0,60}\b(connected|related|linked|ties? to|tied to|caused by|due to|the same (issue|problem|clog|drain|line|cause|leak))\b|\b(usually|probably|typically|often) (a|the) (worn|faulty|clogged|bad|broken|loose|cracked)\b|\b(usually|probably|typically) (ties|points) to\b|\b(?:reasons?|causes?|things|issues),? (?:like|such as) (?:an? |the )?(?:faulty|worn|failed|failing|bad|broken|loose|cracked|clogged|corroded|leaky|damaged|stuck|old)\b/i;
 
 const CHANGE_HEDGE = /\b(can'?t|cannot|unable|not able|won'?t)\b/i;
 
@@ -146,6 +181,9 @@ export type GuardAction =
   | "change_claim"
   | "cause_claim"
   | "dispatch_claim"
+  | "fee_claim"
+  | "call_ahead_claim"
+  | "scope_claim"
   | "slow_readback"
   | "repeated_statement"
   | "word_limit"
@@ -359,6 +397,11 @@ const sameName = (a: string, b: string): boolean => {
  * sentences, where repeats are natural ("Okay.", "Is that right?").
  */
 const REPEAT_MIN_WORDS = 5;
+
+/** Every digit in a sentence, "oh" read as 0: "1-2-oh-5" and "1205" are the same. */
+function digitsIn(sentence: string): string {
+  return sentence.replace(/\boh\b/gi, "0").replace(/\D/g, "");
+}
 const REPEAT_SIMILARITY = 0.8;
 
 function normalizedWords(sentence: string): string[] {
@@ -423,10 +466,12 @@ const SOFT_WORD_LIMIT = 35;
 export class OutputGuard {
   private readonly used = new Set<string>();
   private readonly recentStatements: string[][];
+  /** The digits each of recentStatements carries, in the same order; see repeatsRecentStatement. */
+  private readonly recentStatementDigits: string[];
+  private readonly questionsLastTurn: string[][];
   private lastSentenceKey = "";
   private spokeAlready: boolean;
   private readonly questionsThisTurn: string[][];
-  private readonly questionsLastTurn: string[][];
   private wordsSoFar = 0;
   readonly actions: GuardAction[] = [];
 
@@ -456,27 +501,14 @@ export class OutputGuard {
     this.questionsThisTurn = splitSentences(alreadySaidThisTurn)
       .filter((sentence) => isQuestion(sentence))
       .map(normalizedWords);
-    this.recentStatements = recentAgentReplies
+    const statements = recentAgentReplies
       .flatMap((reply) => splitSentences(reply))
       .filter((sentence) => !isQuestion(sentence))
-      .map(normalizedWords)
-      .filter((sentenceWords) => sentenceWords.length >= REPEAT_MIN_WORDS);
-    // 2026-10-14: a caller answered a DIFFERENT question than the one just
-    // asked ("as soon as possible" to "is this the best callback number?"),
-    // and Grace asked the SAME callback question again verbatim in her very
-    // next reply — exactly the "come back to it later, not immediately"
-    // prompt rule being missed. Only the immediately-preceding COMPLETED
-    // turn is checked (not the fuller recentAgentReplies window used for
-    // statements): re-asking something a few turns later, once the caller
-    // has genuinely moved on without answering it, is legitimate and this
-    // must not silence that.
-    //
-    // The caller (handle-turn.use-case.ts) appends `alreadySaidThisTurn`
-    // as the LAST entry of `recentAgentReplies` itself, so when this is a
-    // second pass of the SAME turn (alreadySpokeThisTurn), the genuinely
-    // previous COMPLETED turn's reply is one further back — found live:
-    // without this, the previous turn's question got shadowed by this
-    // turn's own pass-1 acknowledgment and the repeat went uncaught.
+      .filter((sentence) => normalizedWords(sentence).length >= REPEAT_MIN_WORDS);
+    this.recentStatements = statements.map(normalizedWords);
+    this.recentStatementDigits = statements.map(digitsIn);
+    // On a second pass of the same turn the previous COMPLETED turn's reply is
+    // one further back: the use case appends this turn's own pass-1 text.
     const previousReply = alreadySpokeThisTurn
       ? recentAgentReplies.at(-2)
       : recentAgentReplies.at(-1);
@@ -494,23 +526,40 @@ export class OutputGuard {
     if (isQuestion(sentence)) {
       // 2026-10-14: "Is the water running right now...? Got it... Is the
       // water running right now...?" in one reply. A question already asked
-      // earlier in this same turn, or verbatim in the turn right before this
-      // one, is not asked again immediately.
+      // earlier in this same turn is not asked again.
+      //
+      // The question from the turn before IS asked again. 2026-10-26,
+      // Prateek's live call: asked for the address, he gave his last name,
+      // and dropping the re-asked address question left "Thanks for that,
+      // Trevor Michael." and silence until he said "what".
       const asked = normalizedWords(sentence);
       if (asked.length < 4) {
         return false;
       }
+      // A read-back (digits or spelled letters) from the turn before is
+      // still not read again unasked: the client's "it confirmed my address
+      // more than three times" (2026-10-22). A reply left with nothing at all
+      // is caught by the use case's onlyRepeated fallback, never silence.
+      const isReadback =
+        /\d[\s,-]*\d[\s,-]*\d/.test(sentence) || /\b[A-Za-z](?:-[A-Za-z]){2,}\b/.test(sentence);
       return (
         this.questionsThisTurn.some((earlier) => similarity(asked, earlier) >= REPEAT_SIMILARITY) ||
-        this.questionsLastTurn.some((earlier) => similarity(asked, earlier) >= REPEAT_SIMILARITY)
+        (isReadback &&
+          this.questionsLastTurn.some((earlier) => similarity(asked, earlier) >= REPEAT_SIMILARITY))
       );
     }
     const current = normalizedWords(sentence);
     if (current.length < REPEAT_MIN_WORDS) {
       return false;
     }
+    // 2026-10-26, real-model QA (tester-08): a read-back of a CORRECTED
+    // address is nearly word for word the first one, and was dropped,
+    // leaving the caller only "Is that right?". Different digits are new.
+    const digits = digitsIn(sentence);
     return this.recentStatements.some(
-      (earlier) => similarity(current, earlier) >= REPEAT_SIMILARITY,
+      (earlier, at) =>
+        similarity(current, earlier) >= REPEAT_SIMILARITY &&
+        this.recentStatementDigits[at] === digits,
     );
   }
 
@@ -704,6 +753,40 @@ export class OutputGuard {
         if (!this.used.has(SAFE_DISPATCH_LINE)) {
           this.used.add(SAFE_DISPATCH_LINE);
           out.push(`${SAFE_DISPATCH_LINE} `);
+        }
+        continue;
+      }
+      if (
+        !isQuestion(sentence) &&
+        ((VISIT_WORDS.test(plain) && FEE_WORDS.test(plain)) || IS_FREE.test(plain)) &&
+        !FEE_HEDGE.test(plain) &&
+        !/\b(?:off|coupon|discount)\b/i.test(plain)
+      ) {
+        this.actions.push("fee_claim");
+        if (!this.used.has(SAFE_FEE_LINE)) {
+          this.used.add(SAFE_FEE_LINE);
+          out.push(`${SAFE_FEE_LINE} `);
+        }
+        continue;
+      }
+      if (
+        !isQuestion(sentence) &&
+        PRICE_SCOPE_CLAIM.test(plain) &&
+        !PRICE_SCOPE_HEDGE.test(plain) &&
+        !/\b(?:off|coupon|discount)\b/i.test(plain)
+      ) {
+        this.actions.push("scope_claim");
+        if (!this.used.has(SAFE_SCOPE_LINE)) {
+          this.used.add(SAFE_SCOPE_LINE);
+          out.push(`${SAFE_SCOPE_LINE} `);
+        }
+        continue;
+      }
+      if (!isQuestion(sentence) && CALL_AHEAD_CLAIM.test(plain) && !CALL_AHEAD_HEDGE.test(plain)) {
+        this.actions.push("call_ahead_claim");
+        if (!this.used.has(SAFE_CALL_AHEAD_LINE)) {
+          this.used.add(SAFE_CALL_AHEAD_LINE);
+          out.push(`${SAFE_CALL_AHEAD_LINE} `);
         }
         continue;
       }

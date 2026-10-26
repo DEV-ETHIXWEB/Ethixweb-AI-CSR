@@ -140,29 +140,29 @@ describe("OutputGuard repeated statements (vendor call Oct 7: 'Pricing depends o
     expect(out).not.toContain("Pricing depends");
   });
 
-  it("2026-10-14: drops a question repeated verbatim in the very next turn (vendor-02: 'as soon as possible' answered a different question, and the callback-number question got re-asked immediately)", () => {
-    // Enforces the existing prompt rule in code: "do not repeat the skipped
-    // question in your very next reply; come back to it later, once." This
-    // used to only apply to statements, never questions — a real QA run
-    // showed Grace ask the exact same callback-number question twice in a
-    // row across two turns.
-    const guard = new OutputGuard(["Is the number you're calling from the best one to reach you?"]);
-    expect(guard.apply("Is the number you're calling from the best one to reach you?")).toBe("");
-    expect(guard.actions).toContain("repeated_statement");
+  // 2026-10-26, Prateek's live call: asked for the address, he gave his last
+  // name instead, and Grace's reply "Thanks for that, Trevor Michael. What is
+  // the service address, including the street and ZIP code?" lost its
+  // question to this guard. She went silent until he said "what". The
+  // question asked last turn, unanswered, is asked again; only a duplicate
+  // within the same reply is dropped. (This replaces the 2026-10-14 rule that
+  // dropped it, from vendor-02: a re-asked question is better than silence.)
+  it("re-asks the question from last turn when the caller answered something else", () => {
+    const guard = new OutputGuard([
+      "Got it, Trevor, T-R-E-V-O-R. What is the service address, including the street and ZIP code?",
+    ]);
+    expect(
+      guard.apply(
+        "Thanks for that, Trevor Michael. What is the service address, including the street and ZIP code?",
+      ),
+    ).toContain("What is the service address");
   });
 
-  it("2026-10-14: catches the repeat even when this turn is itself a second ('keep call moving') pass, where the current turn's own pass-1 ack would otherwise shadow the true previous turn", () => {
-    // Live reproduction: turn N asked the callback-number question. Turn
-    // N+1's own pass 1 was "Got it, as soon as possible." (an
-    // acknowledgment, correctly triggering the keep-call-moving retry).
-    // Pass 2 then re-asked the EXACT turn-N question. Before the fix,
-    // `recentAgentReplies.at(-1)` picked up pass 1's own ack (which has no
-    // question in it) instead of turn N's actual question, and the repeat
-    // went uncaught.
-    const turnNQuestion = "Is the number you're calling from the best one to reach you?";
-    const pass1Ack = "Got it, as soon as possible.";
-    const guard = new OutputGuard([turnNQuestion, pass1Ack], true, pass1Ack);
-    expect(guard.apply(`Got it. ${turnNQuestion}`)).not.toContain("the best one to reach you");
+  it("still drops the same question twice in one reply", () => {
+    const question = "Is the number you're calling from the best one to reach you?";
+    const pass1 = `Got it. ${question}`;
+    const guard = new OutputGuard([pass1], true, pass1);
+    expect(guard.apply(question)).toBe("");
     expect(guard.actions).toContain("repeated_statement");
   });
 
@@ -601,5 +601,131 @@ describe("2026-10-26: Grace never promises someone is on the way", () => {
     "A technician will come out and locate where the leak is coming from.",
   ])("leaves %p alone", (said) => {
     expect(apply(said)).toBe(said);
+  });
+});
+
+describe("OutputGuard: whether the visit costs anything is not published (2026-10-26)", () => {
+  // The client's test scripts, on the production model: "It's not a free
+  // service", said to someone asking about a remodel estimate. The business
+  // never published that either way.
+  const apply = (text: string): string => new OutputGuard().apply(text);
+
+  it.each([
+    "The estimate visit includes a technician assessing the space and discussing your needs. It's not a free service, and that typically takes about an hour.",
+    "The estimate visit is typically done for free, and the technician will assess your needs.",
+    "We offer free estimates for remodels.",
+    "There's a small fee for the technician to come out.",
+    "The estimate visit is typically a flat-rate charge, and the technician will assess your needs and provide a quote.",
+  ])("%p", (said) => {
+    expect(apply(said)).toContain("The team will confirm any charge for the visit when they call.");
+    expect(apply(said)).not.toMatch(
+      /not a free|for free|free estimates|small fee|flat-rate charge/,
+    );
+  });
+
+  it.each([
+    "The estimate visit involves a technician assessing the plumbing needs, and the visit cost will be confirmed when you book.",
+    "The technician gives an upfront, flat-rate quote before any work starts.",
+    "There are no surprise charges once a price is given.",
+    "We have $100 off drain cleaning, which includes a free mainline sewer camera inspection.",
+    "Is the estimate visit for the bathroom remodel?",
+    "Got it, so you're just asking about whether there's a diagnostic fee before you decide to book.",
+  ])("leaves %p alone", (said) => {
+    expect(apply(said)).toBe(said);
+  });
+});
+
+describe("OutputGuard: whether the technician calls ahead is not known (2026-10-26)", () => {
+  // The client's test scripts, all three runs on the production model.
+  const apply = (text: string): string => new OutputGuard().apply(text);
+
+  it.each([
+    "The technician typically calls before arriving to confirm everything.",
+    "The technician usually calls ahead to confirm their arrival.",
+    "Yes, the technician will call before arriving, so you'll know to unlock the gate.",
+    "Yes, they usually call before arriving.",
+  ])("%p", (said) => {
+    expect(apply(said)).toContain("I'll note that you'd like a call before they arrive.");
+    expect(apply(said)).not.toMatch(/usually|typically|will call before/);
+  });
+
+  it.each([
+    "I'll note that you'd like the technician to call ahead.",
+    "The team will call you to set up a time.",
+    "I'll make sure the technician knows to call before arriving.",
+    "Would you like the technician to call before arriving?",
+  ])("leaves %p alone", (said) => {
+    expect(apply(said)).toBe(said);
+  });
+});
+
+describe("OutputGuard: what a price includes is not known (2026-10-26)", () => {
+  // The client's test scripts, on the production model: "Does that price
+  // include the toilet itself?" got a different made-up answer on each run.
+  const apply = (text: string): string => new OutputGuard().apply(text);
+
+  it.each([
+    "The price typically covers the installation labor; the cost of the toilet itself is usually separate.",
+    "The quote covers labor only; you'd need to purchase the toilet separately.",
+    "The price includes the installation, but the cost of the toilet itself is typically separate.",
+  ])("%p", (said) => {
+    expect(apply(said)).toContain("The technician's quote will spell out exactly what's included.");
+    expect(apply(said)).not.toMatch(/separate|labor only/);
+  });
+
+  it.each([
+    "The technician gives an upfront, flat-rate price before any work starts.",
+    "We have $100 off drain cleaning, which includes a free mainline sewer camera inspection.",
+    "Does the price you were quoted include the parts?",
+    "I'll note that you'd like to know whether the price includes the toilet.",
+    "Those are separate problems, so the technician can look at both.",
+  ])("leaves %p alone", (said) => {
+    expect(apply(said)).toBe(said);
+  });
+});
+
+// 2026-10-26, real-model QA (tester-08): the caller corrected his address,
+// and the corrected read-back, nearly word for word the first one, was
+// dropped as a repeat. All he heard was "Is that right?".
+describe("OutputGuard: a corrected read-back is not a repeat", () => {
+  it("keeps a read-back whose digits changed", () => {
+    const guard = new OutputGuard([
+      "Let me make sure I have it right: Marco, M-A-R-C-O, Reyes, R-E-Y-E-S, at 6-1-2-oh 148th drive northeast, ZIP 9-8-oh-5-2. Is that right?",
+    ]);
+    expect(
+      guard.apply(
+        "Let me make sure I have it right: Marco, M-A-R-C-O, Reyes, R-E-Y-E-S, at 1-9-1-2 9th avenue west, ZIP 9-8-1-1-9. Is that right?",
+      ),
+    ).toContain("1-9-1-2");
+  });
+
+  it("still drops the same read-back said again unasked", () => {
+    const readback =
+      "Let me make sure I have it right: Marco, M-A-R-C-O, at 1-9-1-2 9th avenue west, ZIP 9-8-1-1-9.";
+    const guard = new OutputGuard([readback]);
+    expect(guard.apply(readback).trim()).toBe("");
+  });
+});
+
+// 2026-10-26, real-model QA (feedback-04), on the deployed version as well:
+// "A leaking water heater can happen for a few reasons, like a faulty valve
+// or corrosion." Naming possible causes is still diagnosing.
+describe("OutputGuard: listing possible causes is diagnosing", () => {
+  it.each([
+    "A leaking water heater can be due to several reasons like a faulty valve or corrosion.",
+    "A leaking water heater can happen for a few reasons, like a faulty valve or a crack.",
+    "A water heater can leak for a few reasons, like a faulty valve or corrosion.",
+    "A leaking water heater can happen for several reasons, like a failed pressure valve or a tank issue.",
+  ])("%p", (said) => {
+    expect(new OutputGuard().apply(said)).toContain(
+      "A technician will need to look at that to confirm.",
+    );
+  });
+
+  it.each([
+    "That can come from a few different things, so a technician will need to take a look.",
+    "We handle valves, tanks and fittings.",
+  ])("leaves %p alone", (said) => {
+    expect(new OutputGuard().apply(said)).toBe(said);
   });
 });
