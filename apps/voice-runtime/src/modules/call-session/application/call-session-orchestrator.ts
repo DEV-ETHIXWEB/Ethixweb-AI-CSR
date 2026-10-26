@@ -366,6 +366,14 @@ const MAX_SILENCE_CHECK_IN_DEFERRALS = 4;
 /** How long after the last heard words a turn must have started; see rearmIfNoTurnFollows. */
 const UNANSWERED_SPEECH_REARM_MS = 5000;
 
+/** See holdWhileSoundUnconfirmed. */
+const FIRST_WORDS_HOLD_MAX_MS = 1200;
+
+/** See replayIfNothingFollows: how long a turn cut short by a barge-in waits for the caller's next words. */
+const CUT_SHORT_TURN_REPLAY_MS = 2500;
+/** ...and how many times it waits again while the caller is still making sound. */
+const MAX_CUT_SHORT_REPLAY_DEFERRALS = 3;
+
 /**
  * The one class that actually drives a phone call end to end — receives
  * Twilio Media Stream lifecycle events + STT results from the WebSocket
@@ -513,6 +521,8 @@ export class CallSessionOrchestrator {
   private callerAskedToHold = false;
   /** Last time the caller made any sound (raw VAD onset or recognized interim text). Used only to defer a silence check-in, never to cancel it. */
   private lastCallerActivityAt = 0;
+  /** The utterance last answered by replayIfNothingFollows; each is replayed at most once. */
+  private replayedUtterance: { transcript: string; confidence: number } | null = null;
   /** How many times the current check-in has been deferred because the caller was audibly active. */
   private silenceCheckInDeferrals = 0;
   /** True only while a silence check-in utterance is being spoken, so a caller starting to talk can cut it off immediately. */
@@ -948,6 +958,7 @@ export class CallSessionOrchestrator {
       return;
     }
     const committedAt = Date.now();
+    const finalsAtStart = this.finalTranscriptCount;
     this.turnLatency = {
       committedAt,
       heldMs: this.lastFinalTranscriptAt === null ? 0 : committedAt - this.lastFinalTranscriptAt,
@@ -991,6 +1002,12 @@ export class CallSessionOrchestrator {
     // mechanism-1 half, closes the gap regardless of which mechanism (if
     // either) the interim-speech path already handled.
     this.handleBargeIn(params, sink);
+    // The onset of the utterance this turn answers is not a new sound: only
+    // one heard after this point holds the reply (see holdWhileSoundUnconfirmed).
+    if (this.pendingBargeInTimer) {
+      clearTimeout(this.pendingBargeInTimer);
+      this.pendingBargeInTimer = null;
+    }
     const log = this.logger.child({ tenantId: params.tenantId, callId: params.callId });
     const idempotencyKey = randomUUID();
     const conversationId = this.conversationId;
@@ -1012,6 +1029,7 @@ export class CallSessionOrchestrator {
     let turnAttempts = 0;
     this.bargedInDuringCurrentTurn = false;
     let speakQueue: Promise<void> = Promise.resolve();
+    let firstWordsHeld = false;
     const quietOk =
       fragmentStrength(result.transcript) !== "none" || isPureBackchannel(result.transcript);
 
@@ -1033,7 +1051,11 @@ export class CallSessionOrchestrator {
           abortController.signal,
           (text) => {
             chunksReceivedThisAttempt = true;
-            speakQueue = speakQueue.then(() => {
+            speakQueue = speakQueue.then(async () => {
+              if (!firstWordsHeld) {
+                firstWordsHeld = true;
+                await this.holdWhileSoundUnconfirmed();
+              }
               if (this.bargedInDuringCurrentTurn) {
                 return;
               }
@@ -1049,9 +1071,11 @@ export class CallSessionOrchestrator {
           // drop this one rather than retrying or speaking anything
           // further (handleBargeIn already stopped whatever was
           // currently playing and marked the rest of speakQueue as
-          // cancelled).
+          // cancelled). If that next utterance never comes, it is answered
+          // after all: see replayIfNothingFollows.
           this.activeTurnAbort = null;
           await speakQueue;
+          this.replayIfNothingFollows(params, sink, result, finalsAtStart);
           return;
         }
 
@@ -1403,6 +1427,76 @@ export class CallSessionOrchestrator {
     clearTimeout(this.pendingBargeInTimer);
     this.pendingBargeInTimer = null;
     this.handleBargeIn(params, sink);
+  }
+
+  /**
+   * 2026-10-26, Prateek's live call: the turn started at a pause, he went on
+   * talking 0.07s later, and the barge-in was only confirmed by recognized
+   * words 0.9s after that, by which time Grace had begun "Ah, sounds like
+   * your drain is clogged. Can I get" over him. While a sound heard since
+   * this turn started is still waiting to be confirmed as speech, the reply's
+   * first words wait too, for at most FIRST_WORDS_HOLD_MAX_MS: confirmed
+   * speech aborts the turn and nothing is said over the caller; a sound that
+   * was not speech costs at most that long.
+   */
+  private async holdWhileSoundUnconfirmed(): Promise<void> {
+    const until = Date.now() + FIRST_WORDS_HOLD_MAX_MS;
+    while (
+      this.pendingBargeInTimer &&
+      !this.bargedInDuringCurrentTurn &&
+      !this.ended &&
+      Date.now() < until
+    ) {
+      await sleep(50);
+    }
+  }
+
+  /**
+   * 2026-10-26, Prateek's live call: "will i get a confirmation for us to
+   * take" started a turn, a blip of sound was confirmed as him speaking again
+   * and aborted it (mechanism 1), and the blip never became a transcript.
+   * Nothing answered him for sixteen seconds, until he said "hello". When no
+   * finalized transcript follows a turn cut short this way, and the caller
+   * has gone quiet, the cut-short turn is answered after all.
+   */
+  private replayIfNothingFollows(
+    params: CallSessionParams,
+    sink: MediaStreamSink,
+    result: { transcript: string; confidence: number },
+    finalsAtStart: number,
+    deferrals = 0,
+  ): void {
+    if (this.replayedUtterance === result) {
+      return;
+    }
+    setTimeout(() => {
+      if (
+        this.ended ||
+        this.finalTranscriptCount > finalsAtStart ||
+        this.activeTurnAbort ||
+        this.pendingFragment ||
+        this.isAudible()
+      ) {
+        return;
+      }
+      if (
+        Date.now() - this.lastCallerActivityAt < CUT_SHORT_TURN_REPLAY_MS / 2 &&
+        deferrals < MAX_CUT_SHORT_REPLAY_DEFERRALS
+      ) {
+        this.replayIfNothingFollows(params, sink, result, finalsAtStart, deferrals + 1);
+        return;
+      }
+      this.logger.info("a turn cut short by a barge-in had nothing after it — answering it now", {
+        conversationId: this.conversationId,
+      });
+      this.replayedUtterance = result;
+      this.handleFinalTranscript(params, sink, result).catch((error: unknown) => {
+        this.logger.error("replaying a cut-short turn failed", {
+          conversationId: this.conversationId,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }, CUT_SHORT_TURN_REPLAY_MS);
   }
 
   /**

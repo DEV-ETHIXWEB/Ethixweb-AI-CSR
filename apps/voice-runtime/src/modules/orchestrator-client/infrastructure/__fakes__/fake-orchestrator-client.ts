@@ -51,6 +51,8 @@ export class FakeOrchestratorClient implements OrchestratorClientPort {
    * case of "one chunk, the whole response."
    */
   turnResponseChunks: Array<string[] | undefined> = [];
+  /** When set, handleTurn waits this long before its first chunk, like the model's own time to first token. */
+  respondAfterMs = 0;
 
   async startConversation(req: StartConversationRequest): Promise<ConversationResponse> {
     this.startCalls.push(req);
@@ -90,6 +92,12 @@ export class FakeOrchestratorClient implements OrchestratorClientPort {
       });
     }
 
+    if (this.respondAfterMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.respondAfterMs));
+      if (signal?.aborted) {
+        throw new DOMException("aborted", "AbortError");
+      }
+    }
     const next = this.turnResponses.shift();
     const chunks = this.turnResponseChunks.shift();
     if (next instanceof Error) throw next;
