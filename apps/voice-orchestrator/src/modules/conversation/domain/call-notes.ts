@@ -1153,6 +1153,11 @@ function canBeName(token: string): boolean {
   if (NOT_A_NAME.has(word) || NOT_A_NAME_EXTRA.has(word)) {
     return false;
   }
+  // 2026-10-26, Yash's test call: "cms here" became the name "Cms, C-M-S".
+  // Three or more letters with no vowel are not a spoken name (Ng still is).
+  if (word.length >= 3 && !/[aeiouy]/.test(word)) {
+    return false;
+  }
   if (word.length >= 6 && word.endsWith("ing")) {
     return false;
   }

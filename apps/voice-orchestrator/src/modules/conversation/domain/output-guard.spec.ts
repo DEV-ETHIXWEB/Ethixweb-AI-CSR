@@ -716,6 +716,8 @@ describe("OutputGuard: listing possible causes is diagnosing", () => {
     "A leaking water heater can happen for a few reasons, like a faulty valve or a crack.",
     "A water heater can leak for a few reasons, like a faulty valve or corrosion.",
     "A leaking water heater can happen for several reasons, like a failed pressure valve or a tank issue.",
+    "That can happen for a few reasons, like age or a faulty valve.",
+    "That can be caused by a few different issues.",
   ])("%p", (said) => {
     expect(new OutputGuard().apply(said)).toContain(
       "A technician will need to look at that to confirm.",

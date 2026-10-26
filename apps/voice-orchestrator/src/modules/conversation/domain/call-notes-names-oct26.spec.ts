@@ -91,3 +91,18 @@ describe("Prateek, 2026-10-26: 'no' to 'anything else?' is not an address disput
     ).not.toBeNull();
   });
 });
+
+// Yash, 2026-10-26: asked for the ZIP, "cms here" became the name Cms.
+it("'cms here' is not a name", () => {
+  const notes = buildCallNotes(
+    ["my name's yes raj yeah", "cms here"],
+    [
+      { speaker: "agent", text: "Got it, that sounds urgent. What is your name?" },
+      { speaker: "caller", text: "my name's yes raj yeah" },
+      { speaker: "agent", text: "What's the ZIP code for 12 Maple Street?" },
+      { speaker: "caller", text: "cms here" },
+    ],
+  );
+  expect(notes.statedName ?? "").not.toMatch(/cms/i);
+  expect(notes.spelledName ?? []).not.toContain("cms");
+});

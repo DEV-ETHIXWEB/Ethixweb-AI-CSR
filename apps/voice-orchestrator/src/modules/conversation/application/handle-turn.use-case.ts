@@ -6,6 +6,13 @@ import {
 } from "../domain/address-check";
 import { OutputGuard } from "../domain/output-guard";
 import { detailsForTheTeam } from "../domain/details-for-the-team";
+import { mentionsGasLeak } from "../domain/gas-leak";
+import {
+  asksGracesName,
+  declinedTheirName,
+  offersAddress,
+  upsetAndWantsAPerson,
+} from "../domain/caller-steering";
 import { collapseSpokenDigits } from "../domain/service-area";
 import {
   callbackNumberNote,
@@ -663,7 +670,18 @@ export class HandleTurnUseCase {
       !nameRepeated
         ? addressDisputeNote(callerTextsSoFar, agentTextsSoFar)
         : null;
+    // See caller-steering.ts.
+    const transcriptTurns = conversation.transcript.map((entry) => ({
+      speaker: entry.speaker,
+      text: entry.text,
+    }));
+    const nameDeclined = declinedTheirName(transcriptTurns);
+    const nameDeclinedNow = declinedTheirName(transcriptTurns.slice(-2));
+    const gracesNameAsked = asksGracesName(command.transcript);
+    const upsetWantsPerson = upsetAndWantsAPerson(command.transcript);
+    const addressOffered = !notes.street && offersAddress(command.transcript);
     const needsName =
+      !nameDeclined &&
       !isTrailingOff &&
       !wantsItAgain &&
       !pendingReadback &&
@@ -729,6 +747,13 @@ export class HandleTurnUseCase {
     const addressNotHeard = !notes.street && SAYS_ADDRESS_GIVEN.test(command.transcript);
     // See IN_DANGER. Above every other note: nothing else matters this turn.
     const inDanger = IN_DANGER.test(command.transcript);
+    // See gas-leak.ts. The safety line is said once per call, first.
+    const gasLeak =
+      !inDanger &&
+      mentionsGasLeak(callerWordsSinceGraceSpoke(conversation, command.transcript)) &&
+      !conversation.transcript.some(
+        (entry) => entry.speaker === "agent" && /leave the building/i.test(entry.text),
+      );
     // See UNSAVED_GOODBYE_NOTE. Only a short goodbye with no new problem in
     // it: "never mind, my sink is also leaking" is not one.
     const goodbye =
@@ -744,7 +769,12 @@ export class HandleTurnUseCase {
       (conversation.leadId !== null || !((notes.statedName || notes.spelledName) && notes.street));
     const directiveFired =
       inDanger ||
+      gasLeak ||
       goodbye ||
+      upsetWantsPerson ||
+      nameDeclinedNow ||
+      gracesNameAsked ||
+      addressOffered ||
       isTrailingOff ||
       wantsItAgain ||
       pendingReadback !== null ||
@@ -759,10 +789,20 @@ export class HandleTurnUseCase {
       owesAnAnswer;
     if (inDanger) {
       annotatedTranscript = `${IN_DANGER_NOTE} ${annotatedTranscript}`;
+    } else if (gasLeak) {
+      annotatedTranscript = `${GAS_LEAK_NOTE} ${annotatedTranscript}`;
     } else if (isTrailingOff) {
       annotatedTranscript = `${TRAILING_FRAGMENT_NOTE} ${annotatedTranscript}`;
     } else if (goodbye) {
       annotatedTranscript = `${conversation.leadId ? SAVED_GOODBYE_NOTE : UNSAVED_GOODBYE_NOTE} ${annotatedTranscript}`;
+    } else if (upsetWantsPerson) {
+      annotatedTranscript = `${UPSET_TRANSFER_NOTE} ${annotatedTranscript}`;
+    } else if (nameDeclinedNow) {
+      annotatedTranscript = `${NAME_DECLINED_NOTE} ${annotatedTranscript}`;
+    } else if (gracesNameAsked) {
+      annotatedTranscript = `${GRACES_NAME_NOTE} ${annotatedTranscript}`;
+    } else if (addressOffered) {
+      annotatedTranscript = `${ADDRESS_OFFERED_NOTE} ${annotatedTranscript}`;
     } else if (wantsItAgain) {
       annotatedTranscript = `${REPEAT_NOTE} ${annotatedTranscript}`;
     } else if (pendingReadback) {
@@ -785,7 +825,7 @@ export class HandleTurnUseCase {
       annotatedTranscript = `${directive(NAME_MISSING_NOTE)} ${annotatedTranscript}`;
     } else if (zipNeeded) {
       annotatedTranscript = `${directive(zipNeeded)} ${annotatedTranscript}`;
-    } else if (needsCallbackNumber && !notes.statedName && !notes.spelledName) {
+    } else if (needsCallbackNumber && !notes.statedName && !notes.spelledName && !nameDeclined) {
       // 2026-10-23, Akash's test call: Grace asked for the name, the caller
       // answered with when to come, and needsName stays quiet once the name
       // has been asked. The closing confirmation then said "the caller has
@@ -938,10 +978,14 @@ export class HandleTurnUseCase {
     if (
       command.allowedTools.includes("escalateEmergency") &&
       (!hasCalledEscalateEmergency(conversation) ||
-        (looksEmergencyAdjacent(emergencyText) &&
+        ((looksEmergencyAdjacent(emergencyText) || gasLeak) &&
           conversation.lastEmergencyCheckedTranscript !== emergencyText))
     ) {
-      const call = buildEscalationBackstopCall(emergencyText);
+      // Named plainly for the emergency rules, which match whole words: "the
+      // gas is leaving" (a mishearing of leaking) matched none of them.
+      const call = buildEscalationBackstopCall(
+        gasLeak ? `gas leak: ${emergencyText}` : emergencyText,
+      );
       conversation.emergencyEverChecked = true;
       conversation.lastEmergencyCheckedTranscript = emergencyText;
       toolCallsExecuted.push(call.name);
@@ -977,6 +1021,14 @@ export class HandleTurnUseCase {
       responseText = IN_DANGER_LINE;
       onChunk?.(responseText);
       pushMessage({ role: "assistant", content: responseText });
+    }
+    // See gas-leak.ts. Said first, in code; the model carries on after it.
+    if (gasLeak) {
+      responseText = GAS_LEAK_LINE;
+      onChunk?.(responseText);
+    } else if (upsetWantsPerson) {
+      responseText = UPSET_APOLOGY_LINE;
+      onChunk?.(responseText);
     }
 
     for (let iteration = 0; !inDanger && iteration < MAX_TOOL_ITERATIONS; iteration++) {
@@ -2670,6 +2722,10 @@ function looksEmergencyAdjacent(transcript: string): boolean {
     "sewer back up",
     "no water",
     "no hot water",
+    // 2026-10-26, Yash's test call: "i don't have any water".
+    "have any water",
+    "have water",
+    "without water",
     "overflowing",
     "water everywhere",
     "emergency",
@@ -2874,6 +2930,14 @@ const IN_DANGER_LINE =
   "call or text 988, the crisis line, any time.";
 const IN_DANGER_NOTE = `[Safety first: the caller may be in danger. You said: "${IN_DANGER_LINE}"]`;
 
+/** See gas-leak.ts. */
+const GAS_LEAK_LINE = "Please leave the building now and call the gas company from outside.";
+const GAS_LEAK_NOTE =
+  `[Possible gas leak. You have ALREADY said: "${GAS_LEAK_LINE}" Do not say it again. ` +
+  "If the emergency check says to forward the call, say only that you are connecting them now. " +
+  "Otherwise say the team will treat it as urgent and ask one short question. Do not ask for " +
+  "their name or address in this reply.]";
+
 /**
  * Real-model QA (reask-13, failing on every model): "I already gave you my
  * address", when it had not been given, got "You're right, I've got it.
@@ -2900,6 +2964,23 @@ const UNSAVED_GOODBYE_NOTE =
 const SAVED_GOODBYE_NOTE =
   "[The caller is saying goodbye and their request is saved. Your whole reply: a short, warm " +
   "goodbye. Ask nothing.]";
+
+/** See caller-steering.ts. */
+const NAME_DECLINED_NOTE =
+  "[The caller does not want to give their name. That is fine: say so in a few words, never ask " +
+  "for their name again on this call, and help with what they asked.]";
+/** Said first, in code: told to, the model still answered with only "I'm connecting you now." */
+const UPSET_APOLOGY_LINE = "I'm really sorry about this.";
+const UPSET_TRANSFER_NOTE =
+  `[The caller is upset and asked for a person. You have ALREADY said: "${UPSET_APOLOGY_LINE}" ` +
+  "Do not apologize again. Call transferToHuman now, with what went wrong in their words as the " +
+  "summary, and say only that you are connecting them now. Ask nothing.]";
+const GRACES_NAME_NOTE =
+  '[The caller asked who they are speaking with. Start your reply with: "I\'m Grace." Then ' +
+  "carry on with what they were saying.]";
+const ADDRESS_OFFERED_NOTE =
+  "[The caller is giving their service address now. Take it: if they stopped part way, ask only " +
+  "for the rest of it. Do not ask for their name in this reply.]";
 
 const NAME_MISSING_NOTE =
   "[System note: you still do not have this caller's name and have not asked for it. " +

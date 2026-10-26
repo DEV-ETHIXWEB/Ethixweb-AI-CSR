@@ -2182,7 +2182,10 @@ describe("HandleTurnUseCase", () => {
         ),
       ).toBe(true);
       expect(result.escalation?.action).toBe("forward_call");
-      expect(result.responseText).toBe("Okay, let's get that handled.");
+      // 2026-10-26: a gas smell gets the safety line first (gas-leak.ts).
+      expect(result.responseText).toBe(
+        "Please leave the building now and call the gas company from outside. Okay, let's get that handled.",
+      );
     });
 
     it("STILL speaks again when the model said nothing before the backstop, so the caller is never left in silence", async () => {
@@ -5256,4 +5259,83 @@ describe("real-model QA close-03: a goodbye", () => {
     const sent = await sentFor("Yes, that's all correct.", {});
     expect(sent).not.toContain("wrapping up");
   });
+});
+
+// 2026-10-26, Yash's test call: a gas leak got "Can I get your name?" and the
+// safety line only after he asked what to do. See gas-leak.ts.
+describe("a gas leak gets the safety line first, in code", () => {
+  it("says it before anything else, names the leak for the emergency check, and says it once", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "I'm connecting you to the team now." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+      [
+        { type: "text_delta", text: "Okay, stay outside." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const escalate = {
+      execute: jest
+        .fn()
+        .mockResolvedValue({ isEmergency: true, action: "forward_call", severity: "critical" }),
+    };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "escalateEmergency", handler: escalate }],
+    });
+    const chunks: string[] = [];
+    await useCase.execute(
+      baseCommand({
+        transcript:
+          "the gas is leaving you to go to extreme like aggressively, my kids are upstairs",
+        allowedTools: ["escalateEmergency"],
+      }),
+      (text) => chunks.push(text),
+    );
+    expect(chunks[0]).toBe("Please leave the building now and call the gas company from outside.");
+    expect((escalate.execute.mock.calls[0]?.[0] as { description: string }).description).toMatch(
+      /^gas leak: /,
+    );
+
+    const later: string[] = [];
+    await useCase.execute(
+      baseCommand({
+        transcript: "the gas is still leaking",
+        allowedTools: ["escalateEmergency"],
+        idempotencyKey: "gas-turn-2",
+      }),
+      (text) => later.push(text),
+    );
+    expect(later.join(" ")).not.toContain("leave the building");
+  });
+});
+
+// 2026-10-26, Yash's test call: an upset caller asking for the owner heard
+// only "connecting you now". See caller-steering.ts.
+it("an upset caller asking for a person hears an apology first", async () => {
+  const repository = new FakeConversationRepository();
+  repository.seed(baseConversation());
+  const aiProvider = new FakeAiProvider();
+  aiProvider.responses = [
+    [
+      { type: "text_delta", text: "I'm connecting you now." },
+      { type: "done", stopReason: "end_turn" },
+    ],
+  ];
+  const { useCase } = buildUseCase({ aiProvider, repository });
+  const chunks: string[] = [];
+  await useCase.execute(
+    baseCommand({
+      transcript:
+        "you charged me four hundred bucks, i want my money back and i want to talk to the owner",
+      allowedTools: [],
+    }),
+    (text) => chunks.push(text),
+  );
+  expect(chunks[0]).toBe("I'm really sorry about this.");
 });

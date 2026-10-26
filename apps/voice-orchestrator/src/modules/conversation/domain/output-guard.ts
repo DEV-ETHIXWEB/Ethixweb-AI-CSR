@@ -112,7 +112,7 @@ const CHANGE_CLAIM =
 
 /** A guess at what causes or links problems, which cannot be known from a phone call. */
 const CAUSE_CLAIM =
-  /\b(could|might|may|probably|likely|usually|possibly|sounds like|typically)\b[^.?!]{0,60}\b(connected|related|linked|ties? to|tied to|caused by|due to|the same (issue|problem|clog|drain|line|cause|leak))\b|\b(usually|probably|typically|often) (a|the) (worn|faulty|clogged|bad|broken|loose|cracked)\b|\b(usually|probably|typically) (ties|points) to\b|\b(?:reasons?|causes?|things|issues),? (?:like|such as) (?:an? |the )?(?:faulty|worn|failed|failing|bad|broken|loose|cracked|clogged|corroded|leaky|damaged|stuck|old)\b/i;
+  /\b(could|might|may|probably|likely|usually|possibly|sounds like|typically)\b[^.?!]{0,60}\b(connected|related|linked|ties? to|tied to|caused by|due to|the same (issue|problem|clog|drain|line|cause|leak))\b|\b(usually|probably|typically|often) (a|the) (worn|faulty|clogged|bad|broken|loose|cracked)\b|\b(usually|probably|typically) (ties|points) to\b|\b(?:reasons?|causes?|things|issues),? (?:like|such as)\b[^.?!]{0,40}\b(?:faulty|worn|failed|failing|bad|broken|loose|cracked|clogged|corroded|leaky|damaged|stuck|age|aging|old)\b|\b(?:caused by|happen for|come from|due to) (?:a few|several|many|various|a number of|some)(?: different)? (?:things|issues|reasons|causes|problems)\b(?![^.?!]*\btechnician)/i;
 
 const CHANGE_HEDGE = /\b(can'?t|cannot|unable|not able|won'?t)\b/i;
 

@@ -50,7 +50,7 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
   const lower = prompt.toLowerCase();
 
   it("is versioned v58 and far shorter than the 11,000-word v52", () => {
-    expect(PLATFORM_BASE_PROMPT_VERSION).toBe("v59");
+    expect(PLATFORM_BASE_PROMPT_VERSION).toBe("v60");
     expect(prompt.split(/\s+/).length).toBeLessThan(3700);
   });
 
