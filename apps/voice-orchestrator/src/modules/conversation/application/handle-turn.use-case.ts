@@ -693,6 +693,8 @@ export class HandleTurnUseCase {
     // whole point is that the caller has not finished talking yet.
     const owesAnAnswer = !isTrailingOff && callerAskedAQuestion(command.transcript);
     const directive = (note: string): string => (owesAnAnswer ? answerFirst(note) : note);
+    // See ADDRESS_NOT_HEARD_NOTE.
+    const addressNotHeard = !notes.street && SAYS_ADDRESS_GIVEN.test(command.transcript);
     // See IN_DANGER. Above every other note: nothing else matters this turn.
     const inDanger = IN_DANGER.test(command.transcript);
     const directiveFired =
@@ -704,6 +706,7 @@ export class HandleTurnUseCase {
       nameUpdated !== null ||
       nameRepeated !== null ||
       addressDisputed !== null ||
+      addressNotHeard ||
       zipNeeded !== null ||
       needsName ||
       needsCallbackNumber ||
@@ -724,6 +727,8 @@ export class HandleTurnUseCase {
       annotatedTranscript = `${directive(nameRepeated)} ${annotatedTranscript}`;
     } else if (addressDisputed) {
       annotatedTranscript = `${directive(addressDisputed)} ${annotatedTranscript}`;
+    } else if (addressNotHeard) {
+      annotatedTranscript = `${ADDRESS_NOT_HEARD_NOTE} ${annotatedTranscript}`;
     } else if (needsName) {
       // Client feedback: a call could run several turns of triage without
       // ever asking for the caller's name, and prompt wording alone did not
@@ -2773,6 +2778,18 @@ const IN_DANGER_LINE =
   "call or text 988, the crisis line, any time.";
 const IN_DANGER_NOTE = `[Safety first: the caller may be in danger. You said: "${IN_DANGER_LINE}"]`;
 
+/**
+ * Real-model QA (reask-13, failing on every model): "I already gave you my
+ * address", when it had not been given, got "You're right, I've got it.
+ * What's your address?". Grace never claims what she does not have.
+ */
+const SAYS_ADDRESS_GIVEN =
+  /\b(?:already|just)\s+(?:gave|told|said|give)\s+(?:you\s+|it\s+)?(?:my|the|our)\s+(?:address|street)\b/i;
+const ADDRESS_NOT_HEARD_NOTE =
+  "[The caller says they already gave the address, but you do not have it. Do not say you " +
+  "have it. Your whole reply: a short sorry that you didn't catch it, then ask for the street " +
+  "address once, the house number and street name.]";
+
 const NAME_MISSING_NOTE =
   "[System note: you still do not have this caller's name and have not asked for it. " +
   "In THIS reply, the ONLY question you ask is for their name, after a brief acknowledgment. " +
@@ -2831,7 +2848,8 @@ function annotateServiceAreaResult(
 }
 
 const OUTSIDE_THE_AREA_NOTE =
-  "[The caller is outside the area this business serves. Your whole reply: say kindly and " +
+  "[The caller is outside the area this business serves. Your whole reply, in two short " +
+  "sentences: say kindly and " +
   "plainly that it is outside the area you cover, so you can't send someone there, and suggest " +
   "they call a plumber local to them, and wish them luck getting it sorted. Do not take " +
   "their name, address or number.]";

@@ -903,7 +903,7 @@ const ASKS_PHONE = /\b(your (phone|number)|best number|number to reach)\b/;
 // caller gives an address, so matching it as a re-ask would test against
 // the prompt's own instruction.
 const ASKS_ADDRESS =
-  /\b(what'?s (the|your|the service) address|can i (get|have) (the|your) address|(give|tell) me (the|your) address|(repeat|say) (the|your) address|what street|where are you located)\b/;
+  /\b(what'?s (the|your) (street |service )?address|can i (get|have) (the|your) (street |service )?address|(give|tell) me (the|your) address|(repeat|say) (the|your) address|what street|where are you located|house number and street)\b/;
 const ASKS_LOCATION =
   /\b(which (room|fixture|part)|where (in the house|is it|exactly)|what part of)\b/;
 const ASKS_TIMING =

@@ -5115,3 +5115,18 @@ describe("real-model QA tester-02: a shared phone", () => {
     expect(sent).toContain("Lena, L-E-N-A, Ruiz, R-U-I-Z");
   });
 });
+
+describe('real-model QA reask-13: "I already gave you my address"', () => {
+  it("when no address is on file, Grace says sorry and asks for it, never that she has it", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    await useCase.execute(baseCommand({ transcript: "I already gave you my address." }));
+
+    const sent =
+      aiProvider.requests[0]?.messages.filter((m) => m.role === "user").at(-1)?.content ?? "";
+    expect(sent).toContain("you do not have it. Do not say you have it");
+  });
+});
