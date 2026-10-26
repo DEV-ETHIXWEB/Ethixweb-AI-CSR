@@ -521,6 +521,8 @@ export class CallSessionOrchestrator {
   private callerAskedToHold = false;
   /** Last time the caller made any sound (raw VAD onset or recognized interim text). Used only to defer a silence check-in, never to cancel it. */
   private lastCallerActivityAt = 0;
+  /** When Deepgram last heard a voice onset; see handleFinalTranscript's hold-clearing. */
+  private lastSpeechStartedAt = 0;
   /** The utterance last answered by replayIfNothingFollows; each is replayed at most once. */
   private replayedUtterance: { transcript: string; confidence: number } | null = null;
   /** How many times the current check-in has been deferred because the caller was audibly active. */
@@ -1003,8 +1005,16 @@ export class CallSessionOrchestrator {
     // either) the interim-speech path already handled.
     this.handleBargeIn(params, sink);
     // The onset of the utterance this turn answers is not a new sound: only
-    // one heard after this point holds the reply (see holdWhileSoundUnconfirmed).
-    if (this.pendingBargeInTimer) {
+    // one heard after its transcript holds the reply (see
+    // holdWhileSoundUnconfirmed). 2026-10-26, live test: "the address is
+    // twelve fifteen" was held for the rest of the address, she went on just
+    // before the hold ran out, and clearing that sound here let Grace speak
+    // over "north ninety second street".
+    if (
+      this.pendingBargeInTimer &&
+      (this.lastFinalTranscriptAt === null ||
+        this.lastSpeechStartedAt <= this.lastFinalTranscriptAt)
+    ) {
       clearTimeout(this.pendingBargeInTimer);
       this.pendingBargeInTimer = null;
     }
@@ -1341,6 +1351,7 @@ export class CallSessionOrchestrator {
    */
   private handleSpeechStarted(sink: MediaStreamSink): void {
     this.lastCallerActivityAt = Date.now();
+    this.lastSpeechStartedAt = Date.now();
     if ((this.checkInSpeaking || Date.now() < this.checkInPlaybackUntil) && this.isAudible()) {
       // A silence check-in is disposable and the caller just started to
       // answer. Client feedback: it kept playing over them ("the long

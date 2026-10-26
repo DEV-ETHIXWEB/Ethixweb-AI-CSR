@@ -224,6 +224,46 @@ describe("CallSessionOrchestrator", () => {
       }
     });
 
+    /**
+     * 2026-10-26, live test after the fix above: "the address is twelve
+     * fifteen" was held for the rest of the address, she went on 0.4s before
+     * the hold ran out, and the turn that started then cleared her new sound
+     * as if it were the utterance being answered. Grace spoke over "north
+     * ninety second street".
+     */
+    it("a sound heard after the transcript, while it was held, still holds the reply", async () => {
+      jest.useFakeTimers();
+      process.env["BARGE_IN_CONFIRMATION_TIMEOUT_MS"] = "2000";
+      process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = "10000";
+      try {
+        const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+        await orchestrator.onCallStart(baseParams(), sink);
+        await jest.advanceTimersByTimeAsync(0);
+        const greetingCalls = tts.synthesizeCalls.length;
+        orchestratorClient.respondAfterMs = 300;
+        const session = stt.sessions[0]!;
+        session.emitSpeechStarted();
+        session.emitFinalTranscript("the address is twelve fifteen", 0.9);
+        // Held for the rest of the address; she starts again just before it ends.
+        let waited = 0;
+        while (orchestratorClient.turnCalls.length === 0 && waited < 6000) {
+          await jest.advanceTimersByTimeAsync(100);
+          waited += 100;
+          // She is talking again: Deepgram reports a voice onset every so often.
+          if (waited % 1000 === 0) {
+            session.emitSpeechStarted();
+          }
+        }
+        expect(orchestratorClient.turnCalls).toHaveLength(1);
+        await jest.advanceTimersByTimeAsync(600);
+        expect(tts.synthesizeCalls.length).toBe(greetingCalls);
+        await orchestrator.onCallEnd(baseParams(), "caller_hangup");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it("speaks after the hold when the caller's sound was not speech", async () => {
       jest.useFakeTimers();
       process.env["BARGE_IN_CONFIRMATION_TIMEOUT_MS"] = "2000";
