@@ -675,7 +675,15 @@ export class HandleTurnUseCase {
       shouldNudgeForCallbackNumber({
         callerTexts: callerTextsSoFar,
         agentTexts: agentTextsSoFar,
-        customerId: hasUsableCustomer(conversation) ? conversation.customerId : null,
+        // A shared phone: a record is on file, but this caller has given their
+        // own name and street (real-model QA tester-02: Grace never read them
+        // back and asked "is it dripping?" three times). What they said is
+        // confirmed, as for anyone else.
+        customerId:
+          hasUsableCustomer(conversation) &&
+          !((notes.statedName || notes.spelledName) && notes.street)
+            ? conversation.customerId
+            : null,
         leadEverAttempted: conversation.leadEverAttempted,
       });
     // See caller-question.ts: these notes each end by telling the model to

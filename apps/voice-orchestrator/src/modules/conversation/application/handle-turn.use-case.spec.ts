@@ -5077,3 +5077,41 @@ describe("2026-10-25, the client's test call: a caller in danger", () => {
     ).not.toContain("911");
   });
 });
+
+describe("real-model QA tester-02: a shared phone", () => {
+  it("confirms what this caller gave, though a record is on file for the number", async () => {
+    const at = new Date().toISOString();
+    const turn = (speaker: "caller" | "agent", text: string, turnIndex: number) => ({
+      turnIndex,
+      speaker,
+      text,
+      confidence: null,
+      offsetMs: 0,
+      at,
+    });
+    const repository = new FakeConversationRepository();
+    repository.seed(
+      baseConversation({
+        customerId: "cust-1",
+        customerDetailsOnFile: true,
+        transcript: [
+          turn("caller", "Hi, my water heater is leaking.", 0),
+          turn("agent", "Is the water pooling on the ground, or is it dripping?", 1),
+          turn("caller", "My name is Lena Ruiz.", 2),
+          turn("agent", "Thanks, Lena. Is it pooling or dripping?", 3),
+        ],
+      }),
+    );
+    const aiProvider = new FakeAiProvider();
+    const { useCase } = buildUseCase({ aiProvider, repository });
+
+    await useCase.execute(
+      baseCommand({ transcript: "7714 Northeast 131st Street, Kirkland, 98034." }),
+    );
+
+    const sent =
+      aiProvider.requests[0]?.messages.filter((m) => m.role === "user").at(-1)?.content ?? "";
+    expect(sent).toContain("Confirm it in TWO short questions");
+    expect(sent).toContain("Lena, L-E-N-A, Ruiz, R-U-I-Z");
+  });
+});
