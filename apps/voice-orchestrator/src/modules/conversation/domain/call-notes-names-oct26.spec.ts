@@ -157,3 +157,21 @@ describe("live battery, 2026-10-26", () => {
     expect(notes.spelledName?.[0]).toBe("desmond");
   });
 });
+
+// Live battery: the name came in three pieces, and Grace said "Desmond Okafor".
+it("a spelling of only the start of the last name does not shorten it", () => {
+  const turns = [
+    {
+      speaker: "agent",
+      text: "Got it, your bathroom sink is draining slowly. Can I get your name, please?",
+    },
+    { speaker: "caller", text: "desmond okaforbright" },
+    { speaker: "caller", text: "o k a f o r dash" },
+  ];
+  const notes = buildCallNotes(
+    turns.filter((t) => t.speaker === "caller").map((t) => t.text),
+    turns,
+  );
+  expect(notes.statedName).toBe("Desmond Okaforbright");
+  expect(notes.spelledName ?? ["desmond", "okaforbright"]).toEqual(["desmond", "okaforbright"]);
+});

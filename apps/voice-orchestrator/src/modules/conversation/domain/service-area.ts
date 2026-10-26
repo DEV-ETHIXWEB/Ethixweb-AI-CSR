@@ -205,6 +205,21 @@ function withHundreds(
  * takes over and asks for the two parts separately — an honest "say that
  * again" where this used to assert a wrong address.
  */
+/**
+ * Live test, 2026-10-26: "two zero six three five zero nine nine eight one
+ * forty five twelve font leroy way" (no pause between the callback number and
+ * the house number, as speech recognition writes it) became one 14-digit
+ * number, and neither was found. A run of 13 to 15 digits that opens with a
+ * whole US phone number and goes straight on into a street name is the two.
+ */
+function phoneThenHouseNumber(digits: string, nextWord: string): string {
+  const phone = /^1?[2-9]\d{2}[2-9]\d{6}/.exec(digits)?.[0] ?? "";
+  const house = digits.slice(phone.length);
+  return phone && house.length >= 3 && house.length <= 5 && /^[a-z]/.test(nextWord)
+    ? `${phone} ${house}`
+    : digits;
+}
+
 export function collapseSpokenDigits(text: string): string {
   // Split on hyphens as well as spaces. Our OWN read-back output is
   // hyphenated ("1-2-oh-oh Pine Street") and several callers of this
@@ -248,7 +263,7 @@ export function collapseSpokenDigits(text: string): string {
     // reads the same as it would without it.
     const lead = words[index]!.match(/^[^a-z0-9]*/)?.[0] ?? "";
     const trail = words[cursor - 1]!.match(/[^a-z0-9]*$/)?.[0] ?? "";
-    out.push(`${lead}${digits}${trail}`);
+    out.push(`${lead}${phoneThenHouseNumber(digits, cores[cursor] ?? "")}${trail}`);
     index = cursor;
   }
   return out.join(" ");

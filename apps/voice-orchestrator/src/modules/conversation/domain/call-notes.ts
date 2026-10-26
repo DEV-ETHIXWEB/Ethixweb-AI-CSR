@@ -661,7 +661,12 @@ function spelledIntoItsSlot(
     .reverse()
     .find((candidate) => slotOf(candidate) === other);
   const result = ["", ""];
-  result[slot] = word;
+  // Live test, 2026-10-26: "desmond okaforbright", then "o k a f o r dash"
+  // (the rest came in the next breath). Letters spelling only the start of
+  // the name already given do not cut it short.
+  const given = statedWords[slot]!;
+  result[slot] =
+    word.length >= 3 && given.length > word.length && given.startsWith(word) ? given : word;
   result[other] = earlier ?? statedWords[other]!;
   return result;
 }

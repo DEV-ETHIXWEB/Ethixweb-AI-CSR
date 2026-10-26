@@ -2935,8 +2935,8 @@ const GAS_LEAK_LINE = "Please leave the building now and call the gas company fr
 const GAS_LEAK_NOTE =
   `[Possible gas leak. You have ALREADY said: "${GAS_LEAK_LINE}" Do not say it again. ` +
   "If the emergency check says to forward the call, say only that you are connecting them now. " +
-  "Otherwise say the team will treat it as urgent and ask one short question. Do not ask for " +
-  "their name or address in this reply.]";
+  "Otherwise your whole reply is one short sentence saying the team will treat it as urgent. " +
+  "Ask nothing in this reply.]";
 
 /**
  * Real-model QA (reask-13, failing on every model): "I already gave you my

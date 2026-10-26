@@ -122,3 +122,28 @@ describe("nameAndAddressNotReadBackError", () => {
     ).toBeNull();
   });
 });
+
+// Live test battery, 2026-10-26: no full stop between them, as heard on a
+// real line. "...nine nine eight one forty five twelve font leroy way" ran
+// into one number; Grace read back "2-oh-6-3-5 Font Leroy Way" and the
+// callback number "5-oh-9-9-8-1-4-5-1-2".
+describe("a phone number and a house number with no pause between them", () => {
+  it.each([
+    [
+      "b r i g h t two zero six three five zero nine nine eight one forty five twelve font leroy way southwest seattle nine eight one one six",
+      "2063509981",
+      "4512",
+    ],
+    ["it's 206 441 2298 2719 alki avenue southwest seattle 98116", "2064412298", "2719"],
+  ])("%p", (said, phone, house) => {
+    expect(spokenPhoneDigits([said])).toBe(phone);
+    expect(buildCallNotes([said]).street ?? "").toMatch(new RegExp(`^${house} `));
+  });
+
+  it("a ZIP followed by a phone number is not split this way", () => {
+    expect(
+      buildCallNotes(["nine eight one one six two zero six three five zero nine nine eight one"])
+        .street,
+    ).toBeNull();
+  });
+});
