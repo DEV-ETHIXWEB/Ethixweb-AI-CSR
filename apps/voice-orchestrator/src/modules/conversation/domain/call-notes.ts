@@ -198,7 +198,11 @@ export function buildCallNotes(
     utterances.map((utterance) => utterance.askedForName),
   );
   const leadName = statedFound ? null : nameBeforeItsSpelling(nameTexts);
-  let stated = statedFound?.value ?? answeredName(turns) ?? leadName;
+  let stated =
+    statedFound?.value ??
+    answeredName(turns) ??
+    leadName ??
+    firstNameBeforeSpelling(utterances.filter((utterance) => utterance.answersNameQuestion));
   // 2026-10-23 client call: "you are an AI", heard as "u r n a i u r n",
   // became the name "Urn Aiurn". Letters only count as a spelled NAME when
   // there is a reason to read them as one: Grace asked for a spelling, the
@@ -270,7 +274,7 @@ export function buildCallNotes(
     stated = `${capitalize(statedWords[0]!)} ${spelled[1]!.split("-").map(capitalize).join("-")}`;
   }
   if (spelled && spelled.length === 1 && stated) {
-    spelled = splitSpelledByStated(spelled[0]!, stated);
+    spelled = spelled[0]!.includes("-") ? spelled : splitSpelledByStated(spelled[0]!, stated);
     if (spelled.length === 1) {
       spelled = spelledIntoItsSlot(spelled[0]!, stated, spellings, statedFound?.index ?? -1);
     }
@@ -607,9 +611,20 @@ function spelledNamesIn(
         return half >= 3 && word.slice(0, half) === word.slice(half) ? word.slice(0, half) : word;
       })
       .filter((word, at, all) => at === 0 || word !== all[at - 1]);
-    if (words.length > 0) {
-      found.push({ words, index });
+    if (words.length === 0) {
+      continue;
     }
+    // Live test, 2026-10-26: "... o k a f o r", then in the next breath
+    // "dash b r i g h t". The second half of a hyphenated name joins the
+    // first, and keeps its place in the call.
+    const before = found.at(-1);
+    if (before && /^\W*(?:dash|hyphen)\b/i.test(text) && before.index === index - 1) {
+      const lastWord = before.words.length - 1;
+      before.words[lastWord] = `${before.words[lastWord]}-${words[0]}`;
+      before.words.push(...words.slice(1));
+      continue;
+    }
+    found.push({ words, index });
   }
   return found;
 }
@@ -635,7 +650,9 @@ function spelledIntoItsSlot(
   if (statedWords.length !== 2) {
     return [word];
   }
-  const slotOf = (candidate: string): 0 | 1 | null => {
+  const slotOf = (spelledWord: string): 0 | 1 | null => {
+    // "okafor-bright" is placed by "okafor".
+    const candidate = spelledWord.split("-")[0]!;
     const toFirst = likeness(candidate, statedWords[0]!);
     const toLast = likeness(candidate, statedWords[1]!);
     if (Math.max(toFirst, toLast) < SAME_NAME_LIKENESS) {
@@ -1318,7 +1335,8 @@ function statedNameAt(
     const ownLetters = own?.[2]?.replace(/[^a-z]/g, "") ?? "";
     // When the two are alike, though, the word is kept: "it's pemberton p e
     // m p e r t o n" had the word right and one letter misheard.
-    if (own && ownLetters.length >= 3) {
+    // "dash b r i g h t" continues a hyphenated spelling; see spelledNamesIn.
+    if (own && ownLetters.length >= 3 && !/^(?:dash|hyphen)$/.test(own[1]!)) {
       const word = own[1]!.replace(/['-]/g, "");
       said.push({
         index,
@@ -1490,6 +1508,35 @@ function nameBeforeItsSpelling(texts: readonly string[]): string | null {
     }
     if (found) {
       return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * Live test, 2026-10-26: asked for the name, "desmond aquafor bright o k a f o
+ * r" (a hyphenated last name, the middle of it misheard). Grace said "Got it,
+ * Okafor" and Desmond was lost. In an answer to the name question, a name
+ * word opening the reply before the letters is the first name, and the
+ * letters are the last name.
+ */
+const FIRST_THEN_SPELLING =
+  /^(?:(?:my name is|my name's|name is|it's|its|it is|i'm|i am|this is|yes|yeah|so|um|uh)\s+)*([a-z][a-z'-]+)\s+(?:[a-z'-]{2,}\s+){1,3}((?:[a-z]\s+){2,}[a-z])\s*[.!?]?$/;
+
+function firstNameBeforeSpelling(answers: ReadonlyArray<{ text: string }>): string | null {
+  for (let i = answers.length - 1; i >= 0; i -= 1) {
+    const match = FIRST_THEN_SPELLING.exec((answers[i]?.text ?? "").toLowerCase().trim());
+    if (!match) {
+      continue;
+    }
+    const first = match[1]!;
+    const letters = match[2]!.replace(/[^a-z]/g, "");
+    if (
+      canBeName(first) &&
+      !PLACE_WORDS.has(first) &&
+      likeness(first, letters) < SAME_NAME_LIKENESS
+    ) {
+      return `${capitalize(first)} ${capitalize(letters)}`;
     }
   }
   return null;

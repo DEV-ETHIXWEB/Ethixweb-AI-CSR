@@ -175,3 +175,22 @@ it("a spelling of only the start of the last name does not shorten it", () => {
   expect(notes.statedName).toBe("Desmond Okaforbright");
   expect(notes.spelledName ?? ["desmond", "okaforbright"]).toEqual(["desmond", "okaforbright"]);
 });
+
+// Live battery, final run: three pieces, the middle word misheard, and the
+// spelling split at "dash". Grace said "Got it, Okafor" and read back "Bright".
+it("'desmond aquafor bright o k a f o r', then 'dash b r i g h t'", () => {
+  const turns = [
+    {
+      speaker: "agent",
+      text: "Got it, a slow-draining bathroom sink. Can I get your name, please?",
+    },
+    { speaker: "caller", text: "desmond aquafor bright o k a f o r" },
+    { speaker: "agent", text: "Got it, Okafor. Now, can you give me the service address?" },
+    { speaker: "caller", text: "dash b r i g h t" },
+  ];
+  const notes = buildCallNotes(
+    turns.filter((t) => t.speaker === "caller").map((t) => t.text),
+    turns,
+  );
+  expect(notes.spelledName).toEqual(["desmond", "okafor-bright"]);
+});
