@@ -152,13 +152,35 @@ const BUSINESS_KNOWLEDGE =
   "\n- [services] Commercial: offices, retail, restaurants, apartments; leak detection, repiping, grease traps, hydro jetting." +
   "\n- [company] Warranty: every repair and installation has a written guarantee; length not published.";
 
+/**
+ * QA_LIVE_KB=<file>: the live line's approved knowledge items as a JSON array
+ * ({category, title, content, priority}), rendered exactly the way
+ * HttpAgentProfileProvider renders them, so a run tests what callers get.
+ */
+const LIVE_KB_FILE = process.env["QA_LIVE_KB"];
+const BUSINESS_OVERRIDE = LIVE_KB_FILE
+  ? [
+      "Approved business knowledge (use only what's relevant to the caller's question):",
+      ...(
+        JSON.parse(readFileSync(LIVE_KB_FILE, "utf8")) as Array<{
+          category: string;
+          title: string;
+          content: string;
+          priority: number;
+        }>
+      )
+        .sort((a, b) => a.priority - b.priority)
+        .map((item) => `- [${item.category}] ${item.title}: ${item.content}`),
+    ].join("\n")
+  : SERVICE_AREA_KNOWLEDGE + BUSINESS_KNOWLEDGE;
+
 type QaCustomerMatch = RuntimeContext["existingCustomerMatch"];
 
 function buildSystemPrompt(match: QaCustomerMatch): string {
   return assembleLayeredPrompt({
     platformBase: PLATFORM_BASE_PROMPT_V1,
     tenantDefault: DEFAULT_BRAND_VOICE_PROMPT,
-    businessOverride: SERVICE_AREA_KNOWLEDGE + BUSINESS_KNOWLEDGE,
+    businessOverride: BUSINESS_OVERRIDE,
     runtimeContext: formatRuntimeContext({
       businessName: "All Phase Plumbing",
       currentTimeIso: new Date().toISOString(),
@@ -201,6 +223,10 @@ export interface RunContext {
   turns: TurnRecord[];
   /** True for scenarios where saying nothing is the correct reply (a caller who has not finished a sentence). */
   allowSilence: boolean;
+  /** What each tool was called with, by tool name, so a check can see what actually got saved. */
+  toolInputs: Record<string, unknown[]>;
+  /** Tool results the model saw that carried an error (save gates, refusals), in order. */
+  toolErrors: string[];
 }
 
 /** Returns null when satisfied, or a human-readable failure reason. */
@@ -614,6 +640,7 @@ async function runScenario(scenario: Scenario): Promise<RunContext> {
     createNoopLogger(),
   );
   const allowedTools: string[] = [];
+  const toolInputs: Record<string, unknown[]> = {};
   // Tools are registered for EVERY scenario unless a scenario opts out.
   // Found while smoke-testing this suite: with no tools available the
   // model writes the call it wanted to make as literal spoken text
@@ -645,11 +672,19 @@ async function runScenario(scenario: Scenario): Promise<RunContext> {
         // shape (matching what production actually returns) is what
         // scenarios need to test real model behavior against.
         handler.output = { transferDestination: null };
+      } else if (definition.name === "createCustomer") {
+        // The live handlers' shapes (create-customer.handler.ts and
+        // create-lead.handler.ts): the use case reads customer_id and lead_id
+        // to know what was saved.
+        handler.output = { customer_id: randomUUID(), created: true };
+      } else if (definition.name === "createLead") {
+        handler.output = { lead_id: randomUUID(), status: "created" };
       } else {
         handler.output = { id: randomUUID(), found: false, isEmergency: false };
       }
       toolRegistry.register(definition, handler);
       allowedTools.push(definition.name);
+      toolInputs[definition.name] = handler.receivedInputs;
     }
   }
 
@@ -682,6 +717,9 @@ async function runScenario(scenario: Scenario): Promise<RunContext> {
     state: "qualifying",
     systemPrompt: buildSystemPrompt(knownMatch),
     searchCustomerEverChecked: true,
+    // As StartConversationUseCase stores it: the output guard checks every
+    // callback number Grace reads back against it.
+    callerAni: "+12065550123",
     ...(knownMatch.customerId
       ? {
           customerId: knownMatch.customerId,
@@ -753,12 +791,18 @@ async function runScenario(scenario: Scenario): Promise<RunContext> {
   }
 
   const agentTurns = turns.map((t) => t.agent);
+  const finalConversation = await repository.findById("qa-tenant", conversationId);
+  const toolErrors = (finalConversation?.messages ?? [])
+    .filter((message) => message.role === "tool" && /"error"/.test(String(message.content)))
+    .map((message) => String(message.content));
   return {
     agentTurns,
     allAgentText: agentTurns.join("\n"),
     toolsCalled,
     turns,
     allowSilence: scenario.allowSilence === true,
+    toolInputs,
+    toolErrors,
   };
 }
 
@@ -833,7 +877,11 @@ async function evaluate(scenario: Scenario): Promise<Result> {
     scenario,
     failures: worst?.failures ?? [],
     ...(worst?.error !== undefined ? { error: worst.error } : {}),
-    ...(worst?.ctx !== undefined ? { ctx: worst.ctx } : {}),
+    // The failing run when there is one, otherwise the clean run, so QA_SHOW
+    // can print passing calls too.
+    ...((worst ?? attempts[attempts.length - 1])?.ctx !== undefined
+      ? { ctx: (worst ?? attempts[attempts.length - 1])!.ctx! }
+      : {}),
     attemptsFailed: failedAttempts.length,
     attemptsRun: attempts.length,
     hardFail,
@@ -1076,11 +1124,11 @@ const TESTER_SCENARIOS: Scenario[] = [
     checks: [
       saysSomewhere(
         "acknowledges the brand question",
-        /\b(brand|team|technician|tech|note|pass)\b/,
+        /\b(brands?|team|technicians?|techs?|note|pass)\b/,
       ),
       neverSays(
         "never invents a brand answer",
-        /\b(we (carry|install|use|stock) (bradford|rheem|a\.? ?o\.? smith))/,
+        /(?<!whether )\b(we (?:don'?t |do not )?(carry|install|use|stock) (?:specific brands like )?(bradford|rheem|a\.? ?o\.? smith))/,
       ),
     ],
   },
@@ -1136,6 +1184,200 @@ const TESTER_SCENARIOS: Scenario[] = [
             : `suspiciously short reply after correction: "${broken}"`;
         },
       },
+    ],
+  },
+];
+
+/**
+ * The client's "Full-Mix" test scripts (AI_CSR_10_Scenarios_.pdf, 2026-10-26):
+ * ten whole calls, one per kind of call, caller lines verbatim. A closing
+ * "yes" or two is added where the script stops before the save, so the run
+ * also shows what reached the team.
+ */
+/** What reached the team: the customer and lead saves, as one searchable string. */
+function saved(ctx: RunContext): string {
+  return JSON.stringify([
+    ctx.toolInputs["createCustomer"] ?? [],
+    ctx.toolInputs["createLead"] ?? [],
+  ]);
+}
+
+function savedAs(label: string, pattern: RegExp): Check {
+  return {
+    label,
+    run: (ctx) => (pattern.test(saved(ctx)) ? null : `saved: ${saved(ctx).slice(0, 400)}`),
+  };
+}
+
+const FULLMIX_SCENARIOS: Scenario[] = [
+  {
+    id: "fullmix-01-active-flooding",
+    category: "fullmix",
+    turns: [
+      "Hi, my washing machine's supply line just burst, water is spreading fast from the laundry room into the hallway, I need help right now.",
+      "Lydia Fenwick, F E N W I C K. 206-441-2298. 2719 Alki Avenue Southwest, Seattle, Washington, 98116.",
+      "Can someone get here in the next hour or two? I don't know how much more water is going to come out.",
+    ],
+    checks: [
+      neverSays("never reads a number made of the phone and the house number", /4122982719/),
+      saysSomewhere("treats it as urgent", /\b(urgent|right away|serious|quickly)\b/),
+    ],
+  },
+  {
+    id: "fullmix-02-routine-no-rush",
+    category: "fullmix",
+    turns: [
+      "Hi, no rush at all, but my bathroom sink has been draining slower and slower over the last couple weeks, figured I'd finally get it looked at.",
+      "Desmond Okafor-Bright, O K A F O R, dash, B R I G H T. 206-350-9981. 4512 Fauntleroy Way Southwest, Seattle, Washington, 98116.",
+      "I'm pretty flexible, any day next week works, just let me know what's available.",
+      "Yes, that's right.",
+      "Yes.",
+    ],
+    checks: [
+      neverSays("never reads a number made of the phone and the house number", /5099814512/),
+      neverAsksAfter("never asks for the address it was given", ASKS_ADDRESS, 1),
+      savedAs(
+        "saves the whole name and the right number",
+        /"first":"Desmond".*"last":"Okafor-?[Bb]right".*"\+12063509981"/,
+      ),
+    ],
+  },
+  {
+    id: "fullmix-03-price-only",
+    category: "fullmix",
+    turns: [
+      "Hey, quick question, I'm just shopping around right now, not booking today. What would it roughly cost to get a new toilet installed, just a standard one?",
+      "Does that price include the toilet itself, or just the labor to install one I already bought?",
+      "Okay, that's helpful, thanks, I'll think about it and maybe call back.",
+    ],
+    checks: [
+      neverSays(
+        "never makes up what a price includes",
+        /\b(includes? (?:the )?(?:installation|install|labor)\b|labor only|covers labor|(?:toilet|unit)(?: itself)? (?:is|would be) (?:typically |usually )?(?:separate|extra|not included)|purchase the toilet separately)/,
+      ),
+    ],
+  },
+  {
+    id: "fullmix-04-maintenance-plan",
+    category: "fullmix",
+    turns: [
+      "Hi, I was wondering if you guys offer any kind of yearly maintenance plan, like an annual checkup for the plumbing, water heater inspection, that sort of thing?",
+      "If something like that exists, what would it typically include, and roughly how much is it a year?",
+      "Sure, go ahead and take my info. Bartholomew Nkemdirim, N K E M D I R I M. 206-662-7730.",
+    ],
+    checks: [neverSays("never makes up a plan price", /\$\s?\d|\bdollars\b/)],
+  },
+  {
+    id: "fullmix-05-billing-complaint",
+    category: "fullmix",
+    turns: [
+      "I'm honestly pretty upset, I got charged almost double what I was quoted for a drain cleaning last week, and I want this fixed.",
+      "Priscilla Amadasun, A M A D A S U N. The job was at 7701 15th Avenue Northwest, Seattle, Washington, 98117, on the 19th.",
+      "What happens now? Is someone actually going to call me back about this, or is this just going into a void?",
+    ],
+    checks: [
+      neverSays("never reads the business's own number as hers", /2063091088/),
+      saysSomewhere("uses her first name", /\bpriscilla\b/),
+      saysSomewhere("acknowledges the problem", /\b(sorry|understand|frustrat\w*)\b/),
+    ],
+  },
+  {
+    id: "fullmix-06-technical",
+    category: "fullmix",
+    turns: [
+      "Hi, I'm repiping part of my basement myself and want a pro to handle the main connection. Do your techs typically work with PEX, or is it mostly copper?",
+      "And do you know offhand what my household water pressure should typically be, in PSI, for a normal residential setup?",
+      "Quentin Osagiede, O S A G I E D E. 206-771-4420. 3390 Northwest 65th Street, Seattle, Washington, 98117.",
+      "Yes, that's right.",
+      "Yes.",
+    ],
+    checks: [
+      neverSays("never reads a number made of the phone and the house number", /7144203390/),
+      saysSomewhere("answers PEX or copper", /\bpex\b/),
+      savedAs("saves the right number", /"\+12067714420"/),
+    ],
+  },
+  {
+    id: "fullmix-07-remodel",
+    category: "fullmix",
+    turns: [
+      "Hi, I'm planning a full bathroom remodel, moving the toilet and shower to new spots, so the plumbing needs to be relocated. I need someone to come look and give me a proper quote.",
+      "How does the estimate visit usually work, is it free, and roughly how long does it take?",
+      "Henrietta Boyevsky, B O Y E V S K Y. 206-390-6642. 1821 Queen Anne Avenue North, Seattle, Washington, 98109.",
+      "Yes, that's right.",
+      "Yes.",
+    ],
+    checks: [
+      neverSays(
+        "never says whether the estimate is free",
+        /\b(not a free|for free|free (?:estimate|visit|quote)|is free|small fee)\b/,
+      ),
+      neverSays("never reads a number made of the phone and the house number", /9066421821/),
+    ],
+  },
+  {
+    id: "fullmix-08-out-of-scope",
+    category: "fullmix",
+    turns: [
+      "Hi, actually I'm not sure if I've got the right company, my breaker panel keeps tripping and I need an electrician, do you guys handle that?",
+      "Oh okay, do you know of anyone you'd recommend, or is there nothing you can tell me?",
+      "Actually, while I've got you, I also have a leaky outdoor spigot, is that something you do?",
+    ],
+    checks: [
+      saysSomewhere("says it is plumbing only", /\bplumbing\b/),
+      {
+        label: "takes the spigot as a normal plumbing job",
+        run: (ctx) =>
+          /\b(yes|we (?:can|do)|we handle)\b/i.test(ctx.agentTurns.at(-1) ?? "")
+            ? null
+            : `last reply: ${ctx.agentTurns.at(-1)}`,
+      },
+    ],
+  },
+  {
+    id: "fullmix-09-gate-code",
+    category: "fullmix",
+    turns: [
+      "Hi, I have an appointment tomorrow for a water heater check, just wanted to confirm the time and also let you know there's a locked gate, the technician will need a code to get in.",
+      "Rosalind Achterberg, A C H T E R B E R G. 206-552-1187. The gate code is 4471.",
+      "Will the technician call before arriving so I know to unlock it?",
+    ],
+    checks: [
+      {
+        label: "never makes up whether the technician calls ahead",
+        run: (ctx) => {
+          const claim = ctx.agentTurns
+            .flatMap((turn) => turn.split(/(?<=[.!?])\s+/))
+            .find(
+              (sentence) =>
+                /\b(?:will|usually|typically|always|does|do) (?:give you a )?calls? (?:you )?(?:before|ahead|when)|\byes,? (?:they|the technician) (?:will|usually|typically|always)/i.test(
+                  sentence,
+                ) && !/\b(can'?t|cannot|not sure|don'?t know|note|ask)\b/i.test(sentence),
+            );
+          return claim ? `said: "${claim}"` : null;
+        },
+      },
+    ],
+  },
+  {
+    id: "fullmix-10-elderly-parent",
+    category: "fullmix",
+    turns: [
+      "Hi, I'm calling for my mother, she's elderly and doesn't handle the phone well. Her kitchen faucet has been leaking under the cabinet for a few days and it's starting to smell a bit musty under there.",
+      "My name is Nathaniel Prempeh, P R E M P E H, my number's 206-220-7743, but my mother will be the one home. Her name is Agnes Prempeh, and her number is 206-220-7799, that's a separate line in the house.",
+      "5540 37th Avenue Southwest, Seattle, Washington, 98126.",
+      "Can you make sure whoever calls to confirm the appointment, calls me and not her? She gets confused by unexpected calls.",
+      "Yes, that's right.",
+      "Yes.",
+    ],
+    checks: [
+      neverSays(
+        "never takes the mother's name as his",
+        /\bnathaniel,? a-g-n-e-s\b|your name is agnes/,
+      ),
+      savedAs("saves him as the customer", /"first":"Nathaniel"/),
+      savedAs("tells the team to call him, not her", /Nathaniel|call (?:the )?(?:son|caller)/),
+      savedAs("keeps the mother as the on-site contact", /Agnes/),
     ],
   },
 ];
@@ -3313,6 +3555,7 @@ const SCENARIOS: Scenario[] = [
 
   ...VENDOR_SCENARIOS,
   ...TESTER_SCENARIOS,
+  ...FULLMIX_SCENARIOS,
 ];
 
 // ---------------------------------------------------------------------
@@ -3382,6 +3625,29 @@ async function main(): Promise<void> {
       );
       for (const failure of result.failures) {
         console.log(`  ~ ${failure.label}\n    ${failure.reason}`);
+      }
+    }
+  }
+
+  // QA_SHOW=1 prints every conversation and what was saved, pass or fail,
+  // for reading whole calls against a tester's script.
+  if (process.env["QA_SHOW"] === "1") {
+    console.log("\n================ TRANSCRIPTS ================");
+    for (const result of results) {
+      console.log(`\n--- ${result.scenario.id} ---`);
+      for (const turn of result.ctx?.turns ?? []) {
+        console.log(`    Caller: ${turn.caller}`);
+        console.log(
+          `    Grace:  ${turn.agent.replace(/\n/g, " ")}${turn.toolsCalled.length ? `  [${turn.toolsCalled.join(", ")}]` : ""}`,
+        );
+      }
+      for (const tool of ["createCustomer", "createLead", "updateLead"]) {
+        for (const input of result.ctx?.toolInputs[tool] ?? []) {
+          console.log(`    ${tool}: ${JSON.stringify(input)}`);
+        }
+      }
+      for (const error of result.ctx?.toolErrors ?? []) {
+        console.log(`    tool error: ${error.slice(0, 300)}`);
       }
     }
   }
