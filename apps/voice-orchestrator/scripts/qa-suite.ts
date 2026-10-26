@@ -1382,6 +1382,65 @@ const FULLMIX_SCENARIOS: Scenario[] = [
   },
 ];
 
+/** Yash's test calls, 2026-10-26, close to his own words. */
+const YASH_SCENARIOS: Scenario[] = [
+  {
+    id: "yash1026-01-gas-leak-safety-first",
+    category: "yash1026",
+    turns: ["hi there's gas leaking in my apartment, it's really strong, i've got kids upstairs"],
+    checks: [
+      saysSomewhere("tells them to leave the building", /leave the building/),
+      neverSays("does not ask for the name before they are safe", /\byour name\b/),
+    ],
+  },
+  {
+    id: "yash1026-02-elderly-no-water",
+    category: "yash1026",
+    turns: [
+      "hello is this the number",
+      "my son usually handles this, i take my pills with water and i don't have any water",
+      "my address is thirty seven, what was your name again",
+    ],
+    checks: [
+      {
+        label: "tells him her name when he asks",
+        run: (ctx) =>
+          /\bgrace\b/i.test(ctx.agentTurns.at(-1) ?? "")
+            ? null
+            : `last reply: ${ctx.agentTurns.at(-1)}`,
+      },
+      neverSays("never insists on the name before the address", /need your name first|name first/),
+    ],
+  },
+  {
+    id: "yash1026-03-will-not-say-who",
+    category: "yash1026",
+    turns: [
+      "sewage is coming up into my shower drain and the basement floor",
+      "i don't want to share my name, can you help me or not",
+      "it's still coming up, what should i do",
+    ],
+    checks: [neverAsksAfter("never asks for the name again once refused", ASKS_NAME, 1)],
+  },
+  {
+    id: "yash1026-04-angry-refund",
+    category: "yash1026",
+    turns: [
+      "you guys charged me four hundred bucks and the leak is back again, this is ridiculous. i want my money back and i want to talk to the owner right now",
+    ],
+    checks: [
+      saysSomewhere("acknowledges what went wrong", /\b(sorry|apologi\w*)\b/),
+      {
+        label: "puts them through",
+        run: (ctx) =>
+          ctx.toolsCalled.includes("transferToHuman")
+            ? null
+            : `tools: ${ctx.toolsCalled.join(", ")}`,
+      },
+    ],
+  },
+];
+
 const VENDOR_SCENARIOS: Scenario[] = [
   {
     id: "vendor-01-spelled-name-kept",
@@ -3304,7 +3363,7 @@ const SCENARIOS: Scenario[] = [
     turns: ["why would my water heater keep leaking?"],
     checks: [
       neverSays("no flat cause claim", /(usually|probably|typically) (the|a|caused|rust|corros)/),
-      saysSomewhere("technician must inspect", /(inspect|take a look|look at it)/),
+      saysSomewhere("technician must inspect", /(inspect|take a look|look at (?:it|that))/),
     ],
   },
   {
@@ -3556,6 +3615,7 @@ const SCENARIOS: Scenario[] = [
   ...VENDOR_SCENARIOS,
   ...TESTER_SCENARIOS,
   ...FULLMIX_SCENARIOS,
+  ...YASH_SCENARIOS,
 ];
 
 // ---------------------------------------------------------------------
