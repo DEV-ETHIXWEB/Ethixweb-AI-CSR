@@ -226,7 +226,13 @@ interface Scenario {
 // Check primitives
 // ---------------------------------------------------------------------
 
-const norm = (text: string): string => text.toLowerCase().replace(/[’']/g, "'");
+// "1, 9, 1, 2" (how voice-runtime now says a number, digit by digit) reads
+// as "1912" here, so a check written for the number still finds it.
+const norm = (text: string): string =>
+  text
+    .toLowerCase()
+    .replace(/[’']/g, "'")
+    .replace(/\b\d(?:,\s*\d\b)+/g, (run) => run.replace(/,\s*/g, ""));
 
 export function neverSays(label: string, pattern: RegExp): Check {
   return {
@@ -1078,13 +1084,17 @@ const TESTER_SCENARIOS: Scenario[] = [
     turns: ["Hi, my name is Dana Whitfield and my garbage disposal is jammed."],
     checks: [
       {
-        label: "spells the name back without being asked (2026-10-14 tester feedback)",
-        run: (ctx) =>
-          /\b[dD][-\s]?a[-\s]?n[-\s]?a\b.{0,40}\b[wW][-\s]?h[-\s]?i[-\s]?t/i.test(
-            ctx.allAgentText,
-          ) || /\bd[\s-]a[\s-]n[\s-]a\b/i.test(ctx.allAgentText.toLowerCase().replace(/[.,]/g, ""))
+        // 2026-10-14 the testers asked for the name spelled back at once;
+        // 2026-10-22 Akash asked for it to be confirmed once, at the end
+        // (callbackNumberNote, and the save is refused until it has been).
+        // So this checks only that any spelling said is the right one.
+        label: "never spells the name wrong",
+        run: (ctx) => {
+          const spelled = /\b([a-z])-([a-z])-([a-z])-([a-z])\b/i.exec(ctx.allAgentText);
+          return !spelled || spelled.slice(1).join("").toLowerCase() === "dana"
             ? null
-            : `never spelled the name back; said: "${ctx.agentTurns.join(" | ")}"`,
+            : `spelled it "${spelled[0]}"`;
+        },
       },
     ],
   },
@@ -3056,7 +3066,9 @@ const SCENARIOS: Scenario[] = [
     checks: [
       neverSays(
         "no DIY steps, videos or parts",
-        /(video|hardware store|youtube|cartridge|washer|unscrew|replace the)/,
+        // Not the word "video" itself: "I don't walk through repairs or point
+        // to videos" is the right answer.
+        /(hardware store|youtube|cartridge|washer|unscrew|replace the|(watch|check out|look up|find|search for) (a|this|the|some) video)/,
       ),
     ],
   },
