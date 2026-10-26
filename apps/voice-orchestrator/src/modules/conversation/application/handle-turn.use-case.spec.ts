@@ -1678,7 +1678,7 @@ describe("HandleTurnUseCase", () => {
 
   it("publishes a lead.created event and records leadId on the conversation when createLead succeeds", async () => {
     const repository = new FakeConversationRepository();
-    repository.seed(baseConversation());
+    repository.seed(baseConversation({ customerId: "3f0c2b1e-9d5a-4c8e-8a57-0b1c2d3e4f50" }));
     const aiProvider = new FakeAiProvider();
     aiProvider.responses = [
       [
@@ -3586,7 +3586,12 @@ describe("address check (client feedback: random street plus ZIP was accepted)",
   it("flags an unverified address on the lead itself, and leaves a real one untouched", async () => {
     const run = async (address: string): Promise<string> => {
       const repository = new FakeConversationRepository();
-      repository.seed(baseConversation({ systemPrompt: "[service_area]\n98101, 98102, 98103" }));
+      repository.seed(
+        baseConversation({
+          systemPrompt: "[service_area]\n98101, 98102, 98103",
+          customerId: "3f0c2b1e-9d5a-4c8e-8a57-0b1c2d3e4f50",
+        }),
+      );
       const aiProvider = new FakeAiProvider();
       aiProvider.responses = [
         [
@@ -4625,9 +4630,78 @@ describe("identifiers come from our own records, not the model's copy", () => {
     expect(passed.customer_id).toBe(CORRECT);
   });
 
-  it("leaves the arguments alone when we have no id of our own", async () => {
+  // 2026-10-26 (CUSTOMER_NOT_SAVED_ERROR): with no customer of our own, an id
+  // no tool returned on this call is made up, and the lead is refused.
+  it("refuses a lead whose customer id no tool returned on this call", async () => {
     const repository = new FakeConversationRepository();
     repository.seed(baseConversation({ customerId: null, customerDetailsOnFile: true }));
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        {
+          type: "tool_call",
+          toolCall: {
+            id: "t1",
+            name: "createLead",
+            arguments: {
+              customer_id: MISTYPED,
+              problem_summary: "kitchen sink backing up",
+              priority: "routine",
+              lead_type: "residential",
+            },
+          },
+        },
+        { type: "done", stopReason: "tool_use" },
+      ],
+      [
+        { type: "text_delta", text: "Okay." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const createLead = { execute: jest.fn().mockResolvedValue({ lead_id: "lead-1" }) };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "createLead", handler: createLead }],
+    });
+
+    await useCase.execute(
+      baseCommand({
+        transcript: "my kitchen sink is backing up, go ahead and submit it",
+        allowedTools: ["createLead"],
+      }),
+    );
+
+    expect(createLead.execute).not.toHaveBeenCalled();
+    const saved = await repository.findById("tenant-1", "conv-1");
+    expect(
+      saved?.messages.some(
+        (message) =>
+          message.role === "tool" && String(message.content).includes("customer_not_saved"),
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts an id a tool returned on this call", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(
+      baseConversation({
+        customerId: null,
+        customerDetailsOnFile: true,
+        messages: [
+          {
+            role: "assistant",
+            content: "",
+            toolCalls: [{ id: "s1", name: "searchCustomer", arguments: {} }],
+          },
+          {
+            role: "tool",
+            toolCallId: "s1",
+            content: JSON.stringify({ found: true, customer: { id: MISTYPED } }),
+          },
+        ],
+      }),
+    );
     const aiProvider = new FakeAiProvider();
     aiProvider.responses = [
       [

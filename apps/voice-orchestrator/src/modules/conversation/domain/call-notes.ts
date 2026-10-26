@@ -197,7 +197,8 @@ export function buildCallNotes(
     nameTexts,
     utterances.map((utterance) => utterance.askedForName),
   );
-  let stated = statedFound?.value ?? answeredName(turns);
+  const leadName = statedFound ? null : nameBeforeItsSpelling(nameTexts);
+  let stated = statedFound?.value ?? answeredName(turns) ?? leadName;
   // 2026-10-23 client call: "you are an AI", heard as "u r n a i u r n",
   // became the name "Urn Aiurn". Letters only count as a spelled NAME when
   // there is a reason to read them as one: Grace asked for a spelling, the
@@ -209,6 +210,13 @@ export function buildCallNotes(
       utterances[spelling.index]?.answersNameQuestion === true ||
       SPELLING_CONTEXT.test(nameTexts[spelling.index] ?? "") ||
       isOnlyASpelling(nameTexts[spelling.index] ?? "") ||
+      (leadName !== null &&
+        spelling.words.some((word) =>
+          leadName
+            .toLowerCase()
+            .split(/[\s-]+/)
+            .some((stated) => likeness(word, stated) >= SAME_NAME_LIKENESS),
+        )) ||
       (statedFound !== null &&
         spelling.words.some((word) =>
           [
@@ -249,6 +257,17 @@ export function buildCallNotes(
     spelledFound && statedFound && statedFound.index > spelledFound.index
       ? null
       : (spelledFound?.words ?? null);
+  // "Okafor-Bright, O K A F O R, dash, B R I G H T": the two spelled words
+  // are one hyphenated last name, not a first and a last.
+  const statedWords = stated?.toLowerCase().split(/\s+/) ?? [];
+  if (
+    spelled &&
+    spelled.length === 2 &&
+    statedWords.length === 2 &&
+    statedWords[1] === spelled.join("-")
+  ) {
+    spelled = statedWords;
+  }
   if (spelled && spelled.length === 1 && stated) {
     spelled = splitSpelledByStated(spelled[0]!, stated);
     if (spelled.length === 1) {
@@ -1222,6 +1241,8 @@ function statedNameAt(
     second?: string;
     last?: string;
     loose?: boolean;
+    /** A word followed by its own letters ("nguyen n g u y e n"). */
+    own?: string;
   };
   const said: Said[] = [];
   for (const [index, text] of callerTexts.entries()) {
@@ -1260,6 +1281,17 @@ function statedNameAt(
         ) {
           continue;
         }
+        // 2026-10-26, a son calling for his mother: "My name is Nathaniel
+        // Prempeh ... Her name is Agnes Prempeh", and Grace called him Agnes.
+        // Once the caller has given their own name, "her/his/their name is"
+        // is someone else's. Not before: answering "What's your name?", one
+        // caller was heard as "his name is trevor", and Trevor was him.
+        if (
+          /\b(?:her|his|their) $/.test(lower.slice(0, at)) &&
+          said.some((item) => item.first && !item.loose)
+        ) {
+          continue;
+        }
         // "it's actually prateek" is a correction, said on purpose.
         const loose = LOOSE_CUE.test(match[0]) && !/\b(?:actually|really)\b/.test(match[0]);
         said.push({ index, at, first: match[1] ?? "", second, loose });
@@ -1267,6 +1299,13 @@ function statedNameAt(
     }
     for (const match of lower.matchAll(LAST_NAME_STATEMENT)) {
       said.push({ index, at: match.index ?? 0, last: match[1] ?? "" });
+    }
+    const own = OWN_SPELLING.exec(lower.trim());
+    if (
+      own &&
+      likeness(own[1]!.replace(/['-]/g, ""), own[2]!.replace(/[^a-z]/g, "")) >= SAME_NAME_LIKENESS
+    ) {
+      said.push({ index, at: 0, own: own[1]! });
     }
   }
   said.sort((a, b) => a.index - b.index || a.at - b.at);
@@ -1280,6 +1319,23 @@ function statedNameAt(
   // given with.
   const surnameOf = new Map<string, string>();
   for (const item of said) {
+    // 2026-10-26, Prateek's test call: "it's felicity", then, as the next
+    // answer, "nguyen n g u y e n". Only Felicity was kept, and Grace closed
+    // with "You're all set, Felicity". A word spelled out by its own letters
+    // is a name said on purpose: the first name if none is known or it is
+    // that one again, otherwise the last name.
+    if (item.own !== undefined) {
+      if (!canBeName(item.own)) {
+        continue;
+      }
+      if (!first || likeness(item.own, first.toLowerCase()) >= SAME_NAME_LIKENESS) {
+        first = capitalize(item.own);
+      } else {
+        last = capitalize(item.own);
+      }
+      index = item.index;
+      continue;
+    }
     if (item.last !== undefined) {
       // "winter" (from "the last name is winter bond") is the start of the
       // "Winterbone" already given, not a different surname (2026-10-25).
@@ -1314,6 +1370,21 @@ function statedNameAt(
       continue;
     }
     const second = item.second && canBeName(item.second) ? capitalize(item.second) : null;
+    // 2026-10-26, Prateek's test call: asked "is your name Walter Pempert?",
+    // he said "it's pemberton p e m p e r t o n", and Grace closed with
+    // "You're all set, Pemperton". One word that is the last name, not the
+    // first, corrects the last name only.
+    if (
+      !second &&
+      first &&
+      last &&
+      likeness(name.toLowerCase(), last.toLowerCase()) >= SAME_NAME_LIKENESS &&
+      likeness(name.toLowerCase(), first.toLowerCase()) < SAME_NAME_LIKENESS
+    ) {
+      last = capitalize(name);
+      index = item.index;
+      continue;
+    }
     if (second) {
       last = second;
       surnameOf.set(name.toLowerCase(), second);
@@ -1363,6 +1434,44 @@ const PLACE_WORDS = new Set([
   "miami",
 ]);
 
+/**
+ * 2026-10-26, the client's test scripts: "Lydia Fenwick, F E N W I C K." A
+ * full name, then the letters of its last word, with no "my name is". The
+ * letters alone were taken as the whole name, so Grace said "Got it,
+ * Fenwick" and Lydia was lost. Two name words straight before a spelling of
+ * the second one are the caller's full name; for a hyphenated last name
+ * ("Okafor-Bright, O K A F O R, dash, B R I G H T") the letters spell its
+ * first part.
+ */
+/** The whole utterance is one word and its letters: "nguyen n g u y e n", "it's pemberton p e m p e r t o n". */
+const OWN_SPELLING =
+  /^(?:(?:it'?s|its|it is|and|so|yeah|yes|my last name is|last name is|the last name is|my surname is|surname is)\s+)*([a-z][a-z'-]+)\s*,?\s+((?:[a-z][\s,]+)+[a-z])\s*[.!?]?$/;
+
+const NAME_THEN_SPELLING =
+  /(?:^|[.!?,:;]\s*)([a-z][a-z'-]+)\s+([a-z][a-z'-]+)\s*,?\s+((?:[a-z][\s,]+)+[a-z])(?![a-z])/g;
+
+function nameBeforeItsSpelling(texts: readonly string[]): string | null {
+  for (let i = texts.length - 1; i >= 0; i -= 1) {
+    let found: string | null = null;
+    for (const match of (texts[i] ?? "").toLowerCase().matchAll(NAME_THEN_SPELLING)) {
+      const [first, last, letters] = [match[1]!, match[2]!, match[3]!.replace(/[^a-z]/g, "")];
+      if (
+        (letters === last.replace(/-/g, "") || letters === last.split("-")[0]) &&
+        canBeName(first) &&
+        canBeName(last.replace(/-/g, "")) &&
+        !PLACE_WORDS.has(first) &&
+        !PLACE_WORDS.has(last)
+      ) {
+        found = `${capitalize(first)} ${last.split("-").map(capitalize).join("-")}`;
+      }
+    }
+    if (found) {
+      return found;
+    }
+  }
+  return null;
+}
+
 function answeredName(turns: ReadonlyArray<{ speaker: string; text: string }>): string | null {
   let found: string | null = null;
   for (let i = 1; i < turns.length; i += 1) {
@@ -1407,7 +1516,13 @@ function lastStreet(callerTexts: readonly string[]): string | null {
     // an address often arrives as "3810" and then "248th place south".
     const candidates = [
       callerTexts[i] ?? "",
-      `${callerTexts[i - 1] ?? ""} ${callerTexts[i] ?? ""}`,
+      renamedStreet(callerTexts[i - 1] ?? "", callerTexts[i] ?? ""),
+      // A ZIP ending the utterance before is not this one's house number:
+      // "... nine eight one zero three", then "it's near pine street", read
+      // as "98103 near pine street" (2026-10-26).
+      endsWithZip(callerTexts[i - 1] ?? "")
+        ? ""
+        : `${callerTexts[i - 1] ?? ""} ${callerTexts[i] ?? ""}`,
       numberedStreetAfterHouse(callerTexts[i - 1] ?? "", callerTexts[i] ?? ""),
     ];
     for (const candidate of candidates) {
@@ -1421,6 +1536,37 @@ function lastStreet(callerTexts: readonly string[]): string | null {
     }
   }
   return null;
+}
+
+function endsWithZip(text: string): boolean {
+  return /\b9[89]\d{3}\s*[.!?]?\s*$/.test(collapseSpokenDigits(text.toLowerCase()));
+}
+
+/**
+ * 2026-10-26, Prateek's test call: "seven seven three three pinwood avenue
+ * north ... nine eight one zero three", then, asked to spell the street,
+ * "okay it's greenwood avenue north". A street name with no number, straight
+ * after a full address, renames that street and keeps its house number.
+ */
+function renamedStreet(before: string, now: string): string {
+  const earlier = streetIn(before);
+  const cleaned = now
+    .toLowerCase()
+    .replace(
+      /^(?:(?:okay|ok|no|yes|yeah|so|sorry|oh|actually|it'?s|its|it is|the street is|street is|the street name is)[\s,]+)+/,
+      "",
+    )
+    .trim();
+  if (
+    !earlier ||
+    /\d/.test(collapseSpokenDigits(cleaned)) ||
+    /^(?:near|by|off|across|behind|next|on|at|between|corner|close)\b/.test(cleaned)
+  ) {
+    return "";
+  }
+  const house = earlier.split(" ")[0]!;
+  const street = streetIn(`${house} ${cleaned}`);
+  return street && street !== earlier ? street : "";
 }
 
 /**
@@ -1748,6 +1894,24 @@ const NEGATION_OF_SOMETHING_ELSE =
 const DISPUTE_MAX_WORDS = 10;
 
 /**
+ * 2026-10-26, Prateek's test call: asked to repeat his address, Grace read it
+ * back and ended with "Is there anything else I can help with today?". His
+ * "no thanks" answered that, and Grace asked which part of the address needed
+ * correcting. A "no" answers the LAST question in the reply.
+ */
+const ASKED_SOMETHING_ELSE =
+  /\b(anything else|something else|anything more|any other|other questions?|more questions?)\b/i;
+
+function lastQuestionIn(reply: string): string {
+  return (
+    reply
+      .split(/(?<=[.!?])\s+/)
+      .filter((sentence) => sentence.trim().endsWith("?"))
+      .at(-1) ?? ""
+  );
+}
+
+/**
  * 2026-10-22 tester call: "I kept saying that address is something else but
  * it didn't pay attention to it and kept on moving like you are all set."
  *
@@ -1791,7 +1955,8 @@ export function addressDisputeNote(
     OPENING_NEGATION.test(latest) &&
     !NEGATION_OF_SOMETHING_ELSE.test(latest) &&
     latest.split(/\s+/).length <= DISPUTE_MAX_WORDS &&
-    readBackAnAddress(agentTexts.at(-1) ?? "");
+    readBackAnAddress(agentTexts.at(-1) ?? "") &&
+    !ASKED_SOMETHING_ELSE.test(lastQuestionIn(agentTexts.at(-1) ?? ""));
   if (!disputedInWords && !negatedAReadback) {
     return null;
   }

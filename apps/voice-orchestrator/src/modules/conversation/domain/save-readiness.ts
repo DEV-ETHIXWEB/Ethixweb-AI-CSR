@@ -37,6 +37,19 @@ export const LEAD_NEEDS_CUSTOMER_DETAILS_ERROR = {
     "Not saved yet. The record on file for this number has no real name or service address. First get the caller's name, the street address and the callback number, then call createCustomer (it updates the existing record), then createLead. Everything the caller already told you is still valid: do not ask for it again.",
 } as const;
 
+/**
+ * 2026-10-26, the client's test scripts on the production model: every
+ * createCustomer had been refused for a readback, and the model then called
+ * createLead alone with a customer_id it made up, and told the caller
+ * "You're all set". A lead belongs to a customer saved or matched on this
+ * call, or it is not saved.
+ */
+export const CUSTOMER_NOT_SAVED_ERROR = {
+  error: "customer_not_saved",
+  detail:
+    "Not saved yet. Call createCustomer first with the caller's confirmed name, street address and callback number, then createLead with the customer_id it returns. Do not tell the caller anything is saved. Everything the caller already told you is still valid: do not ask for it again.",
+} as const;
+
 export const ADDRESS_NEEDED_ERROR = {
   error: "address_needed",
   detail:
@@ -136,7 +149,8 @@ export function spokenPhoneDigits(callerTexts: readonly string[]): string | null
     // digit lost by speech recognition) was taken as 187-278-4999, and Grace
     // read back "1-8-7-2-7-8-4-9-9-9" as the caller's number.
     const match = collapsed.match(
-      /(?:\+?1[\s.-]*)?\(?([2-9]\d{2})\)?[\s.-]*([2-9]\d{2})[\s.-]*(\d{4})\b/,
+      // A whole number only, never ten digits out of a longer run.
+      /(?<!\d)(?:\+?1[\s.-]*)?\(?([2-9]\d{2})\)?[\s.-]*([2-9]\d{2})[\s.-]*(\d{4})(?!\d)/,
     );
     if (match) {
       return `${match[1]}${match[2]}${match[3]}`;
@@ -451,6 +465,34 @@ export function callbackNumberNote(
     `whether ${spoken} is the best number to reach them, read digit by digit, without the +1. ` +
     "Do not save on this turn; save once they answer. Ask nothing else.]"
   );
+}
+
+/**
+ * 2026-10-26, the client's test scripts: a caller who gives the name, number
+ * and address in one breath gets an early save attempt, and the generic
+ * "read the address back" refusal made Grace confirm the address, then the
+ * number, then the name: three questions where the client asked for two, and
+ * the call ran out before the save. When neither has been read back yet, the
+ * refusal hands over the same first question the closing note does.
+ */
+export function nameAndAddressNotReadBackError(
+  name: { spelled: readonly string[] | null; stated: string | null },
+  address: { street: string | null; zip: string | null },
+  agentTexts: readonly string[],
+) {
+  const letters = nameLetters(name);
+  if (!letters || !address.street || nameAndAddressReadBack(agentTexts, name, address)) {
+    return null;
+  }
+  const atAddress = addressForConfirmation(address).replace(/^, the address \((.*)\)$/, ", at $1");
+  return {
+    error: "name_and_address_not_read_back",
+    detail:
+      "Do not save yet. Confirm in TWO short questions, one per turn, and this turn is ONLY the " +
+      `first. Say exactly: "Let me make sure I have it right: ${letters}${atAddress}. Is that right?" ` +
+      "Do not mention the phone number yet. Everything else the caller already gave you is still " +
+      "valid: do not ask for it again.",
+  } as const;
 }
 
 /**

@@ -237,6 +237,12 @@ export function collapseSpokenDigits(text: string): string {
       }
       digits += group.digits;
       cursor += group.consumed;
+      // A full stop ends the run. 2026-10-26, the client's test scripts:
+      // "206-441-2298. 2719 Alki Avenue" joined the number and the house
+      // number into one, losing both.
+      if (/[.?!;]$/.test(words[cursor - 1]!)) {
+        break;
+      }
     }
     // Punctuation on the edges of the run is kept, so "ninety-eight, oh one"
     // reads the same as it would without it.

@@ -5,11 +5,14 @@ import {
   loadStreetIndex,
 } from "../domain/address-check";
 import { OutputGuard } from "../domain/output-guard";
+import { detailsForTheTeam } from "../domain/details-for-the-team";
 import { collapseSpokenDigits } from "../domain/service-area";
 import {
   callbackNumberNote,
+  CUSTOMER_NOT_SAVED_ERROR,
   isHardEmergency,
   LEAD_NEEDS_CUSTOMER_DETAILS_ERROR,
+  nameAndAddressNotReadBackError,
   leadProblemBlockedReason,
   problemDescribed,
   saveBlockedReason,
@@ -205,6 +208,7 @@ const SILENT_TURN_FALLBACK = "Sorry about the pause there. What else can I help 
 const SOFT_SAVE_GATES: ReadonlySet<string> = new Set([
   "name_not_read_back",
   "address_not_confirmed",
+  "name_and_address_not_read_back",
   "callback_number_not_confirmed",
   "new_callback_number_not_read_back",
 ]);
@@ -1914,10 +1918,26 @@ export class HandleTurnUseCase {
     conversation: Conversation,
     toolCall: AiToolCallRequest,
   ): Record<string, unknown> {
-    const summary = toolCall.arguments["problem_summary"];
-    const index = loadStreetIndex();
-    if (toolCall.name !== "createLead" || typeof summary !== "string" || !index) {
+    const given = toolCall.arguments["problem_summary"];
+    if (toolCall.name !== "createLead" || typeof given !== "string") {
       return toolCall.arguments;
+    }
+    // See details-for-the-team.ts: someone else's contact or an access code
+    // the model left out of the summary.
+    const callerTexts = conversation.transcript
+      .filter((entry) => entry.speaker === "caller")
+      .map((entry) => entry.text);
+    const notes = buildCallNotes(callerTexts, conversation.transcript);
+    const extra = detailsForTheTeam(
+      callerTexts,
+      given,
+      notes.spelledName?.[0] ?? notes.statedName?.split(/\s+/)[0] ?? null,
+    );
+    // createLead's schema caps the summary at 4000 characters.
+    const summary = `${given.slice(0, 4000 - extra.length)}${extra}`;
+    const index = loadStreetIndex();
+    if (!index) {
+      return { ...toolCall.arguments, problem_summary: summary };
     }
     const callerText = conversation.transcript
       .filter((entry) => entry.speaker === "caller")
@@ -1926,7 +1946,7 @@ export class HandleTurnUseCase {
       .join(" . ");
     const check = checkAddress(callerText, conversation.lastServiceAreaCheck?.zip ?? null, index);
     if (!check || check.kind === "found") {
-      return toolCall.arguments;
+      return { ...toolCall.arguments, problem_summary: summary };
     }
     return {
       ...toolCall.arguments,
@@ -1974,18 +1994,31 @@ export class HandleTurnUseCase {
       const priorAgentTexts = conversation.transcript
         .filter((entry) => entry.speaker === "agent")
         .map((entry) => entry.text);
-      const blocked = saveBlockedReason({
-        callerTexts: conversation.transcript
-          .filter((entry) => entry.speaker === "caller")
-          .map((entry) => entry.text),
-        agentTexts: currentTurnText.trim()
-          ? [...priorAgentTexts, currentTurnText]
-          : priorAgentTexts,
+      const gateCallerTexts = conversation.transcript
+        .filter((entry) => entry.speaker === "caller")
+        .map((entry) => entry.text);
+      const gateAgentTexts = currentTurnText.trim()
+        ? [...priorAgentTexts, currentTurnText]
+        : priorAgentTexts;
+      let blocked: { error: string; detail: string } | null = saveBlockedReason({
+        callerTexts: gateCallerTexts,
+        agentTexts: gateAgentTexts,
         address: toolCall.arguments["address"],
         phone: toolCall.arguments["phone"],
         name: toolCall.arguments["name"],
         priorAgentTexts,
       });
+      // The name and the address are read back together, in one question,
+      // before the number: see nameAndAddressNotReadBackError.
+      if (blocked?.error === "address_not_confirmed" || blocked?.error === "name_not_read_back") {
+        const notes = buildCallNotes(gateCallerTexts, conversation.transcript);
+        blocked =
+          nameAndAddressNotReadBackError(
+            { spelled: notes.spelledName, stated: notes.statedName },
+            { street: notes.street, zip: notes.zip },
+            gateAgentTexts,
+          ) ?? blocked;
+      }
       if (blocked) {
         const alreadyRefusedThisTurn =
           SOFT_SAVE_GATES.has(blocked.error) && gateRejections.has(blocked.error);
@@ -2027,6 +2060,25 @@ export class HandleTurnUseCase {
           conversationId: conversation.id,
         });
         return { output: blocked };
+      }
+    }
+    // See CUSTOMER_NOT_SAVED_ERROR. With a customer of our own the id is
+    // replaced anyway (withOwnIdentifiers); without one, it has to be an id a
+    // tool actually returned on this call (a mid-call searchCustomer match).
+    if (toolCall.name === "createLead" && !conversation.customerId) {
+      const id = toolCall.arguments["customer_id"];
+      const returnedByATool =
+        typeof id === "string" &&
+        id.length > 0 &&
+        conversation.messages.some(
+          (message) => message.role === "tool" && String(message.content).includes(id),
+        );
+      if (!returnedByATool) {
+        this.logger.warn("createLead blocked: no customer saved or matched on this call", {
+          tenantId: conversation.tenantId,
+          conversationId: conversation.id,
+        });
+        return { output: CUSTOMER_NOT_SAVED_ERROR };
       }
     }
     if (toolCall.name === "createLead" && conversation.customerDetailsOnFile === false) {
