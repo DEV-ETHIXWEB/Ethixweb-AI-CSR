@@ -106,3 +106,54 @@ it("'cms here' is not a name", () => {
   expect(notes.statedName ?? "").not.toMatch(/cms/i);
   expect(notes.spelledName ?? []).not.toContain("cms");
 });
+
+// Live test battery, 2026-10-26, after the fixes above.
+describe("live battery, 2026-10-26", () => {
+  it("'wing n g u y e n': the letters are the name, whatever the word was heard as", () => {
+    const notes = buildCallNotes(
+      ["it's felicity", "wing n g u y e n"],
+      [
+        { speaker: "agent", text: "Got it! Can I have your name, please?" },
+        { speaker: "caller", text: "it's felicity" },
+        {
+          speaker: "agent",
+          text: "Let me confirm that: Felicity, F-E-L-I-C-I-T-Y. Is that right?",
+        },
+        { speaker: "caller", text: "wing n g u y e n" },
+      ],
+    );
+    expect(notes.statedName).toBe("Felicity Nguyen");
+  });
+
+  it("'no thanks' to a repeated read-back is not a dispute", () => {
+    expect(
+      addressDisputeNote(
+        [
+          "six six five zero roosevelt way northeast seattle nine eight one one five",
+          "can you repeat my address back",
+          "no thanks",
+        ],
+        [
+          "[slowly] Sure! Let me make sure I have it right: Renata, R-E-N-A-T-A, at 6-6-5-oh Roosevelt Way Northeast, ZIP 9-8-1-1-5. Is that right?",
+        ],
+      ),
+    ).toBeNull();
+  });
+
+  it("'desmond okaforbright o k a f o r dash b r i g h t' keeps Desmond", () => {
+    const said =
+      "desmond okaforbright o k a f o r dash b r i g h t two zero six three five zero nine nine eight one";
+    const notes = buildCallNotes(
+      [said],
+      [
+        {
+          speaker: "agent",
+          text: "Got it, your bathroom sink is draining slower. Can I get your name, please?",
+        },
+        { speaker: "caller", text: said },
+      ],
+    );
+    expect(notes.statedName?.split(" ")[0]).toBe("Desmond");
+    expect(notes.spelledName?.[0]).toBe("desmond");
+  });
+});

@@ -264,9 +264,10 @@ export function buildCallNotes(
     spelled &&
     spelled.length === 2 &&
     statedWords.length === 2 &&
-    statedWords[1] === spelled.join("-")
+    statedWords[1]!.replace(/-/g, "") === spelled.join("")
   ) {
-    spelled = statedWords;
+    spelled = [statedWords[0]!, spelled.join("-")];
+    stated = `${capitalize(statedWords[0]!)} ${spelled[1]!.split("-").map(capitalize).join("-")}`;
   }
   if (spelled && spelled.length === 1 && stated) {
     spelled = splitSpelledByStated(spelled[0]!, stated);
@@ -1305,12 +1306,20 @@ function statedNameAt(
     for (const match of lower.matchAll(LAST_NAME_STATEMENT)) {
       said.push({ index, at: match.index ?? 0, last: match[1] ?? "" });
     }
+    // The letters are what was spelled on purpose; the word before them is
+    // only as good as the hearing. Live test, 2026-10-26: "Nguyen" was heard
+    // as "wing n g u y e n".
     const own = OWN_SPELLING.exec(lower.trim());
-    if (
-      own &&
-      likeness(own[1]!.replace(/['-]/g, ""), own[2]!.replace(/[^a-z]/g, "")) >= SAME_NAME_LIKENESS
-    ) {
-      said.push({ index, at: 0, own: own[1]! });
+    const ownLetters = own?.[2]?.replace(/[^a-z]/g, "") ?? "";
+    // When the two are alike, though, the word is kept: "it's pemberton p e
+    // m p e r t o n" had the word right and one letter misheard.
+    if (own && ownLetters.length >= 3) {
+      const word = own[1]!.replace(/['-]/g, "");
+      said.push({
+        index,
+        at: 0,
+        own: likeness(word, ownLetters) >= SAME_NAME_LIKENESS ? own[1]! : ownLetters,
+      });
     }
   }
   said.sort((a, b) => a.index - b.index || a.at - b.at);
@@ -1461,7 +1470,11 @@ function nameBeforeItsSpelling(texts: readonly string[]): string | null {
     for (const match of (texts[i] ?? "").toLowerCase().matchAll(NAME_THEN_SPELLING)) {
       const [first, last, letters] = [match[1]!, match[2]!, match[3]!.replace(/[^a-z]/g, "")];
       if (
-        (letters === last.replace(/-/g, "") || letters === last.split("-")[0]) &&
+        // "okaforbright o k a f o r dash b r i g h t": a hyphenated name heard
+        // as one word, spelled in parts (live test, 2026-10-26).
+        (letters === last.replace(/-/g, "") ||
+          letters === last.split("-")[0] ||
+          (letters.length >= 3 && last.replace(/-/g, "").startsWith(letters))) &&
         canBeName(first) &&
         canBeName(last.replace(/-/g, "")) &&
         !PLACE_WORDS.has(first) &&
@@ -1894,7 +1907,7 @@ const OPENING_NEGATION = /^\s*(no|nope|nah|wrong|that'?s not|thats not|i said|i 
 
 /** "No hot water", "no rush", "no idea" — a negation that starts a fact, not a correction. */
 const NEGATION_OF_SOMETHING_ELSE =
-  /^\s*(no|nope|nah)\b[\s,]*(hot|cold|warm|water|heat|pressure|rush|hurry|problem|worries|one|body|idea|clue|leak|damage)\b/i;
+  /^\s*(no|nope|nah)\b[\s,]*(hot|cold|warm|water|heat|pressure|rush|hurry|problem|worries|one|body|idea|clue|leak|damage|thanks|thank)\b/i;
 
 const DISPUTE_MAX_WORDS = 10;
 
