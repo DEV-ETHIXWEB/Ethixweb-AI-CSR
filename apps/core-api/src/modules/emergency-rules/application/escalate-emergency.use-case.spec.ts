@@ -369,6 +369,17 @@ describe("a 'no ...' rule means something is missing", () => {
   ])("still flags %p", async (description) => {
     expect((await classify(description)).isEmergency).toBe(true);
   });
+
+  // 2026-10-26, Yash's test call: an elderly caller who takes his pills with
+  // water said "i don't have any water", which matched no rule.
+  it.each([
+    ["i take my pills with water and i don't have any water"],
+    ["we've been without water since this morning"],
+  ])("flags %p as urgent", async (description) => {
+    const result = await classify(description);
+    expect(result.isEmergency).toBe(true);
+    expect(result.action).toBe("priority_notify");
+  });
 });
 
 /** 2026-10-23, client decision: a burning or electrical smell is handled like a gas smell. */

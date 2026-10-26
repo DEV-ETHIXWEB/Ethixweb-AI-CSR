@@ -87,6 +87,9 @@ export const DEFAULT_EMERGENCY_KEYWORDS: ReadonlyArray<{
   { pattern: "not able to operate", severity: "high", action: "priority_notify" },
   { pattern: "no hot water", severity: "high", action: "priority_notify" },
   { pattern: "no water", severity: "high", action: "priority_notify" },
+  // 2026-10-26, Yash's test call: "i don't have any water" matched nothing.
+  { pattern: "don't have water", severity: "high", action: "priority_notify" },
+  { pattern: "without water", severity: "high", action: "priority_notify" },
   { pattern: "overflowing toilet", severity: "high", action: "priority_notify" },
   { pattern: "toilet overflowing", severity: "high", action: "priority_notify" },
   { pattern: "water heater leaking", severity: "medium", action: "priority_notify" },
