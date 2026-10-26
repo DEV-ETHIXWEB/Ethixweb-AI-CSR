@@ -418,3 +418,20 @@ describe("holding for the rest of an answer", () => {
     expect(addressHoldMs("rainier avenue southwest seattle")).toBe(2500);
   });
 });
+
+// Live test, 2026-10-26: "the service address" (the caller paused, then said
+// "is nine zero one four rainier avenue south ...") was answered with
+// "Could you please provide the full address", over the rest of it.
+describe("an address announced with nothing after it is still coming", () => {
+  it.each(["the service address", "my address is", "and the service address is", "the address"])(
+    "%p",
+    (said) => {
+      expect(
+        addressStillComing(said, "What's the address where the sump pump issue is happening?"),
+      ).toBe(true);
+    },
+  );
+  it("not a question about the address", () => {
+    expect(addressStillComing("what's your address", "Can I get your name?")).toBe(false);
+  });
+});

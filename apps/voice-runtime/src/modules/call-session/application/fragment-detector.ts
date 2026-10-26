@@ -397,6 +397,9 @@ const ADDRESS_ASKED =
   /\b(address|street|house number|zip|zip code|postal code|unit number|apartment number|where (?:is|are) (?:the|your) (?:home|house|property))\b/i;
 /** The caller announced an address in their own words. */
 const ADDRESS_ANNOUNCED = /\b(my address|address is|i live (?:at|on)|located (?:at|on)|i'?m at)\b/i;
+/** "the service address", "and my address is": the address announced, nothing of it said yet. */
+const ONLY_ANNOUNCED =
+  /^(?:(?:okay|ok|so|and|yes|yeah|um|uh|well)[\s,]+)*(?:the|my|our)\s+(?:service\s+|home\s+|house\s+|street\s+|full\s+)?address(?:\s+(?:is|would be|will be))?[\s.,]*$/i;
 /** A question about the whole address, not only the street. */
 const WHOLE_ADDRESS_ASKED = /\b(address|zip|city|postal code)\b/i;
 /** The street-type word that completes "<number> <name> <type>". */
@@ -449,6 +452,12 @@ export function addressStillComing(saidSoFar: string, lastAgentText: string): bo
   // read out, even when the caller repeats some of it.
   if (READBACK.test(lastAgentText) && CONFIRMS.test(saidSoFar)) {
     return false;
+  }
+  // Live test, 2026-10-26: "the service address", then a pause, then the
+  // address itself. Announced with nothing after it, the address is still
+  // to come.
+  if (ONLY_ANNOUNCED.test(saidSoFar.trim())) {
+    return true;
   }
   const words = saidSoFar
     .toLowerCase()
