@@ -5130,3 +5130,56 @@ describe('real-model QA reask-13: "I already gave you my address"', () => {
     expect(sent).toContain("you do not have it. Do not say you have it");
   });
 });
+
+describe("real-model QA close-03: a goodbye", () => {
+  const at = new Date().toISOString();
+  const turn = (speaker: "caller" | "agent", text: string, turnIndex: number) => ({
+    turnIndex,
+    speaker,
+    text,
+    confidence: null,
+    offsetMs: 0,
+    at,
+  });
+  async function sentFor(transcript: string, seed: Record<string, unknown>) {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation(seed));
+    const aiProvider = new FakeAiProvider();
+    const { useCase } = buildUseCase({ aiProvider, repository });
+    await useCase.execute(baseCommand({ transcript }));
+    return aiProvider.requests[0]?.messages.filter((m) => m.role === "user").at(-1)?.content ?? "";
+  }
+
+  it("with nothing saved, never says they are all set", async () => {
+    const sent = await sentFor("That's all I needed, thanks.", {
+      transcript: [turn("caller", "Toilet runs.", 0), turn("agent", "What's your name?", 1)],
+    });
+    expect(sent).toContain("their request is NOT saved");
+  });
+
+  it("with the request saved, a short goodbye", async () => {
+    const sent = await sentFor("Okay thanks, bye.", { leadId: "lead-1" });
+    expect(sent).toContain("their request is saved");
+  });
+
+  it("not when the caller has given a name and address: the save still happens", async () => {
+    const sent = await sentFor("Okay thanks, bye.", {
+      transcript: [
+        turn("caller", "my sink is leaking, my name is Tom Harris", 0),
+        turn("agent", "What's the address?", 1),
+        turn("caller", "1200 pine street seattle 98101", 2),
+        turn(
+          "agent",
+          "Let me make sure I have it right: Tom, T-O-M, Harris, H-A-R-R-I-S, at 1-2-oh-oh Pine Street, ZIP 9-8-1-oh-1. Is that right?",
+          3,
+        ),
+      ],
+    });
+    expect(sent).not.toContain("NOT saved");
+  });
+
+  it('not for "yes, that\'s all correct"', async () => {
+    const sent = await sentFor("Yes, that's all correct.", {});
+    expect(sent).not.toContain("wrapping up");
+  });
+});

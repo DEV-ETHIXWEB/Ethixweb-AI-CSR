@@ -420,7 +420,13 @@ const UNIVERSAL: Check[] = [
       if (ctx.allowSilence) {
         return null;
       }
-      const blank = ctx.turns.find((t) => t.agent.trim().length === 0);
+      // A lone filler ("uh", "um") is a caller still talking: saying nothing
+      // is the designed reply there (TRAILING_FRAGMENT_NOTE), and on a real
+      // call voice-runtime holds it and joins it to what follows.
+      const blank = ctx.turns.find(
+        (t) =>
+          t.agent.trim().length === 0 && !/^\s*(uh+|um+|er+|hmm+|mm+)[.,!?]*\s*$/i.test(t.caller),
+      );
       return blank ? `empty response to "${blank.caller}"` : null;
     },
   },

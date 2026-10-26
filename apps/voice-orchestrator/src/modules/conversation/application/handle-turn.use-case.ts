@@ -11,6 +11,7 @@ import {
   isHardEmergency,
   LEAD_NEEDS_CUSTOMER_DETAILS_ERROR,
   leadProblemBlockedReason,
+  problemDescribed,
   saveBlockedReason,
   shouldNudgeForCallbackNumber,
   zipMissingNote,
@@ -707,8 +708,22 @@ export class HandleTurnUseCase {
     const addressNotHeard = !notes.street && SAYS_ADDRESS_GIVEN.test(command.transcript);
     // See IN_DANGER. Above every other note: nothing else matters this turn.
     const inDanger = IN_DANGER.test(command.transcript);
+    // See UNSAVED_GOODBYE_NOTE. Only a short goodbye with no new problem in
+    // it: "never mind, my sink is also leaking" is not one.
+    const goodbye =
+      !inDanger &&
+      !isTrailingOff &&
+      looksLikeSignOff(command.transcript) &&
+      command.transcript.trim().split(/\s+/).length <= 10 &&
+      !problemDescribed([command.transcript]) &&
+      // "yes, that's all correct" answers a read-back.
+      !/\b(right|correct)\b/i.test(command.transcript) &&
+      // A caller who has given a name and an address is finished by the
+      // closing confirmation and the save, never sent off to call back.
+      (conversation.leadId !== null || !((notes.statedName || notes.spelledName) && notes.street));
     const directiveFired =
       inDanger ||
+      goodbye ||
       isTrailingOff ||
       wantsItAgain ||
       pendingReadback !== null ||
@@ -725,6 +740,8 @@ export class HandleTurnUseCase {
       annotatedTranscript = `${IN_DANGER_NOTE} ${annotatedTranscript}`;
     } else if (isTrailingOff) {
       annotatedTranscript = `${TRAILING_FRAGMENT_NOTE} ${annotatedTranscript}`;
+    } else if (goodbye) {
+      annotatedTranscript = `${conversation.leadId ? SAVED_GOODBYE_NOTE : UNSAVED_GOODBYE_NOTE} ${annotatedTranscript}`;
     } else if (wantsItAgain) {
       annotatedTranscript = `${REPEAT_NOTE} ${annotatedTranscript}`;
     } else if (pendingReadback) {
@@ -2799,6 +2816,21 @@ const ADDRESS_NOT_HEARD_NOTE =
   "[The caller says they already gave the address, but you do not have it. Do not say you " +
   "have it. Your whole reply: a short sorry that you didn't catch it, then ask for the street " +
   "address once, the house number and street name.]";
+
+/**
+ * Real-model QA close-03 / close-01: "That's all I needed, thanks." after
+ * only "toilet runs" got "You're all set; the team will call you to set up a
+ * time. Anything else I can help with?" -- nothing was saved, so that was a
+ * false promise; and a goodbye was answered with a question.
+ */
+const UNSAVED_GOODBYE_NOTE =
+  "[The caller is wrapping up, but their request is NOT saved: you do not have their name and " +
+  "address. Do not say they are all set or that the team will call. Your whole reply: thank " +
+  "them, say they can call back any time with their name and address to get someone out, and " +
+  "say goodbye. Ask nothing.]";
+const SAVED_GOODBYE_NOTE =
+  "[The caller is saying goodbye and their request is saved. Your whole reply: a short, warm " +
+  "goodbye. Ask nothing.]";
 
 const NAME_MISSING_NOTE =
   "[System note: you still do not have this caller's name and have not asked for it. " +
