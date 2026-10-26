@@ -4,6 +4,8 @@ import {
   coveredZipsFromPrompt,
   detectServiceAreaFromTranscript,
   namesAnotherState,
+  outsidePlacesFromPrompt,
+  namesPlaceOutside,
 } from "./service-area";
 
 // The live knowledge row's shape, abbreviated: a real ZIP list plus the
@@ -188,5 +190,31 @@ describe("namesAnotherState (2026-10-26, real-model QA svc-07 and svc-09)", () =
     "we're in seattle washington",
   ])("%p is not", (said) => {
     expect(namesAnotherState(said)).toBeNull();
+  });
+});
+
+describe("outsidePlacesFromPrompt / namesPlaceOutside (real-model QA svc-08)", () => {
+  const prompt =
+    "ONLY treat a caller as outside the area when their location is plainly a different region: another state entirely, or a Washington area well away from King and Pierce such as Spokane, Yakima, Vancouver WA, Bellingham, Olympia or Everett. Never tell a caller which county they are in.";
+
+  it("reads the business's own list", () => {
+    expect(outsidePlacesFromPrompt(prompt)).toEqual([
+      "spokane",
+      "yakima",
+      "vancouver",
+      "bellingham",
+      "olympia",
+      "everett",
+    ]);
+    expect(outsidePlacesFromPrompt("no such sentence here")).toEqual([]);
+  });
+
+  it.each([
+    ["I'm up in Everett, 98201.", "everett"],
+    ["we're in spokane", "spokane"],
+    ["I'm in Carnation", null],
+    ["my sister lives in everett", null],
+  ])("%p -> %p", (said, place) => {
+    expect(namesPlaceOutside(said, outsidePlacesFromPrompt(prompt))).toBe(place);
   });
 });

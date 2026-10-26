@@ -280,6 +280,40 @@ const US_STATE_NAMES =
 const IN_A_STATE =
   /\b(?:i'?m|i am|we'?re|we are|calling|located|live|living|based|house is|home is)\s+(?:in|from|out of|at)\s+(?:[a-z.]+[\s,]+){0,3}?(alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|west virginia|wisconsin|wyoming)\b/i;
 
+/**
+ * The places the business's own service-area text names as plainly outside
+ * ("ONLY treat a caller as outside ... a Washington area well away from King
+ * and Pierce such as Spokane, Yakima, Vancouver WA, Bellingham, Olympia or
+ * Everett"). Read from the prompt, so each business's own list decides.
+ */
+export function outsidePlacesFromPrompt(systemPrompt: string): string[] {
+  const list = /\bwell away from[^.]*?\bsuch as ([^.]+)\./i.exec(systemPrompt)?.[1];
+  if (!list) {
+    return [];
+  }
+  return list
+    .split(/,|\bor\b|\band\b/i)
+    .map((place) =>
+      place
+        .replace(/\bwa\b/i, "")
+        .trim()
+        .toLowerCase(),
+    )
+    .filter((place) => /^[a-z][a-z ]{2,}$/.test(place));
+}
+
+/** The caller says they are in one of `places` ("I'm up in Everett"). */
+export function namesPlaceOutside(transcript: string, places: readonly string[]): string | null {
+  const lower = transcript.toLowerCase();
+  return (
+    places.find((place) =>
+      new RegExp(
+        `\\b(?:i'?m|i am|we'?re|we are|calling|located|live|living|based|house is|home is)\\s+(?:up |down |out |over )?(?:in|from|at)\\s+${place}\\b`,
+      ).test(lower),
+    ) ?? null
+  );
+}
+
 export function namesAnotherState(transcript: string): string | null {
   return IN_A_STATE.exec(transcript)?.[1]?.toLowerCase() ?? null;
 }

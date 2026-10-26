@@ -26,6 +26,8 @@ import {
   coveredZipsFromPrompt,
   detectServiceAreaFromTranscript,
   namesAnotherState,
+  namesPlaceOutside,
+  outsidePlacesFromPrompt,
 } from "../domain/service-area";
 import { Inject, Injectable } from "@nestjs/common";
 import type { IdempotencyStore, StructuredLogger } from "@ethixweb/shared-kernel";
@@ -489,17 +491,25 @@ export class HandleTurnUseCase {
     const coveredZips = coveredZipsFromPrompt(conversation.systemPrompt);
     const zipBeforeThisTurn = conversation.lastServiceAreaCheck?.zip ?? null;
     const spokenZip = detectServiceAreaFromTranscript(command.transcript, coveredZips);
+    // 2026-10-26, real-model QA svc-08: "I'm up in Everett, 98201". 98201
+    // shares the first three digits of a covered ZIP, so it was handed to
+    // Grace as "IS within the service area", though the business's own rules
+    // name Everett as outside. A place the rules call outside wins over a
+    // nearby-looking ZIP. (A ZIP alone keeps the lenient reading: a caller
+    // in Carnation was once turned away without it.)
+    const otherState =
+      namesAnotherState(command.transcript) ??
+      namesPlaceOutside(command.transcript, outsidePlacesFromPrompt(conversation.systemPrompt));
     if (spokenZip) {
       conversation.lastServiceAreaCheck = {
         zip: spokenZip.zip,
-        inServiceArea: spokenZip.verdict !== "outside",
+        inServiceArea: spokenZip.verdict !== "outside" && otherState === null,
       };
     }
     // 2026-10-26, real-model QA (svc-06, svc-07): told only "zip 90210 is
     // NOT within the service area", Grace went on with the intake; and
     // "I'm calling from Portland, Oregon" was never checked at all. The turn
     // a caller is first found to be outside the area says what to do.
-    const otherState = namesAnotherState(command.transcript);
     const newlyOutside =
       (spokenZip?.verdict === "outside" && spokenZip.zip !== zipBeforeThisTurn) ||
       otherState !== null;
