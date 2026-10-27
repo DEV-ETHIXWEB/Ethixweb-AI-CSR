@@ -365,6 +365,8 @@ const MAX_SILENCE_CHECK_IN_DEFERRALS = 4;
 
 /** How long after the last heard words a turn must have started; see rearmIfNoTurnFollows. */
 const UNANSWERED_SPEECH_REARM_MS = 5000;
+/** Said by rearmIfNoTurnFollows when words were heard and none of them became a turn. */
+const DID_NOT_CATCH_PHRASE = "[softly] Sorry, I didn't catch that.";
 
 /** See holdWhileSoundUnconfirmed. */
 const FIRST_WORDS_HOLD_MAX_MS = 1200;
@@ -466,6 +468,8 @@ export class CallSessionOrchestrator {
   private lastFinalTranscriptAt: number | null = null;
   /** Counts finished caller utterances; see rearmIfNoTurnFollows. */
   private finalTranscriptCount = 0;
+  /** `finalTranscriptCount` when "Sorry, I didn't catch that" was last said; see rearmIfNoTurnFollows. */
+  private didNotCatchAtFinalCount = -1;
   /** When the caller first heard the reply now playing; see PATIENT_HOLD_MS. */
   private replyAudioStartedAt = 0;
   /** How many replies this caller has talked over in their first seconds; see PATIENT_HOLD_MS. */
@@ -1548,10 +1552,39 @@ export class CallSessionOrchestrator {
       ) {
         return;
       }
-      this.logger.info("words were heard but no turn followed — silence check-in armed again", {
-        conversationId: this.conversationId,
-      });
-      this.armSilenceCheckIn(sink);
+      // 2026-10-27, Prateek's test call: after the address read-back he said
+      // a short word, Deepgram took it back (an empty final), and Grace said
+      // nothing for twenty seconds until "Take your time. I'm still here."
+      // Something was said and not understood, so she says so now, once per
+      // stretch without a turn so noise on the line cannot repeat it.
+      const callerActive = Date.now() - this.lastCallerActivityAt < CALLER_ACTIVE_GRACE_MS;
+      if (callerActive || this.didNotCatchAtFinalCount === this.finalTranscriptCount) {
+        this.logger.info("words were heard but no turn followed — silence check-in armed again", {
+          conversationId: this.conversationId,
+        });
+        this.armSilenceCheckIn(sink);
+        return;
+      }
+      this.logger.info(
+        "words were heard but no turn followed — asking the caller to say it again",
+        {
+          conversationId: this.conversationId,
+        },
+      );
+      this.didNotCatchAtFinalCount = this.finalTranscriptCount;
+      this.checkInSpeaking = true;
+      this.speak(DID_NOT_CATCH_PHRASE, sink)
+        .catch((error: unknown) => {
+          this.logger.warn("did-not-catch TTS failed", {
+            conversationId: this.conversationId,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        })
+        .finally(() => {
+          this.checkInSpeaking = false;
+          this.checkInPlaybackUntil = Date.now() + this.millisUntilPlaybackEnds();
+          this.armSilenceCheckIn(sink);
+        });
     }, UNANSWERED_SPEECH_REARM_MS);
   }
 

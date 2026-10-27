@@ -304,6 +304,34 @@ describe("CallSessionOrchestrator", () => {
       }
     });
 
+    /**
+     * 2026-10-27, Prateek's test call: after the address read-back his short
+     * answer was recognized, then taken back by Deepgram (an empty final), and
+     * Grace said nothing for twenty seconds.
+     */
+    it("says it didn't catch words that never became a turn, once, instead of waiting out the check-in", async () => {
+      jest.useFakeTimers();
+      process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = "15000";
+      try {
+        const { orchestrator, stt, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+        await orchestrator.onCallStart(baseParams(), sink);
+        await jest.advanceTimersByTimeAsync(0);
+        const session = stt.sessions[0]!;
+        session.emitInterimSpeech("yes that");
+        await jest.advanceTimersByTimeAsync(5500);
+        expect(tts.synthesizeCalls.at(-1)).toBe("Sorry, I didn't catch that.");
+
+        const said = tts.synthesizeCalls.length;
+        session.emitInterimSpeech("hmm the");
+        await jest.advanceTimersByTimeAsync(5500);
+        expect(tts.synthesizeCalls.length).toBe(said);
+        await orchestrator.onCallEnd(baseParams(), "caller_hangup");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it("a backchannel before the reply starts does not hold it back", async () => {
       jest.useFakeTimers();
       process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = "10000";
