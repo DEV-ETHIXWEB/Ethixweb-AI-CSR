@@ -178,6 +178,26 @@ describe("saveBlockedReason (client feedback: no submitting before name and addr
       });
       expect(result?.error).toBe("phone_differs_from_what_caller_said");
       expect(result?.detail).toContain("206-555-0184");
+      expect(result?.detail).toContain("read it back to them");
+    });
+
+    it("does not ask for the number to be read back again when it already was (Round 4 script 10)", () => {
+      const result = saveBlockedReason({
+        ...withAddress,
+        agentTexts: [
+          "What's your address?",
+          "So that's 1200 Pine Street?",
+          "And is 2-0-6-5-5-5-0-1-8-4 the best number to reach you?",
+        ],
+        callerTexts: [
+          "it's 1200 Pine Street",
+          "call me on two zero six five five five zero one eight four",
+        ],
+        phone: "+15554273090",
+      });
+      expect(result?.error).toBe("phone_differs_from_what_caller_said");
+      expect(result?.detail).toContain("+12065550184");
+      expect(result?.detail).toContain("Do not read it back");
     });
 
     it("accepts the save when the phone passed matches the number the caller said", () => {

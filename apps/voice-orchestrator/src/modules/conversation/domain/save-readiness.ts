@@ -173,10 +173,18 @@ export function spokenPhoneDigits(callerTexts: readonly string[]): string | null
 const SOMEONE_ELSES_NUMBER =
   /\b(?:(?:his|her|their|the tenant'?s|tenant'?s|my tenant'?s|the landlord'?s|my (?:wife|husband|son|daughter|mom|mother|dad|father|neighbou?r|partner)'?s)\s+(?:cell\s+|phone\s+|contact\s+)?number(?:\s+is)?|(?:reach|call|text)\s+(?:him|her|them)\s+(?:at|on))\s*$/i;
 
-export function phoneMismatchError(spoken: string) {
+/**
+ * `readBack`: Grace has already said the number. The client's Round 4 script
+ * 10 in the QA suite: she read it back, the caller said yes, the save went
+ * out with the caller ID, and "read it back to them" here made her ask a
+ * second time instead of saving.
+ */
+export function phoneMismatchError(spoken: string, readBack = false) {
   return {
     error: "phone_differs_from_what_caller_said",
-    detail: `The caller gave the number ${spoken.slice(0, 3)}-${spoken.slice(3, 6)}-${spoken.slice(6)}. Use exactly that number as the phone (E.164, +1${spoken}), not the caller ID, and read it back to them. Do not ask for anything else again.`,
+    detail: readBack
+      ? `The caller gave the number ${spoken.slice(0, 3)}-${spoken.slice(3, 6)}-${spoken.slice(6)} and you already read it back. Save again now with exactly that number as the phone (E.164, +1${spoken}), not the caller ID. Do not read it back or ask about it again.`
+      : `The caller gave the number ${spoken.slice(0, 3)}-${spoken.slice(3, 6)}-${spoken.slice(6)}. Use exactly that number as the phone (E.164, +1${spoken}), not the caller ID, and read it back to them. Do not ask for anything else again.`,
   } as const;
 }
 
@@ -224,7 +232,10 @@ export function saveBlockedReason(args: Args) {
   if (spoken !== null && typeof phone === "string") {
     const passed = phone.replace(/\D/g, "").slice(-10);
     if (passed !== spoken) {
-      return phoneMismatchError(spoken);
+      return phoneMismatchError(
+        spoken,
+        agentTexts.some((text) => saysDigits(text, spoken)),
+      );
     }
   }
   // QA 2026-10-23 (feedback-15): "please call me on 206 555 0147 instead",
