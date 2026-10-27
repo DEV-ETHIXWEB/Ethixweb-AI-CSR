@@ -898,6 +898,11 @@ const NOT_A_NAME_EXTRA = new Set([
   "add",
   "huge",
   "old",
+  // 2026-10-27, Prateek's test calls: "it's full" and "it's sometime soon"
+  // became the names Full and Sometime.
+  "full",
+  "sometime",
+  "soon",
   "fine",
   "good",
   "sorry",
@@ -1285,6 +1290,19 @@ function statedNameAt(
         const second = match[2] ?? "";
         const firstEnd = second ? at + lower.slice(at, end - second.length).trimEnd().length : end;
         if (LOOSE_CUE.test(match[0]) && NOT_AFTER_A_NAME.test(lower.slice(firstEnd))) {
+          continue;
+        }
+        // 2026-10-27, Prateek's test calls: "the drain is not draining and
+        // it's full" and "no rush at all but just tell me it's sometime soon"
+        // gave the names Full and Sometime. "it's" joined on by one of these
+        // words describes something; "well it's trevor" and "hey it's maria"
+        // still introduce a name.
+        if (
+          /^it(?:'?s| is)\b/.test(match[0]) &&
+          /\b(?:and|but|me|that|because|cause|if|when|since|think|guess|hope)\s+$/.test(
+            lower.slice(0, at),
+          )
+        ) {
           continue;
         }
         // 2026-10-23, live call: correcting the street read back to him, the

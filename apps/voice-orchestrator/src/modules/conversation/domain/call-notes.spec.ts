@@ -1148,3 +1148,20 @@ describe("nameRepeatedNote", () => {
     expect(nameRepeatedNote(["yash patel", "yash patel"], ["What's the address?"])).toBeNull();
   });
 });
+
+/** 2026-10-27, Prateek's test calls: Grace called him "Full" and "Sometime". */
+describe("it's, joined on to a description, is not a name", () => {
+  it.each([
+    [
+      "hi i'm calling the order i want you guys to basically come and have a look at our basically drain it's basically not draining and it's full and it's increasing every time i flush",
+    ],
+    ["so no rush at all but just tell me it's sometime soon"],
+    ["the sink is backed up and it's gross"],
+  ])("%p", (said) => {
+    expect(buildCallNotes([said]).statedName).toBeNull();
+  });
+
+  it("an answer that starts with it's is still a name", () => {
+    expect(buildCallNotes(["yes it's pierce"]).statedName).toBe("Pierce");
+  });
+});
