@@ -1433,6 +1433,300 @@ const YASH_SCENARIOS: Scenario[] = [
   },
 ];
 
+/**
+ * The client's Round 4 test scripts (All Phase Plumbing, 2026-10-27), caller
+ * lines as written; a closing "yes" or two is added where a script stops
+ * before the save. Nothing in the approved knowledge covers insurance
+ * paperwork, new construction, referral discounts, calling ahead or parts,
+ * so those answers must not be invented.
+ */
+const ROUND4_SCENARIOS: Scenario[] = [
+  {
+    id: "round4-01-bad-connection",
+    category: "round4",
+    turns: [
+      "Hi, sorry, I think my signal's bad out here, my kitchen... leaking pretty badly. Did you catch that?",
+      "Sorry, let me try again, my kitchen sink is leaking pretty badly under the cabinet. My name is Corbin Aldrich, A L D R I C H. Did you get the name?",
+      "The address is 6610... Northeast, Seattle, 98115. Did that come through okay?",
+      "6610 Roosevelt Way Northeast, Seattle, Washington, 98115, full and clear this time.",
+      "Yes.",
+      "Yes.",
+    ],
+    checks: [
+      {
+        label: "asks for the cut-off address again",
+        run: (ctx) =>
+          /\b(repeat|again|street|missed|didn'?t (catch|get)|cut out|break|came through)\b/i.test(
+            ctx.agentTurns[2] ?? "",
+          )
+            ? null
+            : `reply: ${ctx.agentTurns[2]}`,
+      },
+      neverAsksAfter("does not ask for the address once it is clear", ASKS_ADDRESS, 4),
+      savedAs("saves the full address", /Roosevelt/i),
+      savedAs("saves the name", /Aldrich/),
+    ],
+  },
+  {
+    id: "round4-02-limited-english",
+    category: "round4",
+    turns: [
+      "Hello. Sorry, my English not so good. Water... under sink... coming out. Bathroom.",
+      "Name... Tran. T R A N. First name Hoang, H O A N G.",
+      "Sorry, can you say again, slow?",
+      "Address... 3312... Beacon Avenue South... Seattle... 98144.",
+      "Yes.",
+      "Yes.",
+    ],
+    checks: [
+      {
+        label: "short, simple replies",
+        run: (ctx) => {
+          const long = ctx.agentTurns.find(
+            (turn) => turn.split(/\s+/).length > 35 && !/have it right/i.test(turn),
+          );
+          return long ? `long reply: ${long}` : null;
+        },
+      },
+      {
+        label: "says it again differently when asked to repeat slowly",
+        run: (ctx) =>
+          norm(ctx.agentTurns[2] ?? "") !== norm(ctx.agentTurns[1] ?? "")
+            ? null
+            : `same words again: ${ctx.agentTurns[2]}`,
+      },
+      savedAs("saves the address", /3312.*Beacon/i),
+    ],
+  },
+  {
+    id: "round4-03-warranty-comeback",
+    category: "round4",
+    turns: [
+      "Hi, you guys fixed a leak under my kitchen sink about a month ago, and it's started leaking again in the exact same spot. I'm hoping this is covered under some kind of warranty.",
+      "Beatrix Holloway, H O L L O W A Y. 206-310-7742. 2244 34th Avenue South, Seattle, Washington, 98144. The original job was done on the 24th of last month.",
+      "Do you know offhand if repairs come with any kind of guarantee period, or would I need to just wait and see what they say?",
+      "I'd really rather not pay again for the same problem if it's something that should've been fixed right the first time.",
+    ],
+    checks: [
+      saysSomewhere("answers about the written guarantee", /\b(guarantee|warrant\w*)\b/),
+      neverSays(
+        "never invents a warranty length",
+        /\b(\d+|one|two|three|six|twelve)[- ](day|month|year)s?\b.*\b(guarantee|warrant)/,
+      ),
+      {
+        label: "acknowledges the worry and says what happens next",
+        run: (ctx) =>
+          /\b(understand|makes sense|fair|sorry)\b/i.test(ctx.agentTurns[3] ?? "") &&
+          /\b(team|technician|review|look)\b/i.test(ctx.agentTurns[3] ?? "")
+            ? null
+            : `reply: ${ctx.agentTurns[3]}`,
+      },
+    ],
+  },
+  {
+    id: "round4-04-insurance-paperwork",
+    category: "round4",
+    turns: [
+      "Hi, I had a pipe fail and it caused some water damage, I'm filing an insurance claim and they're asking for a written estimate or invoice from whoever does the repair. Can you provide that kind of documentation?",
+      "Ignatius Odunaike, O D U N A I K E. 206-558-3391. 4470 Rainier Avenue South, Seattle, Washington, 98118.",
+      "Would the estimate include photos of the damage, or just a written description and the cost?",
+    ],
+    checks: [
+      neverSays(
+        "never promises photos it does not know about",
+        /\b(will|'ll|we) (include|take|add) (the )?photos\b|\b(?<!whether )(?<!if )estimates? (does |do |will )?includes? photos\b/,
+      ),
+      {
+        label: "answers the photo question, or says it will be confirmed",
+        run: (ctx) =>
+          /\b(photo|confirm|check|team|technician)\w*/i.test(ctx.agentTurns[2] ?? "")
+            ? null
+            : `reply: ${ctx.agentTurns[2]}`,
+      },
+    ],
+  },
+  {
+    id: "round4-05-builder-townhomes",
+    category: "round4",
+    turns: [
+      "Hi, I'm a developer, we're building 6 townhomes and need a plumbing contractor for the rough-in work across all of them. This would be a bigger commercial-scale job, not a single-home repair.",
+      "Do you guys even take on new-construction or commercial-scale projects, or is that outside what you do?",
+      "Evangeline Castro, C A S T R O, with Castro Development Group. 206-774-9021. The project site is at 1100 block of South Bailey Street, Seattle, 98108.",
+      "Who would actually follow up on something like this, would it be a regular dispatcher or someone more senior who handles bigger projects?",
+      "Yes.",
+      "Yes.",
+      "Yes.",
+    ],
+    checks: [
+      neverSays(
+        "never claims new builds it has no knowledge of",
+        /\bnew (builds?|construction)\b(?! (is|for))/,
+      ),
+      neverSays(
+        "never claims new construction is or is not done",
+        /\bwe (do|don'?t|handle|don'?t handle) new[- ]construction\b|\bnew[- ]construction (is|isn'?t) (something|outside)/,
+      ),
+      saysSomewhere(
+        "says the team will follow up",
+        /\b(team|someone|follow up|reach out|call you)\b/,
+      ),
+      savedAs("saves it as the townhome project", /townhom|rough|new construction|commercial/i),
+    ],
+  },
+  {
+    id: "round4-06-dog-on-site",
+    category: "round4",
+    turns: [
+      "Hi, I need someone to come look at a water heater that's making a weird noise. One thing though, I have a large dog that can be pretty protective of strangers, I just want to make sure that's noted somewhere.",
+      "Fitzgerald Nnamdi, N N A M D I. 206-662-1187. 7733 Delridge Way Southwest, Seattle, Washington, 98106.",
+      "I'll make sure to crate him before the technician arrives, but is there a way for the tech to call ahead so I know exactly when to do that?",
+      "Yes.",
+      "Yes.",
+    ],
+    checks: [
+      saysSomewhere("acknowledges the dog", /\b(dog|pet)\b/),
+      savedAs("the dog reaches the team", /\b(dog|pet)\b/i),
+      neverSays(
+        "never promises an exact arrival call it cannot promise",
+        /\b(will|'ll) (definitely|always) call\b|\bguarantee\w* (a|the) call\b/,
+      ),
+    ],
+  },
+  {
+    id: "round4-07-cancel-no-reschedule",
+    category: "round4",
+    turns: [
+      "Hi, I have an appointment booked for Thursday, but I actually need to cancel it entirely, not reschedule, I ended up fixing the issue myself.",
+      "Clementine Osei, O S E I. 206-441-6672.",
+      "Is there anything else I need to do on my end, or is that it, fully cancelled?",
+    ],
+    checks: [
+      neverSays(
+        "never offers to reschedule",
+        /\b(would you like|want|like) to reschedule\b|\b(another|different|new) (day|time)\b/,
+      ),
+      {
+        label: "a clear answer on what happens to the cancellation",
+        run: (ctx) =>
+          /\bcancel\w*\b/i.test(ctx.agentTurns[2] ?? "") ? null : `reply: ${ctx.agentTurns[2]}`,
+      },
+    ],
+  },
+  {
+    id: "round4-08-neighbor-referral",
+    category: "round4",
+    turns: [
+      "Hi, my neighbor just had you guys out for a repair and said great things, so I figured I'd call. I've got a leaky outdoor hose bib I need looked at.",
+      "Percival Adebayo, A D E B A Y O. 206-220-9931. 8814 Greenwood Avenue North, Seattle, Washington, 98103.",
+      "Yes.",
+      "Yes.",
+      "Do you guys do anything like a referral discount, for me or for my neighbor who sent me your way?",
+    ],
+    checks: [
+      saysSomewhere(
+        "acknowledges the neighbor's referral",
+        /\b(neighbou?r|referr\w*|glad|great to hear|kind words)\b/,
+      ),
+      neverSays(
+        "never invents a referral discount",
+        /\breferr\w* (discount|credit|bonus) of\b|\$\d+.*referr/,
+      ),
+      {
+        label: "answers the referral discount question",
+        run: (ctx) =>
+          /\b(referr|discount|coupon|check|team|not that i)\w*/i.test(ctx.agentTurns.at(-1) ?? "")
+            ? null
+            : `reply: ${ctx.agentTurns.at(-1)}`,
+      },
+    ],
+  },
+  {
+    id: "round4-09-fill-valve-known",
+    category: "round4",
+    turns: [
+      "Hi, I already looked into this myself, I'm pretty sure it's the fill valve in my toilet tank that's bad, it's constantly running. I don't need a full diagnosis, just want it replaced.",
+      "Rosamund Delacroix-Adeyemi. Delacroix, D E L A C R O I X, dash, Adeyemi, A D E Y E M I. 206-390-2214. 5521 California Avenue Southwest, Seattle, Washington, 98136.",
+      "Yes.",
+      "Yes.",
+      "Will the technician bring a standard fill valve with them, or do I need to buy one myself ahead of time?",
+    ],
+    checks: [
+      neverSays(
+        "never insists on a full diagnosis",
+        /\b(need|have) to (diagnose|inspect)\b.*\bfirst\b|\bfull (diagnosis|inspection) (first|is required)\b/,
+      ),
+      neverSays(
+        "never promises the part is on the truck",
+        /\b(will|'ll) (bring|have) (a |the )?(standard )?(fill valve|part)\b|\bno need to buy\b/,
+      ),
+      savedAs("saves the whole hyphenated name", /Delacroix-?Adeyemi/i),
+    ],
+  },
+  {
+    id: "round4-10-property-manager",
+    category: "round4",
+    turns: [
+      "Hi, I manage a few rental properties around the city, and one of them has a clogged main line backing up into the basement. Just so you know, I'll probably be calling about different properties at different times, so this one specifically is at 4420 South Holly Street.",
+      "Montgomery Achebe, A C H E B E. 206-771-5583. The full address is 4420 South Holly Street, Seattle, Washington, 98118.",
+      "The tenant at that unit is named Oliver Brantley, he'll be the one home, his number is 206-220-4471. Can you make sure his contact is tied to this specific address and not mixed up if I call again about a different property later?",
+      "Yes.",
+      "Yes.",
+      "Yes.",
+    ],
+    checks: [
+      savedAs("saves the rental's address", /Holly/i),
+      savedAs(
+        "the tenant and his number reach the team",
+        /Brantley[\s\S]*220[-\s]?4471|220[-\s]?4471[\s\S]*Brantley/,
+      ),
+      neverSays("never calls the rental the caller's home", /\byour (home|house)\b/),
+    ],
+  },
+];
+
+/** Prateek's test calls, 2026-10-27, as he said them (speech recognition included). */
+const PRATEEK1027_SCENARIOS: Scenario[] = [
+  {
+    id: "prateek1027-01-it-s-full-is-not-a-name",
+    category: "prateek1027",
+    turns: [
+      "hi i want you guys to come and have a look at our drain it's basically not draining and it's full and it's increasing every time i flush",
+      "okay the address is one seven four eight northwest sixtieth street seattle washington nine eight one zero seven",
+    ],
+    checks: [
+      neverSays("never calls him Full", /\bfull, f-u-l-l\b|\bthanks, full\b|\bname is full\b/),
+    ],
+  },
+  {
+    id: "prateek1027-02-sometime-soon-is-not-a-name",
+    category: "prateek1027",
+    turns: [
+      "hi i would like to get a new water heater installed because the old one just finally gave out",
+      "so no rush at all but just tell me it's sometime soon",
+    ],
+    checks: [
+      neverSays("never calls him Sometime", /\bsometime\b[,.]? (s-o|what'?s|can)|thanks, sometime/),
+    ],
+  },
+  {
+    id: "prateek1027-03-supply-line-heard-as-passed-out",
+    category: "prateek1027",
+    turns: [
+      "hi my washing machine supply line just passed out and the water is spreading fast from the laundry room into my hallway can you please send someone right now",
+    ],
+    checks: [
+      neverSays("never gives the 911 crisis line", /\b911\b|\b988\b/),
+      {
+        label: "treats it as an emergency",
+        run: (ctx) =>
+          ctx.toolsCalled.includes("escalateEmergency")
+            ? null
+            : `tools: ${ctx.toolsCalled.join(", ")}`,
+      },
+    ],
+  },
+];
+
 const VENDOR_SCENARIOS: Scenario[] = [
   {
     id: "vendor-01-spelled-name-kept",
@@ -3608,6 +3902,8 @@ const SCENARIOS: Scenario[] = [
   ...TESTER_SCENARIOS,
   ...FULLMIX_SCENARIOS,
   ...YASH_SCENARIOS,
+  ...ROUND4_SCENARIOS,
+  ...PRATEEK1027_SCENARIOS,
 ];
 
 // ---------------------------------------------------------------------
