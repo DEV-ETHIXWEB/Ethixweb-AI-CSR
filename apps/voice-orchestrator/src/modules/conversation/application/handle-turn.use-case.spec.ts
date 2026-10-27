@@ -5362,6 +5362,42 @@ describe("a gas leak gets the safety line first, in code", () => {
     );
     expect(later.join(" ")).not.toContain("leave the building");
   });
+
+  it("asks nothing after the safety line, even when the model does (QA 2026-10-27)", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        {
+          type: "text_delta",
+          text: "I understand, the team will treat this as urgent. Can I get your name?",
+        },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const escalate = {
+      execute: jest
+        .fn()
+        .mockResolvedValue({ isEmergency: false, action: "standard_lead", severity: "medium" }),
+    };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "escalateEmergency", handler: escalate }],
+    });
+
+    const result = await useCase.execute(
+      baseCommand({
+        transcript: "hi there's gas leaking in my apartment, it's really strong",
+        allowedTools: ["escalateEmergency"],
+      }),
+    );
+
+    expect(result.responseText).toContain("leave the building");
+    expect(result.responseText).toContain("urgent");
+    expect(result.responseText).not.toContain("?");
+  });
 });
 
 // 2026-10-26, Yash's test call: an upset caller asking for the owner heard

@@ -223,6 +223,9 @@ describe("OutputGuard tool narration (QA 2026-10-13)", () => {
     "Sewage coming up in the shower is serious, so I'm flagging this now.",
     "Saving your request now.",
     "Let me check how urgent this is.",
+    // QA 2026-10-27, Round 4 script 9, after a save gate's error.
+    "The system wants the callback number you gave, so I'll retry with that.",
+    "I'll retry that now.",
   ])("drops %p", (sentence) => {
     expect(new OutputGuard().apply(sentence)).toBe("");
   });

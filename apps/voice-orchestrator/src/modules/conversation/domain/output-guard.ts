@@ -76,7 +76,7 @@ export const SAFE_CHANGE_LINE =
   "I can't change appointments from here, but I'll pass this to the team and they'll confirm it with you.";
 
 const META_LEAK =
-  /\b(per (the|my) (instructions?|prompt|rules?|guidelines?)|according to (the|my) (instructions?|prompt|guidelines?)|the (caller|customer) (has|had|already|just|is|said|wants|signed)|already said goodbye|ended the call|the call is over|system note|as an ai\b|my (system )?prompt|no further (response|action) (is )?(needed|required|necessary)|\b(this|that|my|the next|in this) turn\b|(i'?m |i am |i'?ve |i have )(flagg|mark)(ed|ing) (this|it|that)( as| now|\b)|\bretrying\b|(i'?m|i am) (checking|looking into|looking up|pulling up) (that|this|it|your)\b|\blet me (check|look up|pull up|look into|see) (that|this|it|your|on that|how)\b|\b(saving|submitting|sending) (your|the|this) (request|info|information|details|lead)( now)?\b)/i;
+  /\b(per (the|my) (instructions?|prompt|rules?|guidelines?)|according to (the|my) (instructions?|prompt|guidelines?)|the (caller|customer) (has|had|already|just|is|said|wants|signed)|already said goodbye|ended the call|the call is over|system note|as an ai\b|my (system )?prompt|no further (response|action) (is )?(needed|required|necessary)|\b(this|that|my|the next|in this) turn\b|(i'?m |i am |i'?ve |i have )(flagg|mark)(ed|ing) (this|it|that)( as| now|\b)|\bretrying\b|\b(i'?ll|i will|let me) retry\b|\bthe system (wants|needs|says|requires|rejected|flagged|won'?t|didn'?t|is asking)\b|(i'?m|i am) (checking|looking into|looking up|pulling up) (that|this|it|your)\b|\blet me (check|look up|pull up|look into|see) (that|this|it|your|on that|how)\b|\b(saving|submitting|sending) (your|the|this) (request|info|information|details|lead)( now)?\b)/i;
 
 /**
  * QA 2026-10-13, on Claude Haiku 5.5 with thinking off: the model wrote its
@@ -177,6 +177,7 @@ function hyphenateHouseNumber(sentence: string, houseNumber: string | null): str
 
 export type GuardAction =
   | "meta_leak"
+  | "question_after_safety_line"
   | "timing_promise"
   | "change_claim"
   | "cause_claim"
@@ -496,6 +497,13 @@ export class OutputGuard {
     private readonly nameWords: readonly string[] = [],
     /** This call's phone numbers, 10 digits each — see withTheRealNumber. */
     private readonly knownPhones: readonly string[] = [],
+    /**
+     * QA 2026-10-27, Yash's gas-leak scenario: after "Please leave the
+     * building now and call the gas company from outside." the model added
+     * "Can I get your name?". A caller who smells gas is asked nothing until
+     * they are out; the gas-leak note already says so, and this enforces it.
+     */
+    private readonly noQuestions = false,
   ) {
     this.spokeAlready = alreadySpokeThisTurn;
     this.questionsThisTurn = splitSentences(alreadySaidThisTurn)
@@ -701,6 +709,10 @@ export class OutputGuard {
       }
       if (META_LEAK.test(plain) || REASONING_LEAK.test(plain)) {
         this.actions.push("meta_leak");
+        continue;
+      }
+      if (this.noQuestions && isQuestion(sentence)) {
+        this.actions.push("question_after_safety_line");
         continue;
       }
       // Back-to-back identical sentences, however short ("Good luck with it.

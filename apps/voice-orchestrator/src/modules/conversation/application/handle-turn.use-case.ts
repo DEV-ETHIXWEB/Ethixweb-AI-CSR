@@ -876,6 +876,8 @@ export class HandleTurnUseCase {
       // recognised when the street type is not in the same sentence.
       houseNumber: /^\d{3,6}$/.test(houseNumber) ? houseNumber : null,
       repeatRequested: wantsItAgain,
+      // See output-guard.ts noQuestions.
+      noQuestions: gasLeak,
       // See output-guard.ts withTheRealNumber: the number Grace reads back
       // has to be one of these, digit for digit.
       knownPhones: [
@@ -1714,6 +1716,7 @@ export class HandleTurnUseCase {
       repeatRequested: boolean;
       nameWords: readonly string[];
       knownPhones: readonly string[];
+      noQuestions?: boolean;
     },
     onChunk?: (text: string) => void,
     /** What earlier passes of this same turn already said, so a later pass cannot say it again. */
@@ -1744,6 +1747,7 @@ export class HandleTurnUseCase {
       guardFacts.repeatRequested,
       guardFacts.nameWords,
       guardFacts.knownPhones,
+      guardFacts.noQuestions ?? false,
     );
     const emit = (segment: string): void => {
       const guarded = guard.apply(segment);
