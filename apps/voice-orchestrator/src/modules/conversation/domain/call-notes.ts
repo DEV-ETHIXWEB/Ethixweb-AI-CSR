@@ -261,6 +261,30 @@ export function buildCallNotes(
     spelledFound && statedFound && statedFound.index > spelledFound.index
       ? null
       : (spelledFound?.words ?? null);
+  // The client's Round 4 script 2: "Name... Tran. T R A N. First name Hoang,
+  // H O A N G." Spellings are first-then-last unless the caller says which:
+  // the one after "first name" is the first name.
+  if (spelled?.length === 2 && spelledFound) {
+    const lower = (nameTexts[spelledFound.index] ?? "").toLowerCase();
+    const at = lower.lastIndexOf("first name");
+    const afterLabel = at < 0 ? "" : lower.slice(at).replace(/[^a-z]/g, "");
+    if (afterLabel.includes(spelled[1]!) && !afterLabel.includes(spelled[0]!)) {
+      spelled = [spelled[1]!, spelled[0]!];
+      stated = `${capitalize(spelled[0]!)} ${capitalize(spelled[1]!)}`;
+    }
+  }
+  // The client's Round 4 script 9: "Rosamund Delacroix-Adeyemi. Delacroix,
+  // D E L A C R O I X, dash, Adeyemi, A D E Y E M I." Each half of the
+  // surname spelled after its own word, and Rosamund was lost: Grace said
+  // "Thanks, Delacroix". Two spellings joined by "dash", straight after a
+  // first name, are that person's hyphenated last name.
+  if (!stated && spelled?.length === 2) {
+    const first = firstNameBeforeHyphenated(nameTexts, spelled[0]!, spelled[1]!);
+    if (first) {
+      spelled = [first, spelled.join("-")];
+      stated = `${capitalize(first)} ${spelled[1]!.split("-").map(capitalize).join("-")}`;
+    }
+  }
   // "Okafor-Bright, O K A F O R, dash, B R I G H T": the two spelled words
   // are one hyphenated last name, not a first and a last.
   const statedWords = stated?.toLowerCase().split(/\s+/) ?? [];
@@ -1498,6 +1522,26 @@ const PLACE_WORDS = new Set([
  * ("Okafor-Bright, O K A F O R, dash, B R I G H T") the letters spell its
  * first part.
  */
+/** See the Round 4 script 9 comment in buildCallNotes. */
+function firstNameBeforeHyphenated(
+  texts: readonly string[],
+  firstPart: string,
+  secondPart: string,
+): string | null {
+  const said = new RegExp(`(?:^|[^a-z'])([a-z][a-z']+)\\s+${firstPart}[\\s-]+${secondPart}\\b`);
+  for (let i = texts.length - 1; i >= 0; i -= 1) {
+    const lower = (texts[i] ?? "").toLowerCase();
+    if (!/\b(?:dash|hyphen)\b/.test(lower)) {
+      continue;
+    }
+    const first = said.exec(lower)?.[1];
+    if (first && first !== firstPart && canBeName(first) && !PLACE_WORDS.has(first)) {
+      return first;
+    }
+  }
+  return null;
+}
+
 /** The whole utterance is one word and its letters: "nguyen n g u y e n", "it's pemberton p e m p e r t o n". */
 const OWN_SPELLING =
   /^(?:(?:it'?s|its|it is|and|so|yeah|yes|my last name is|last name is|the last name is|my surname is|surname is)\s+)*([a-z][a-z'-]+)\s*,?\s+((?:[a-z][\s,]+)+[a-z])\s*[.!?]?$/;

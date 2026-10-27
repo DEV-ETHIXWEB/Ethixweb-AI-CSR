@@ -1165,3 +1165,31 @@ describe("it's, joined on to a description, is not a name", () => {
     expect(buildCallNotes(["yes it's pierce"]).statedName).toBe("Pierce");
   });
 });
+
+/** The client's Round 4 scripts 2 and 9, as speech recognition writes them. */
+describe("names from the Round 4 scripts", () => {
+  const notes = (said: string) =>
+    buildCallNotes(
+      [said],
+      [
+        { speaker: "agent", text: "Can I get your name?" },
+        { speaker: "caller", text: said },
+      ],
+    );
+
+  it.each([
+    [
+      "rosamund delacroix adeyemi delacroix d e l a c r o i x dash adeyemi a d e y e m i",
+      ["rosamund", "delacroix-adeyemi"],
+    ],
+    [
+      "Rosamund Delacroix-Adeyemi. Delacroix, D E L A C R O I X, dash, Adeyemi, A D E Y E M I.",
+      ["rosamund", "delacroix-adeyemi"],
+    ],
+    ["name tran t r a n first name hoang h o a n g", ["hoang", "tran"]],
+    ["my first name is john j o h n and last name smith s m i t h", ["john", "smith"]],
+    ["Desmond Okafor-Bright, O K A F O R, dash, B R I G H T.", ["desmond", "okafor-bright"]],
+  ])("%p", (said, expected) => {
+    expect(notes(said).spelledName).toEqual(expected);
+  });
+});
