@@ -2491,6 +2491,39 @@ describe("HandleTurnUseCase", () => {
     });
   });
 
+  it('2026-10-27, Prateek\'s test call: "the water is filling too much" mid-call is checked again', async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const escalateHandler = {
+      execute: jest.fn().mockResolvedValue({
+        isEmergency: false,
+        severity: "medium",
+        action: "standard_lead",
+        transferDestination: null,
+      }),
+    };
+    const { useCase } = buildUseCase({
+      repository,
+      registeredTools: [{ name: "escalateEmergency", handler: escalateHandler }],
+    });
+    await useCase.execute(
+      baseCommand({
+        transcript: "my washing machine supply line just passed out",
+        idempotencyKey: "turn-1",
+        allowedTools: ["escalateEmergency"],
+      }),
+    );
+    await useCase.execute(
+      baseCommand({
+        transcript: "yes i need help right now by the way and the water is filling too much",
+        idempotencyKey: "turn-2",
+        allowedTools: ["escalateEmergency"],
+      }),
+    );
+
+    expect(escalateHandler.execute).toHaveBeenCalledTimes(2);
+  });
+
   /**
    * Found forensically reviewing a SECOND real call, minutes after the
    * caller separately, live, complained about being talked over: rapid
@@ -5141,14 +5174,30 @@ describe("2026-10-25, the client's test call: a caller in danger", () => {
     expect(aiProvider.requests).toHaveLength(0);
   });
 
-  it("not for ordinary plumbing words", async () => {
+  it("still for a person who passed out", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const { useCase } = buildUseCase({ repository });
+
+    const result = await useCase.execute(baseCommand({ transcript: "my husband just passed out" }));
+
+    expect(result.responseText).toContain("call 911");
+  });
+
+  it.each([
+    "the pipe is bleeding water everywhere",
+    // 2026-10-27, Prateek's call: "burst" heard as "passed out".
+    "hi my washing machine supply line just passed out and the water is spreading fast from the laundry room into my hallway",
+  ])("not for ordinary plumbing words: %p", async (said) => {
     const repository = new FakeConversationRepository();
     repository.seed(baseConversation());
     const aiProvider = new FakeAiProvider();
     const { useCase } = buildUseCase({ aiProvider, repository });
 
-    await useCase.execute(baseCommand({ transcript: "the pipe is bleeding water everywhere" }));
+    const result = await useCase.execute(baseCommand({ transcript: said }));
 
+    expect(result.responseText).not.toContain("911");
+    expect(aiProvider.requests.length).toBeGreaterThan(0);
     expect(
       aiProvider.requests[0]?.messages.filter((m) => m.role === "user").at(-1)?.content ?? "",
     ).not.toContain("911");

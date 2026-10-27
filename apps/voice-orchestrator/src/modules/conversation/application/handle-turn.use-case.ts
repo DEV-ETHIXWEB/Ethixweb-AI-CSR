@@ -2740,6 +2740,9 @@ function looksEmergencyAdjacent(transcript: string): boolean {
     "pouring",
     "gushing",
     "spraying",
+    // 2026-10-27, Prateek's calls; see core-api's default rules.
+    "spreading",
+    "filling",
     // 2026-10-23: handled like a gas smell (see core-api's default rules).
     "burning",
     "electrical smell",
@@ -2923,8 +2926,11 @@ const NAME_NUDGE_AFTER_CALLER_TURNS = 3;
  * issue. Whether or not it is real, the one right reply is the same: get
  * them to emergency help, and nothing else.
  */
+// 2026-10-27, Prateek's test call: "my washing machine supply line just
+// burst" was heard as "... supply line just passed out" and got the 911 line.
+// "passed out" right after a plumbing part is a mishearing, not a person.
 const IN_DANGER =
-  /\b(suicid\w*|kill(?:ing)? myself|end my life|(?:shot|shoot|shooting|cut|cutting|hurt|hurting) myself|overdos\w*|i(?:'m| am) bleeding|bleeding (?:a lot|badly|everywhere)|can'?t breathe|not breathing|heart attack|unconscious|passed out|stroke)\b/i;
+  /\b(suicid\w*|kill(?:ing)? myself|end my life|(?:shot|shoot|shooting|cut|cutting|hurt|hurting) myself|overdos\w*|i(?:'m| am) bleeding|bleeding (?:a lot|badly|everywhere)|can'?t breathe|not breathing|heart attack|unconscious|(?<!\b(?:line|lines|pipe|pipes|hose|valve|heater|tank|machine|pump|faucet|toilet|sink|main|fitting|it)\s+(?:just\s+|has\s+|had\s+)?)passed out|stroke)\b/i;
 const IN_DANGER_LINE =
   "If you or anyone there is in danger, please hang up and call 911 right now. You can also " +
   "call or text 988, the crisis line, any time.";
