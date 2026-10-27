@@ -28,7 +28,6 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { InMemoryIdempotencyStore } from "@ethixweb/shared-kernel";
 import { AnthropicAdapter } from "../src/modules/ai-provider/infrastructure/anthropic.adapter";
-import { OpenAiAdapter } from "../src/modules/ai-provider/infrastructure/openai.adapter";
 import { HandleTurnUseCase } from "../src/modules/conversation/application/handle-turn.use-case";
 import { FakeConversationRepository } from "../src/modules/conversation/application/__fakes__/fake-conversation-repository";
 import { FakeEventBus } from "../src/modules/conversation/application/__fakes__/fake-event-bus";
@@ -82,21 +81,17 @@ loadDotEnvIfPresent(join(__dirname, "..", ".env"));
 const SMALL_RUN_ON_PRODUCTION_KEY = process.env["QA_ALLOW_PRODUCTION_KEY"] === "1";
 const PRODUCTION_KEY_SCENARIO_CAP = 25;
 /**
- * 2026-10-23: production runs on OpenAI (DEFAULT_LLM_MODEL=gpt-4o-mini,
- * AI_PROVIDER_FALLBACK_ORDER=openai), so QA that only ever ran on Claude was
- * testing a different model from the one callers talk to. QA_PROVIDER=openai
- * runs the same scenarios on OpenAI, under the same production-key rules:
- * the live line shares that key too.
+ * 2026-10-27: testing and training run on Anthropic only. The OpenAI key is
+ * reserved for the client's live line (DEFAULT_LLM_MODEL=gpt-4o-mini); QA on
+ * it ran out its credits on 2026-10-26 and took the line down.
  */
-const PROVIDER = process.env["QA_PROVIDER"] === "openai" ? "openai" : "anthropic";
-const apiKey =
-  PROVIDER === "openai"
-    ? SMALL_RUN_ON_PRODUCTION_KEY
-      ? process.env["OPENAI_API_KEY"]
-      : process.env["QA_OPENAI_API_KEY"]
-    : SMALL_RUN_ON_PRODUCTION_KEY
-      ? process.env["ANTHROPIC_API_KEY"]
-      : process.env["QA_ANTHROPIC_API_KEY"];
+if (process.env["QA_PROVIDER"] === "openai") {
+  console.error("BLOCKED: QA runs on Anthropic only. The OpenAI key is for the live line.");
+  process.exit(1);
+}
+const apiKey = SMALL_RUN_ON_PRODUCTION_KEY
+  ? process.env["ANTHROPIC_API_KEY"]
+  : process.env["QA_ANTHROPIC_API_KEY"];
 if (!apiKey) {
   console.error(
     "BLOCKED: set QA_ANTHROPIC_API_KEY to a key from a SEPARATE Anthropic workspace with its own spend limit.\n" +
@@ -116,9 +111,9 @@ if (
 }
 const model =
   process.env["QA_MODEL"] ??
-  (PROVIDER === "openai"
-    ? "gpt-4o-mini"
-    : (process.env["DEFAULT_LLM_MODEL"] ?? "claude-haiku-4-5"));
+  (process.env["DEFAULT_LLM_MODEL"]?.startsWith("claude-")
+    ? process.env["DEFAULT_LLM_MODEL"]
+    : "claude-haiku-4-5");
 const CONCURRENCY = Number(process.env["QA_CONCURRENCY"] ?? 6);
 
 /**
@@ -595,10 +590,7 @@ const UNIVERSAL: Check[] = [
 // ---------------------------------------------------------------------
 
 async function runScenario(scenario: Scenario): Promise<RunContext> {
-  const realProvider =
-    PROVIDER === "openai"
-      ? new OpenAiAdapter(apiKey!, process.env["OPENAI_BASE_URL"])
-      : new AnthropicAdapter(apiKey!, process.env["ANTHROPIC_BASE_URL"]);
+  const realProvider = new AnthropicAdapter(apiKey!, process.env["ANTHROPIC_BASE_URL"]);
   let completionCount = 0;
   let speakingCompletions = 0;
   let askingCompletions = 0;
@@ -608,7 +600,7 @@ async function runScenario(scenario: Scenario): Promise<RunContext> {
     Object.create(Object.getPrototypeOf(realProvider)),
     realProvider,
     {
-      streamCompletion: (...args: Parameters<typeof realProvider.streamCompletion>) => {
+      streamCompletion: (...args: Parameters<AnthropicAdapter["streamCompletion"]>) => {
         completionCount += 1;
         const inner = realProvider.streamCompletion(...args);
         return (async function* () {
