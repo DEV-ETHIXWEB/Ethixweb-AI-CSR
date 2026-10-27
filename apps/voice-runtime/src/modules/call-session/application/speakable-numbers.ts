@@ -24,6 +24,16 @@ const LONG_NUMBER = /(?<![$\d.,:/])\b\d{3,}\b(?![\d%:/]|\.\d|,\d)/g;
 /** "plus 8-7-2..." / "+1 872...": the country code is never said. */
 const PLUS_BEFORE_DIGITS = /(?:\bplus\s+|\+)(?:1[\s-]+)?(?=\d)/gi;
 
+/**
+ * 2026-10-26/27, Prateek's test calls: at the end of a long read-back
+ * ("..., 5-1-2-5 California Avenue Southwest, ZIP 9-8-1-3-6.") he heard only
+ * four digits, said "repeat that", heard the same, and gave the same ZIP
+ * again. "The ZIP code is 9-8-9-0-1." on its own was heard every time. The
+ * rendered audio has all five digits; "ZIP" runs straight into the first one.
+ * So a ZIP at the end of a list is said as its own short sentence.
+ */
+const ZIP_IN_A_LIST = /,\s*ZIP(?:\s+code)?\s+(?=\d)/gi;
+
 /** Marks the end of a run turned into digits, so only those runs get a pause before the next word. */
 const END = "\u0001";
 
@@ -33,6 +43,7 @@ function spaced(digits: string): string {
 
 export function speakableNumbers(text: string): string {
   return text
+    .replace(ZIP_IN_A_LIST, ". The ZIP code is ")
     .replace(PLUS_BEFORE_DIGITS, "")
     .replace(GROUPED_PHONE, (phone) => spaced(phone.replace(/\D/g, "")))
     .replace(HYPHENATED_DIGITS, (run) =>

@@ -4,7 +4,22 @@ describe('speakableNumbers (2026-10-25: "you are basically mumbling these digits
   it.each([
     [
       "Your address is 5-4-oh-7 South Hood Court, Seattle, ZIP 98118.",
-      "Your address is 5, 4, 0, 7, South Hood Court, Seattle, ZIP 9, 8, 1, 1, 8.",
+      "Your address is 5, 4, 0, 7, South Hood Court, Seattle. The ZIP code is 9, 8, 1, 1, 8.",
+    ],
+    // 2026-10-26, Prateek heard four digits here, twice.
+    [
+      "Let me make sure I have it right: Felicity, F-E-L-I-C-I-T-Y, at 5-1-2-5 California Avenue Southwest, ZIP 9-8-1-3-6.",
+      "Let me make sure I have it right: Felicity, F-E-L-I-C-I-T-Y, at 5, 1, 2, 5, California Avenue Southwest. The ZIP code is 9, 8, 1, 3, 6.",
+    ],
+    [
+      "[slowly] Just to confirm, is the address 9-oh-1-4 Fontler Roy Southwest, Seattle, Washington, ZIP 98126?",
+      "[slowly] Just to confirm, is the address 9, 0, 1, 4, Fontler Roy Southwest, Seattle, Washington. The ZIP code is 9, 8, 1, 2, 6?",
+    ],
+    // Said on its own already, so left as it was.
+    ["The ZIP code is 9-8-9-0-1.", "The ZIP code is 9, 8, 9, 0, 1."],
+    [
+      "Your ZIP code 98201 is outside the area.",
+      "Your ZIP code 9, 8, 2, 0, 1, is outside the area.",
     ],
     [
       "[slowly] Got it, 5407 Southford Port, Seattle, 98118.",
