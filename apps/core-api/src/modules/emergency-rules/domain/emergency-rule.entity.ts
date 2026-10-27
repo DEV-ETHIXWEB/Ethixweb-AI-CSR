@@ -81,6 +81,20 @@ export const DEFAULT_EMERGENCY_KEYWORDS: ReadonlyArray<{
   // to the problem is at least urgent.
   { pattern: "water flowing", severity: "critical", action: "forward_call" },
   { pattern: "water is flowing", severity: "critical", action: "forward_call" },
+  // 2026-10-27, Prateek's test calls: "my washing machine supply line just
+  // burst and the water is spreading fast from the laundry room into my
+  // hallway" and "the water is actively filling in my kitchen" were both
+  // saved as routine callbacks. Water spreading through, or filling, a room
+  // is the same emergency as flooding. "filling" is tied to a room so a
+  // toilet tank "filling with water" stays routine.
+  { pattern: "water spreading", severity: "critical", action: "forward_call" },
+  { pattern: "line burst", severity: "critical", action: "forward_call" },
+  { pattern: "hose burst", severity: "critical", action: "forward_call" },
+  { pattern: "filling house", severity: "critical", action: "forward_call" },
+  { pattern: "filling kitchen", severity: "critical", action: "forward_call" },
+  { pattern: "filling basement", severity: "critical", action: "forward_call" },
+  { pattern: "filling bathroom", severity: "critical", action: "forward_call" },
+  { pattern: "filling hallway", severity: "critical", action: "forward_call" },
   { pattern: "losing money", severity: "high", action: "priority_notify" },
   { pattern: "out of business", severity: "high", action: "priority_notify" },
   { pattern: "can't operate", severity: "high", action: "priority_notify" },

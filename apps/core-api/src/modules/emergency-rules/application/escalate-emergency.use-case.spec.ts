@@ -433,6 +433,23 @@ describe("water flowing and a business losing money", () => {
     ).toBe("forward_call");
   });
 
+  it.each([
+    [
+      "my washing machine supply line just burst and the water is spreading fast from the laundry room into my hallway",
+    ],
+    ["oh hi my kitchen sink is not draining and the water is actively filling in my kitchen"],
+    ["the water line burst out and is filling in the house"],
+  ])("transfers %p (2026-10-27, Prateek's calls)", async (description) => {
+    expect((await classify(description)).action).toBe("forward_call");
+  });
+
+  it.each([
+    ["my toilet tank keeps filling with water and never stops running"],
+    ["the fill valve in my toilet tank is bad"],
+  ])("leaves %p alone", async (description) => {
+    expect((await classify(description)).action).toBe("standard_lead");
+  });
+
   it("marks a business losing money as urgent", async () => {
     expect((await classify("we are out of business and we are not able to operate")).action).toBe(
       "priority_notify",
