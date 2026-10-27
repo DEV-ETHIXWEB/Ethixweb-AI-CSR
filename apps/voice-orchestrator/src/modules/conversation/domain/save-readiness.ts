@@ -148,16 +148,30 @@ export function spokenPhoneDigits(callerTexts: readonly string[]): string | null
     // test: "plus one eight seven two seven eight four nine nine nine" (a
     // digit lost by speech recognition) was taken as 187-278-4999, and Grace
     // read back "1-8-7-2-7-8-4-9-9-9" as the caller's number.
-    const match = collapsed.match(
-      // A whole number only, never ten digits out of a longer run.
-      /(?<!\d)(?:\+?1[\s.-]*)?\(?([2-9]\d{2})\)?[\s.-]*([2-9]\d{2})[\s.-]*(\d{4})(?!\d)/,
-    );
-    if (match) {
+    const matches = [
+      ...collapsed.matchAll(
+        // A whole number only, never ten digits out of a longer run.
+        /(?<!\d)(?:\+?1[\s.-]*)?\(?([2-9]\d{2})\)?[\s.-]*([2-9]\d{2})[\s.-]*(\d{4})(?!\d)/g,
+      ),
+    ];
+    for (const match of matches.reverse()) {
+      if (SOMEONE_ELSES_NUMBER.test(collapsed.slice(0, match.index))) {
+        continue;
+      }
       return `${match[1]}${match[2]}${match[3]}`;
     }
   }
   return null;
 }
+
+/**
+ * The client's Round 4 test script, a property manager: "the tenant ... his
+ * number is 206-220-4471". Grace read the tenant's number back as the
+ * caller's own callback number, and the save gate would have insisted on it.
+ * A number introduced as someone else's is not the caller's.
+ */
+const SOMEONE_ELSES_NUMBER =
+  /\b(?:(?:his|her|their|the tenant'?s|tenant'?s|my tenant'?s|the landlord'?s|my (?:wife|husband|son|daughter|mom|mother|dad|father|neighbou?r|partner)'?s)\s+(?:cell\s+|phone\s+|contact\s+)?number(?:\s+is)?|(?:reach|call|text)\s+(?:him|her|them)\s+(?:at|on))\s*$/i;
 
 export function phoneMismatchError(spoken: string) {
   return {

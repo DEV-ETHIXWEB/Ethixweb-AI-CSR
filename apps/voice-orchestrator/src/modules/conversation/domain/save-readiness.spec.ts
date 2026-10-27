@@ -714,3 +714,21 @@ describe("spokenPhoneDigits (2026-10-26 live test)", () => {
     expect(spokenPhoneDigits([said])).toBe(digits);
   });
 });
+
+/** The client's Round 4 script 10: a property manager gives the tenant's number too. */
+describe("spokenPhoneDigits: someone else's number", () => {
+  const manager =
+    "montgomery achebe a c h e b e two zero six seven seven one five five eight three the full address is forty four twenty south holly street";
+
+  it.each([
+    "the tenant at that unit is named oliver brantley he'll be the one home his number is two zero six two two zero four four seven one",
+    "the tenant's number is 206 220 4471",
+    "you can reach her at 206 220 4471 she'll let them in",
+  ])("the caller's own number is kept after %p", (later) => {
+    expect(spokenPhoneDigits([manager, later])).toBe("2067715583");
+  });
+
+  it("a caller's own number is still taken", () => {
+    expect(spokenPhoneDigits([manager, "actually my number is 206 220 4471"])).toBe("2062204471");
+  });
+});
