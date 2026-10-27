@@ -264,6 +264,68 @@ describe("CallSessionOrchestrator", () => {
       }
     });
 
+    /**
+     * 2026-10-27, Prateek's test call: "because the whole one just finally
+     * gave out" started a turn, his next words ("so no rush at all...") were
+     * recognized 1s later with no voice onset in front of them, and the reply
+     * played over him 1.4s after that.
+     */
+    it("does not speak a reply when the caller's new words arrive before it starts, with no voice onset", async () => {
+      jest.useFakeTimers();
+      process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = "10000";
+      try {
+        const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+        await orchestrator.onCallStart(baseParams(), sink);
+        await jest.advanceTimersByTimeAsync(0);
+        const greetingCalls = tts.synthesizeCalls.length;
+        orchestratorClient.respondAfterMs = 2000;
+        orchestratorClient.turnResponses = [
+          {
+            conversationId: "c",
+            responseText: "Got it. Can I get your name, please?",
+            toolCallsExecuted: [],
+            interrupted: false,
+            state: "qualifying",
+          },
+        ];
+        const session = stt.sessions[0]!;
+        session.emitFinalTranscript("because the whole one just finally gave out", 0.9);
+        await jest.advanceTimersByTimeAsync(1000);
+        session.emitInterimSpeech("so no rush at all");
+        await jest.advanceTimersByTimeAsync(0);
+
+        expect(orchestratorClient.turnCalls[0]?.signal?.aborted).toBe(true);
+        await jest.advanceTimersByTimeAsync(1500);
+        expect(tts.synthesizeCalls.slice(greetingCalls)).toEqual([]);
+        await orchestrator.onCallEnd(baseParams(), "caller_hangup");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it("a backchannel before the reply starts does not hold it back", async () => {
+      jest.useFakeTimers();
+      process.env["SILENCE_CHECK_IN_TIMEOUT_MS"] = "10000";
+      try {
+        const { orchestrator, orchestratorClient, stt } = buildOrchestratorUnderTest();
+        const sink = new FakeMediaStreamSink();
+        await orchestrator.onCallStart(baseParams(), sink);
+        await jest.advanceTimersByTimeAsync(0);
+        orchestratorClient.respondAfterMs = 2000;
+        const session = stt.sessions[0]!;
+        session.emitFinalTranscript("my kitchen sink is leaking", 0.9);
+        await jest.advanceTimersByTimeAsync(1000);
+        session.emitInterimSpeech("yeah");
+        await jest.advanceTimersByTimeAsync(0);
+
+        expect(orchestratorClient.turnCalls[0]?.signal?.aborted).toBe(false);
+        await orchestrator.onCallEnd(baseParams(), "caller_hangup");
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it("speaks after the hold when the caller's sound was not speech", async () => {
       jest.useFakeTimers();
       process.env["BARGE_IN_CONFIRMATION_TIMEOUT_MS"] = "2000";

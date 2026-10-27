@@ -1427,6 +1427,20 @@ export class CallSessionOrchestrator {
       this.extendHoldWhileSpeaking();
     }
     if (!this.pendingBargeInTimer) {
+      // 2026-10-27, Prateek's test calls (four of them, all at the start of
+      // the call): a turn started at a pause, he went on talking, and his new
+      // words were recognized before the reply had begun, but with no fresh
+      // voice onset in front of them nothing confirmed them, and the reply
+      // played over him. Recognized words that are not a backchannel, while a
+      // reply is on its way and not yet audible, are the caller still talking.
+      // Words recognized after a transcript was handed over are always new
+      // words, so this cannot be the utterance being answered.
+      if (this.activeTurnAbort && !this.isAudible() && !isPureBackchannel(transcript)) {
+        this.logger.info("caller kept talking before the reply started — not answering yet", {
+          conversationId: this.conversationId,
+        });
+        this.handleBargeIn(params, sink);
+      }
       return;
     }
     if (isPureBackchannel(transcript) && (this.isAudible() || this.activeTurnAbort)) {
