@@ -1684,6 +1684,232 @@ const ROUND4_SCENARIOS: Scenario[] = [
   },
 ];
 
+/**
+ * The client's Round 5 test scripts (All Phase Plumbing, 2026-10-28), caller
+ * lines as written, letters spaced the way speech recognition writes them.
+ * The approved knowledge publishes no holiday pricing, technician requests,
+ * payment process or warranty exceptions, so those must not be invented.
+ */
+const ROUND5_SCENARIOS: Scenario[] = [
+  {
+    id: "round5-01-holiday-surcharge",
+    category: "round5",
+    turns: [
+      "Hi, I know it's a holiday, but my kitchen drain is completely clogged and I've got family over. Before anything else, is there some kind of holiday surcharge I should know about?",
+      "Winifred Castellano-Buabeng. Castellano, C A S T E L L A N O, dash, Buabeng, B U A B E N G. 206-441-7723. 2290 32nd Avenue South, Seattle, Washington, 98144.",
+      "Given it's a holiday, is same-day even realistic, or should I expect to wait until tomorrow?",
+      "Yes.",
+      "Yes.",
+    ],
+    checks: [
+      neverSays(
+        "never claims there is or is not a holiday surcharge",
+        /\b(there'?s|there is|we have|we charge) (a |an |no )?(holiday )?(surcharge|extra (fee|charge))\b|\bno (holiday )?surcharge\b/,
+      ),
+      neverSays(
+        "never promises a same-day holiday visit",
+        /\b(yes|definitely|sure),? (we|someone) can (come|be there|get).{0,20}\btoday\b/,
+      ),
+      savedAs("saves the whole hyphenated name", /Castellano-?Buabeng/i),
+    ],
+  },
+  {
+    id: "round5-02-wants-marcus",
+    category: "round5",
+    turns: [
+      "Hi, I need a water line repaired, and last time I had a technician named Marcus come out, he did a great job, is there any way to request him specifically?",
+      "Leopold Nakamura-Fitch. Nakamura, N A K A M U R A, dash, Fitch, F I T C H. 206-220-3391. 4471 Interlake Avenue North, Seattle, Washington, 98103.",
+      "If he's not available, that's fine, just wanted to ask. Will the note about preferring him actually get passed along either way?",
+      "Yes.",
+      "Yes.",
+      "Yes.",
+      "Yes.",
+    ],
+    checks: [
+      neverSays(
+        "never promises Marcus will come",
+        /\bmarcus (will|'ll) (come|be there|be the one)\b|\bi('ll| will) (make sure|guarantee) (it'?s |that )?marcus\b/,
+      ),
+      savedAs("the request for Marcus reaches the team", /Marcus/),
+      savedAs("saves the whole hyphenated name", /Nakamura-?Fitch/i),
+    ],
+  },
+  {
+    id: "round5-03-diy-made-it-worse",
+    category: "round5",
+    turns: [
+      "Hi, so, I tried to fix a small leak under my sink myself using a video I found online, and I think I actually made it worse, it's leaking more now than before. Kind of embarrassing, but I need help.",
+      "Theodora Ekwueme, E K W U E M E. 206-558-9914. 7712 15th Avenue Northwest, Seattle, Washington, 98117.",
+      "Is there anything I should do right now to stop it from getting worse while I wait, since I clearly shouldn't keep messing with it myself?",
+      "Yes.",
+      "Yes.",
+    ],
+    checks: [
+      neverSays(
+        "never judges the caller",
+        /\b(you )?(shouldn'?t have|should not have)\b|\bbad idea\b|\bmade it worse\b/,
+      ),
+      {
+        label: "gives a real step, like shutting off the valve",
+        run: (ctx) =>
+          /\b(shut ?off|turn off|valve)\b/i.test(ctx.agentTurns[2] ?? "")
+            ? null
+            : `reply: ${ctx.agentTurns[2]}`,
+      },
+    ],
+  },
+  {
+    id: "round5-04-new-homeowner",
+    category: "round5",
+    turns: [
+      "Hi, I just moved into this house a couple weeks ago, and there's a weird dripping sound somewhere, but honestly I don't even know where the main water shutoff is or how anything in this house is set up.",
+      "Barnaby Oyelaran, O Y E L A R A N. 206-771-2298. 5540 Ravenna Avenue Northeast, Seattle, Washington, 98105.",
+      "Would the technician be able to show me where things like the shutoff valves are while they're here, just so I know for next time?",
+      "Yes.",
+      "Yes.",
+    ],
+    checks: [
+      {
+        label: "an encouraging answer about being shown the valves",
+        run: (ctx) =>
+          /\b(sure|yes|happy|can|ask|make sure|note)\b/i.test(ctx.agentTurns[2] ?? "") &&
+          !/\bout of scope|can'?t help with that\b/i.test(ctx.agentTurns[2] ?? "")
+            ? null
+            : `reply: ${ctx.agentTurns[2]}`,
+      },
+      savedAs("saves the name", /Oyelaran/),
+    ],
+  },
+  {
+    id: "round5-05-callback-never-came",
+    category: "round5",
+    turns: [
+      "Hi, I called two days ago asking about a quote for a water heater, and I was told someone would call me back within a day. Nobody did, so I'm following up myself.",
+      "Cordelia Mwangi-Hartley. Mwangi, M W A N G I, dash, Hartley, H A R T L E Y. 206-390-4471. 3301 Fremont Avenue North, Seattle, Washington, 98103.",
+      "How do I know this time it's actually going to happen? I don't want to have to call a third time.",
+      "Yes.",
+      "Yes.",
+      "Yes.",
+      "Yes.",
+    ],
+    checks: [
+      {
+        label: "owns the missed callback",
+        run: (ctx) =>
+          /\b(sorry|apolog)/i.test(ctx.agentTurns[0] ?? "") ? null : `reply: ${ctx.agentTurns[0]}`,
+      },
+      neverSays(
+        "never promises a call it cannot guarantee",
+        /\bi (promise|guarantee)\b|\bguaranteed? (a |the )?call\b|\bwill definitely call\b/,
+      ),
+      savedAs("saves the whole hyphenated name", /Mwangi-?Hartley/i),
+    ],
+  },
+  {
+    id: "round5-06-deposit-by-phone",
+    category: "round5",
+    turns: [
+      "Hi, I need a sewer line inspection booked, and I'd actually like to just pay a deposit right now over the phone to lock in the appointment, can we do that?",
+      "Augustine Pellegrino, P E L L E G R I N O. 206-662-3310. 1890 Boyer Avenue East, Seattle, Washington, 98112.",
+      "Okay, so if not over the phone with you, how exactly would I go about paying a deposit?",
+      "Yes.",
+      "Yes.",
+    ],
+    checks: [
+      neverAsksAfter(
+        "never asks for card details",
+        /\b(card number|credit card|debit card|expiration|cvv|security code|billing zip)\b/,
+        0,
+      ),
+      {
+        label: "says how payment is really handled",
+        run: (ctx) =>
+          /\b(team|technician|office|when they call|confirm)\b/i.test(ctx.agentTurns[2] ?? "")
+            ? null
+            : `reply: ${ctx.agentTurns[2]}`,
+      },
+    ],
+  },
+  {
+    id: "round5-07-handed-to-wife",
+    category: "round5",
+    turns: [
+      "Hi, this is Reuben Castellanos, C A S T E L L A N O S, our water heater is leaking. Actually, hold on one second, let me hand this to my wife, she knows the details better.",
+      "Hi, sorry, this is Marisol now, his wife. The address is 2214 Interlaken Boulevard East, Seattle, Washington, 98112, and my number is actually the better one to reach, 206-220-7731.",
+      "Just to confirm, you've got both our names down, Reuben and myself, Marisol, right? And my number as the main contact?",
+      "Yes.",
+      "Yes.",
+      "Yes.",
+      "Yes.",
+    ],
+    checks: [
+      saysSomewhere("says both names", /\breuben\b[\s\S]*\bmarisol\b|\bmarisol\b[\s\S]*\breuben\b/),
+      savedAs("saves Marisol's number", /2062207731/),
+    ],
+  },
+  {
+    id: "round5-08-water-efficient",
+    category: "round5",
+    turns: [
+      "Hi, I'm replacing a couple of old fixtures and wanted to go with something more water-efficient this time, do you guys carry low-flow toilets or water-saving showerheads?",
+      "Do those kinds of fixtures typically cost more upfront, and does it actually save much on the water bill long term?",
+      "Seraphina Olumide, O L U M I D E. 206-390-8821. 6630 California Avenue Southwest, Seattle, Washington, 98136.",
+      "Yes.",
+      "Yes.",
+    ],
+    checks: [
+      neverSays("never invents a price or a saving", /\$\s?\d|\b\d+ ?(percent|%)\b|\bdollars\b/),
+      {
+        label: "a real answer about efficient fixtures",
+        run: (ctx) =>
+          /\b(low-?flow|efficien|water-?saving|toilet|shower)/i.test(ctx.agentTurns[0] ?? "")
+            ? null
+            : `reply: ${ctx.agentTurns[0]}`,
+      },
+    ],
+  },
+  {
+    id: "round5-09-warranty-exception",
+    category: "round5",
+    turns: [
+      "Hi, so this is a bit of an awkward one, a repair you did for me has started acting up again, but I think the warranty period technically ended about a week ago. I'm hoping you might still be able to make an exception.",
+      "Alistair Quenneville, Q U E N N E V I L L E. 206-558-2291. 4482 Wallingford Avenue North, Seattle, Washington, 98103. The original job was about five weeks ago.",
+      "Realistically, is this the kind of thing that sometimes gets approved, or should I just expect to pay full price?",
+      "Yes.",
+      "Yes.",
+    ],
+    checks: [
+      neverSays(
+        "never promises a free fix",
+        /\b(it'?ll|it will|that'?ll) be (free|covered)\b|\bwe('ll| will) cover (it|that|the)\b|\bno charge\b/,
+      ),
+      neverSays(
+        "never flatly refuses",
+        /\b(won'?t|will not|can'?t|cannot) be covered\b|\bno exceptions?\b/,
+      ),
+      savedAs("saves the name", /Quenneville/),
+    ],
+  },
+  {
+    id: "round5-10-rushed-wants-text",
+    category: "round5",
+    turns: [
+      "Hi, I'm in a huge rush, I've got like two minutes, can we go fast? Bathroom faucet won't shut off all the way, just keeps dripping.",
+      "Florentina Achebe-Marsh quickly Achebe A C H E B E dash Marsh M A R S H 206-220-9931 7741 Greenwood Avenue North Seattle 98103 that's it go",
+      "Can you just text me the appointment time instead of a whole phone call back? I really don't have time to talk again.",
+      "Yes.",
+      "Yes.",
+      "Yes.",
+      "Yes.",
+    ],
+    checks: [
+      savedAs("saves the whole hyphenated name", /Achebe-?Marsh/i),
+      savedAs("saves her number", /2062209931/),
+      savedAs("the text preference reaches the team", /\btext/i),
+    ],
+  },
+];
+
 /** Prateek's test calls, 2026-10-27, as he said them (speech recognition included). */
 const PRATEEK1027_SCENARIOS: Scenario[] = [
   {
@@ -1723,6 +1949,64 @@ const PRATEEK1027_SCENARIOS: Scenario[] = [
             ? null
             : `tools: ${ctx.toolsCalled.join(", ")}`,
       },
+    ],
+  },
+];
+
+/** Prateek's test calls, 2026-10-28/29, as speech recognition heard them. */
+const PRATEEK1029_SCENARIOS: Scenario[] = [
+  {
+    id: "prateek1029-01-kent-zip-misheard",
+    category: "prateek1029",
+    turns: [
+      "my name is clara and we live in kent and the faucet in our primary bathroom is leaking",
+      "it's three three nine zero federal avenue zip code nine eight two zero one",
+    ],
+    checks: [
+      neverSays(
+        "never turns a Kent caller away",
+        /\b(only cover|don'?t (serve|cover)|isn'?t one of|outside (the|our) (area|service))\b/,
+      ),
+      {
+        label: "reads the ZIP back to check it",
+        run: (ctx) =>
+          /9[\s,-]*8[\s,-]*2[\s,-]*(0|oh)[\s,-]*1/i.test(ctx.agentTurns[1] ?? "")
+            ? null
+            : `reply: ${ctx.agentTurns[1]}`,
+      },
+    ],
+  },
+  {
+    id: "prateek1029-02-three-word-name",
+    category: "prateek1029",
+    turns: [
+      "hi my upstairs toilet has started running nonstop",
+      "my name is petronella elena vasquez",
+      "eight eight two zero greenwood avenue north seattle washington nine eight one zero three",
+      "yes",
+      "yes",
+    ],
+    checks: [
+      savedAs(
+        "saves all three names",
+        /Petronella[\s\S]*Elena[\s\S]*Vasquez|Petronella[\s\S]*Vasquez[\s\S]*Elena/,
+      ),
+    ],
+  },
+  {
+    id: "prateek1029-03-street-spelled-not-name",
+    category: "prateek1029",
+    turns: [
+      "hi my water heater is leaking a little",
+      "my name is harold winterbone",
+      "it's five five one two elridge way southwest seattle washington nine eight one zero six",
+      "well the street name is delridge way d e l r i d g e way",
+      "yes",
+      "yes",
+    ],
+    checks: [
+      neverSays("never calls him by the street", /\bdelridge\b(?!\s+way)|\bthanks,? delridge\b/),
+      savedAs("keeps his name", /Harold/),
     ],
   },
 ];
@@ -3903,6 +4187,8 @@ const SCENARIOS: Scenario[] = [
   ...FULLMIX_SCENARIOS,
   ...YASH_SCENARIOS,
   ...ROUND4_SCENARIOS,
+  ...ROUND5_SCENARIOS,
+  ...PRATEEK1029_SCENARIOS,
   ...PRATEEK1027_SCENARIOS,
 ];
 
