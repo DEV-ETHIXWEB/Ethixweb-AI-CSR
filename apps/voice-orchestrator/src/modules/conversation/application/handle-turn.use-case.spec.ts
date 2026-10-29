@@ -5514,3 +5514,28 @@ it("an upset caller asking for a person hears an apology first", async () => {
   );
   expect(chunks[0]).toBe("I'm really sorry about this.");
 });
+
+// The client's Round 5 script 10: a caller who asks to be texted.
+describe("a caller who would rather get a text", () => {
+  it("is noted when said, and kept in mind until the request is saved", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    const { useCase } = buildUseCase({ aiProvider, repository });
+    const lastSent = () =>
+      String(
+        (aiProvider.requests.at(-1)?.messages ?? []).filter((m) => m.role === "user").at(-1)
+          ?.content ?? "",
+      );
+
+    await useCase.execute(
+      baseCommand({
+        transcript: "can you just text me the appointment time instead of a whole phone call back",
+      }),
+    );
+    expect(lastSent()).toContain("would rather get a text");
+
+    await useCase.execute(baseCommand({ transcript: "yes", idempotencyKey: "turn-2" }));
+    expect(lastSent()).toContain("Prefers a text instead of a call");
+  });
+});

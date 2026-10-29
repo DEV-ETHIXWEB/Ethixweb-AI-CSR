@@ -579,6 +579,19 @@ export class HandleTurnUseCase {
         conversation.lastServiceAreaCheck,
       );
     }
+    // See WANTS_A_TEXT. Said this turn: acknowledge it; said earlier and the
+    // request is not saved yet: make sure it reaches the team.
+    if (!conversation.leadId) {
+      if (WANTS_A_TEXT.test(command.transcript)) {
+        annotatedTranscript = `${TEXT_PREFERENCE_NOTE} ${annotatedTranscript}`;
+      } else if (
+        conversation.transcript.some(
+          (entry) => entry.speaker === "caller" && WANTS_A_TEXT.test(entry.text),
+        )
+      ) {
+        annotatedTranscript = `${TEXT_PREFERENCE_REMINDER} ${annotatedTranscript}`;
+      }
+    }
     const addressNote = this.addressCheckNote(
       conversation,
       spokenZip?.zip ?? zipBeforeThisTurn,
@@ -3079,6 +3092,19 @@ function annotateServiceAreaResult(
     : `[already confirmed this call: ${zipPhrase} is NOT within the service area — don't re-ask or contradict this; a DIFFERENT zip the caller gives would need its own fresh getServiceAreas check]`;
   return `${note} ${transcript}`;
 }
+
+/**
+ * The client's Round 5 script 10: "Can you just text me the appointment time
+ * instead of a whole phone call back?" Grace said "I can't text or set an
+ * appointment time from here" and the preference was never noted. Grace cannot
+ * text, but the team can, so the preference is passed on, without a promise.
+ */
+const WANTS_A_TEXT =
+  /\b(?:text me|send (?:me )?a text|by text|via text|a text instead|text (?:instead|is better|is fine|would be better)|prefer (?:a )?text)\b/i;
+const TEXT_PREFERENCE_NOTE =
+  '[The caller would rather get a text than a call. Say you will note that they prefer a text for the team, without promising the team will text. Put "Prefers a text instead of a call" in problem_summary.]';
+const TEXT_PREFERENCE_REMINDER =
+  '[Earlier the caller asked to be texted rather than called: problem_summary must include "Prefers a text instead of a call".]';
 
 const ASKS_ABOUT_COVERAGE =
   /\b(come out|come to|service|serve|cover|go out|work in|in your area|somewhere you)\b/i;
