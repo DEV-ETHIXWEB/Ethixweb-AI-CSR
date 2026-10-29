@@ -10,6 +10,13 @@
  */
 const SENSED = /\b(?:smell\w*|stink\w*|hiss\w*|odou?r)\b/i;
 const ESCAPING = /\b(?:leak\w*|leaving|escap\w*|everywhere)\b/i;
+/**
+ * 2026-10-29, Prateek's call: "i'm smelling gas near my kitchen stove and it's
+ * still getting stronger" was heard as "i'm spending a gas near my kitchen
+ * store ...". No smell word survived, and nothing flagged it. Gas that is
+ * getting stronger is a smell, whatever the verb was heard as.
+ */
+const STRONGER = /\b(?:getting stronger|stronger|really strong|very strong|so strong)\b/i;
 const APPLIANCE =
   /\bgas (?:water heater|heater|stove|range|oven|dryer|fireplace|grill|line install\w*|bill|meter reading|furnace)\b/i;
 const NEGATED =
@@ -27,7 +34,7 @@ export function mentionsGasLeak(text: string): boolean {
     if (SENSED.test(near) || /\bgas (?:leak|smell)\b/i.test(near)) {
       return true;
     }
-    if (ESCAPING.test(near) && !APPLIANCE.test(near)) {
+    if ((ESCAPING.test(near) || STRONGER.test(near)) && !APPLIANCE.test(near)) {
       return true;
     }
   }

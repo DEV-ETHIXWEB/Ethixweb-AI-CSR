@@ -14,6 +14,8 @@ describe("mentionsGasLeak", () => {
     "gas is escaping from the meter",
     "we have a gas leak and a pipe burst",
     "something is leaking gas",
+    // 2026-10-29, Prateek's call, as speech recognition heard it.
+    "hi i'm spending a gas near my kitchen store and it's still getting stronger from the last few minutes i'm not sure what to do",
   ])("%p", (said) => {
     expect(mentionsGasLeak(said)).toBe(true);
   });
@@ -25,6 +27,7 @@ describe("mentionsGasLeak", () => {
     "my gas stove won't light",
     "the gas bill is too high",
     "there's no gas smell, just water",
+    "my gas water heater is making a really strong banging noise",
   ])("not %p", (said) => {
     expect(mentionsGasLeak(said)).toBe(false);
   });
