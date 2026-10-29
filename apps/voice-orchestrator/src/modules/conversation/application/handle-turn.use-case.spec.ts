@@ -2866,6 +2866,69 @@ describe("HandleTurnUseCase", () => {
     expect(result.escalation).toBeUndefined();
   });
 
+  /**
+   * 2026-10-29, Prateek's call: "my tenant ... smells something like gas",
+   * decided forward_call, he went on talking and the turn was cut short. On
+   * the next turn Grace said "I'm connecting you now" and nothing transferred.
+   */
+  it("a transfer decided on a turn that was cut short goes out with the next turn", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const controller = new AbortController();
+    const aiProvider: FakeAiProvider = new FakeAiProvider();
+    let calls = 0;
+    aiProvider.streamCompletion = async function* (): AsyncIterable<AiCompletionChunk> {
+      calls += 1;
+      if (calls === 1) {
+        controller.abort();
+        throw new DOMException("aborted", "AbortError");
+      }
+      yield { type: "text_delta", text: "I'm connecting you now." };
+      yield { type: "done", stopReason: "end_turn" };
+    };
+    const escalate = {
+      execute: jest.fn().mockResolvedValue({
+        isEmergency: true,
+        action: "forward_call",
+        severity: "critical",
+        transferDestination: "+12065550100",
+      }),
+    };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "escalateEmergency", handler: escalate }],
+    });
+
+    const first = await useCase.execute(
+      baseCommand({
+        transcript:
+          "okay i am a landlord and my tenant just texted me saying she smells something like gas near the water heater",
+        allowedTools: ["escalateEmergency"],
+        signal: controller.signal,
+      }),
+    );
+    expect(first.interrupted).toBe(true);
+
+    const second = await useCase.execute(
+      baseCommand({
+        transcript: "and i'm not clear by by scent",
+        allowedTools: ["escalateEmergency"],
+        idempotencyKey: "turn-2",
+      }),
+    );
+    expect(second.escalation).toMatchObject({ action: "forward_call" });
+
+    const third = await useCase.execute(
+      baseCommand({
+        transcript: "my name is harold",
+        allowedTools: ["escalateEmergency"],
+        idempotencyKey: "turn-3",
+      }),
+    );
+    expect(third.escalation).toBeUndefined();
+  });
+
   it("stops the loop and marks interrupted when the abort signal fires mid-stream", async () => {
     const repository = new FakeConversationRepository();
     repository.seed(baseConversation());

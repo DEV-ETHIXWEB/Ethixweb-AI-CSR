@@ -938,8 +938,11 @@ export class HandleTurnUseCase {
     let responseText = "";
     const toolCallsExecuted: string[] = [];
     let interrupted = false;
+    // See Conversation.undeliveredTransfer: a transfer decided on a turn that
+    // was cut short goes out with this one.
     let escalation:
-      { severity: string; action: string; transferDestination: string | null } | undefined;
+      { severity: string; action: string; transferDestination: string | null } | undefined =
+      conversation.undeliveredTransfer;
     let humanTransfer: { reason: string; transferDestination: string | null } | undefined;
 
     // Voice-pipeline latency investigation (real live reports of 30-40s+
@@ -1535,6 +1538,13 @@ export class HandleTurnUseCase {
       });
     }
 
+    if (escalation?.action === "forward_call") {
+      if (interrupted) {
+        conversation.undeliveredTransfer = escalation;
+      } else {
+        delete conversation.undeliveredTransfer;
+      }
+    }
     await persistProgress();
 
     const durationMs = Date.now() - startedAt;

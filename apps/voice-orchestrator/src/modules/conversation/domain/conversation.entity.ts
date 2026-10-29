@@ -77,6 +77,13 @@ export interface Conversation {
    */
   strongestEmergencyAction?: "forward_call" | "priority_notify";
   /**
+   * 2026-10-29, Prateek's call: a gas leak was decided forward_call, he went
+   * on talking, the turn was cut short, and the transfer signal went with it.
+   * Grace said "I'm connecting you now" on the next turn and nothing
+   * transferred. Kept here until a turn that carries it finishes.
+   */
+  undeliveredTransfer?: { severity: string; action: string; transferDestination: string | null };
+  /**
    * The exact caller transcript that most recently triggered an
    * escalateEmergency check (real or backstop) — set alongside
    * `emergencyEverChecked`. Found live: a caller turn whose transcript
