@@ -629,7 +629,7 @@ function spelledNamesIn(
   for (const [index, text] of callerTexts.entries()) {
     // "r e n a t a ... r e n a t a, d u b o i s": the same word spelled
     // twice is one word, not a first name and a middle name.
-    const words = spelledWordsIn(text, spellingAsked)
+    const words = spelledWordsIn(withoutStreetSpellings(text), spellingAsked)
       .map((word) => {
         const half = word.length / 2;
         return half >= 3 && word.slice(0, half) === word.slice(half) ? word.slice(0, half) : word;
@@ -1522,6 +1522,20 @@ const PLACE_WORDS = new Set([
  * ("Okafor-Bright, O K A F O R, dash, B R I G H T") the letters spell its
  * first part.
  */
+/**
+ * 2026-10-29, Prateek's call: "well it's winter borne p u r n e ... and
+ * street name is deliridge bay p e l r i t g e way". The street's letters
+ * became his last name ("Purne Pelritge") and were saved. Letters spelled
+ * after a street word, with no "name" in between, spell the street.
+ */
+const STREET_NAME_SPELLING = /\bstreet name\b[^.]*?(?:\b[a-z]\b[\s,-]*){3,}/gi;
+const STREET_SPELLING =
+  /\b(?:street|avenue|road|drive|boulevard|address)\b(?:(?!\bname\b)[^.])*?(?:\b[a-z]\b[\s,-]*){3,}/gi;
+
+function withoutStreetSpellings(text: string): string {
+  return text.replace(STREET_NAME_SPELLING, " . ").replace(STREET_SPELLING, " . ");
+}
+
 /** See the Round 4 script 9 comment in buildCallNotes. */
 function firstNameBeforeHyphenated(
   texts: readonly string[],

@@ -1193,3 +1193,35 @@ describe("names from the Round 4 scripts", () => {
     expect(notes(said).spelledName).toEqual(expected);
   });
 });
+
+/** 2026-10-29, Prateek's call: the street's spelling was saved as his last name. */
+describe("letters spelled for the street are not the name", () => {
+  it.each([
+    "well it's winter borne p u r n e winter p u r n e and street name is deliridge bay p e l r i t g e way",
+    "the street is d e l r i d g e way",
+  ])("%p", (said) => {
+    const notes = buildCallNotes(
+      ["my name is harold winterbone", said],
+      [
+        { speaker: "agent", text: "Can I get your name?" },
+        { speaker: "caller", text: "my name is harold winterbone" },
+        { speaker: "agent", text: "What's the service address?" },
+        { speaker: "caller", text: said },
+      ],
+    );
+    expect(JSON.stringify(notes.spelledName ?? [])).not.toMatch(/pelritge|delridge/);
+  });
+
+  it("a name spelled after the address is still the name", () => {
+    const said = "my address is 12 main street and my name is john j o h n";
+    expect(
+      buildCallNotes(
+        [said],
+        [
+          { speaker: "agent", text: "Can I get your name?" },
+          { speaker: "caller", text: said },
+        ],
+      ).spelledName,
+    ).toContain("john");
+  });
+});
