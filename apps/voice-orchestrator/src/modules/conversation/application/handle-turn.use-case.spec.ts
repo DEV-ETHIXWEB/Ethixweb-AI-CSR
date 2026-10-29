@@ -3568,6 +3568,33 @@ describe("HandleTurnUseCase", () => {
       const content = await sentCallerMessage("it's 13005 SE 245th Street in Kent");
       expect(content).not.toContain("service area");
     });
+
+    // 2026-10-29, Prateek's call: "we live in kent", then a ZIP heard as
+    // 98201, and Grace said "Kent isn't one of them".
+    it("reads back an outside-sounding ZIP from a caller who said they are in a served town", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed({
+        ...baseConversation(),
+        systemPrompt: `${zipPrompt}\nCITIES SERVED: Seattle, Tacoma, Kent, Tukwila.`,
+      });
+      const aiProvider = new FakeAiProvider();
+      const { useCase } = buildUseCase({ aiProvider, repository });
+      await useCase.execute(
+        baseCommand({ transcript: "my name is clara and we live in kent", allowedTools: [] }),
+      );
+      await useCase.execute(
+        baseCommand({
+          transcript: "it's three three nine zero federal avenue zip code nine eight two zero one",
+          allowedTools: [],
+          idempotencyKey: "turn-2",
+        }),
+      );
+      const sent = (aiProvider.requests.at(-1)?.messages ?? [])
+        .filter((m) => m.role === "user")
+        .at(-1)?.content;
+      expect(String(sent)).toContain("Read the ZIP back");
+      expect(String(sent)).not.toContain("NOT within the service area");
+    });
   });
 });
 

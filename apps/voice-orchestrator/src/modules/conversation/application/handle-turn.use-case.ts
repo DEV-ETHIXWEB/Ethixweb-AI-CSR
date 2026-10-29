@@ -514,7 +514,24 @@ export class HandleTurnUseCase {
     const otherState =
       namesAnotherState(command.transcript) ??
       namesPlaceOutside(command.transcript, outsidePlacesFromPrompt(conversation.systemPrompt));
-    if (spokenZip) {
+    // 2026-10-29, Prateek's call: "we live in kent", then an address heard
+    // with ZIP 98201. Grace said "Kent isn't one of them" and turned him
+    // away, then "Yes, we do serve Kent!" when he asked. A ZIP that sounds
+    // outside from a caller who already named a town the business serves is
+    // more likely misheard than true: it is read back, not acted on.
+    const servedTownSaid =
+      spokenZip?.verdict === "outside" && otherState === null
+        ? namesServedPlace(
+            [
+              ...conversation.transcript
+                .filter((entry) => entry.speaker === "caller")
+                .map((entry) => entry.text),
+              command.transcript,
+            ].join(" . "),
+            servedPlacesFromPrompt(conversation.systemPrompt),
+          )
+        : null;
+    if (spokenZip && !servedTownSaid) {
       conversation.lastServiceAreaCheck = {
         zip: spokenZip.zip,
         inServiceArea: spokenZip.verdict !== "outside" && otherState === null,
@@ -525,7 +542,9 @@ export class HandleTurnUseCase {
     // "I'm calling from Portland, Oregon" was never checked at all. The turn
     // a caller is first found to be outside the area says what to do.
     const newlyOutside =
-      (spokenZip?.verdict === "outside" && spokenZip.zip !== zipBeforeThisTurn) ||
+      (spokenZip?.verdict === "outside" &&
+        spokenZip.zip !== zipBeforeThisTurn &&
+        !servedTownSaid) ||
       otherState !== null;
     // A main city ("in Seattle") is said with nearly every address; it gets
     // the note only when the caller is asking about coverage. The towns the
@@ -542,6 +561,8 @@ export class HandleTurnUseCase {
           .includes(servedPlace));
     if (newlyOutside) {
       annotatedTranscript = `${OUTSIDE_THE_AREA_NOTE} ${annotatedTranscript}`;
+    } else if (servedTownSaid && spokenZip) {
+      annotatedTranscript = `[The ZIP you heard, ${spokenZip.zip.split("").join("-")}, is not one you serve, but the caller said they are in ${servedTownSaid.replace(/\b[a-z]/g, (c) => c.toUpperCase())}, which you do serve, so it was probably misheard. Do not turn them away and do not talk about coverage. Read the ZIP back digit by digit and ask if that is right.] ${annotatedTranscript}`;
     } else if (servedNoteNeeded && servedPlace) {
       annotatedTranscript = `[${servedPlace.replace(/\b[a-z]/g, (c) => c.toUpperCase())} is in the area you serve, by your service-area list. Say yes, you can help there; if it is not one of the main cities, add that the team will confirm coverage when they call. Never turn them away.] ${annotatedTranscript}`;
     }
