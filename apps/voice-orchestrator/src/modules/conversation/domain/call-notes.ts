@@ -261,6 +261,23 @@ export function buildCallNotes(
     spelledFound && statedFound && statedFound.index > spelledFound.index
       ? null
       : (spelledFound?.words ?? null);
+  // 2026-10-28, Prateek's call: "yes my name is cordelia", then "mwangi m w
+  // a n g i and last name hartley h a r t l e y". Grace said "your first
+  // name is Mwangi" and Cordelia was lost. Two names spelled after a first
+  // name already given, with "last name" before the second, are the middle
+  // and last names.
+  if (spelled?.length === 2 && spelledFound && stated) {
+    const firstGiven = stated.split(/\s+/)[0]!.toLowerCase();
+    const answer = (nameTexts[spelledFound.index] ?? "").toLowerCase();
+    if (
+      /\blast name\b/.test(answer) &&
+      !/\b(?:first name|name is|my name's)\b/.test(answer) &&
+      spelled.every((word) => likeness(word, firstGiven) < SAME_NAME_LIKENESS)
+    ) {
+      spelled = [firstGiven, ...spelled];
+      stated = spelled.map(capitalize).join(" ");
+    }
+  }
   // The client's Round 4 script 2: "Name... Tran. T R A N. First name Hoang,
   // H O A N G." Spellings are first-then-last unless the caller says which:
   // the one after "first name" is the first name.
@@ -1364,11 +1381,31 @@ function statedNameAt(
         }
         // "it's actually prateek" is a correction, said on purpose.
         const loose = LOOSE_CUE.test(match[0]) && !/\b(?:actually|really)\b/.test(match[0]);
-        said.push({ index, at, first: match[1] ?? "", second, loose });
+        // 2026-10-28/29, Prateek's calls: "my name is petronella elena
+        // vasquez" kept only "Petronella Elena". A third name word that ends
+        // what they said belongs to the name too.
+        const third = second
+          ? /^\s+([a-z][a-z'-]+)\s*[.!?]?\s*$/.exec(lower.slice(end))?.[1]
+          : undefined;
+        said.push({
+          index,
+          at,
+          first: match[1] ?? "",
+          second: third && canBeName(second) && canBeName(third) ? `${second} ${third}` : second,
+          loose,
+        });
       }
     }
+    // "first name petronella middle name vasquez last name okonkwo": the
+    // middle name is kept with the last, since a record has two name fields.
+    const middle = /\bmiddle name(?:\s+is)?\s+([a-z][a-z'-]+)/.exec(lower)?.[1];
     for (const match of lower.matchAll(LAST_NAME_STATEMENT)) {
-      said.push({ index, at: match.index ?? 0, last: match[1] ?? "" });
+      const surname = match[1] ?? "";
+      said.push({
+        index,
+        at: match.index ?? 0,
+        last: middle && canBeName(middle) && middle !== surname ? `${middle} ${surname}` : surname,
+      });
     }
     // The letters are what was spelled on purpose; the word before them is
     // only as good as the hearing. Live test, 2026-10-26: "Nguyen" was heard
@@ -1420,7 +1457,7 @@ function statedNameAt(
       // "Winterbone" already given, not a different surname (2026-10-25).
       const cut = last !== null && last.toLowerCase().startsWith(item.last.toLowerCase());
       if (canBeName(item.last) && !cut) {
-        last = capitalize(item.last);
+        last = item.last.split(" ").map(capitalize).join(" ");
         index = item.index;
       }
       continue;
@@ -1448,7 +1485,10 @@ function statedNameAt(
       }
       continue;
     }
-    const second = item.second && canBeName(item.second) ? capitalize(item.second) : null;
+    const second =
+      item.second && canBeName(item.second)
+        ? item.second.split(" ").map(capitalize).join(" ")
+        : null;
     // 2026-10-26, Prateek's test call: asked "is your name Walter Pempert?",
     // he said "it's pemberton p e m p e r t o n", and Grace closed with
     // "You're all set, Pemperton". One word that is the last name, not the

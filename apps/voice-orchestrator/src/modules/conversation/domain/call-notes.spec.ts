@@ -1225,3 +1225,35 @@ describe("letters spelled for the street are not the name", () => {
     ).toContain("john");
   });
 });
+
+/** 2026-10-28/29, Prateek's calls: three-word names lost a word. */
+describe("three-word names keep every word", () => {
+  const notes = (...said: string[]) =>
+    buildCallNotes(
+      said,
+      said.flatMap((text) => [
+        { speaker: "agent", text: "Can I get your name?" },
+        { speaker: "caller", text },
+      ]),
+    );
+
+  it.each([
+    [["my name is petronella elena vasquez"], "Petronella Elena Vasquez"],
+    [["my name is cordelia mwangi hartley"], "Cordelia Mwangi Hartley"],
+    [
+      ["my first name is petronella middle name vasquez last name okonkwo"],
+      "Petronella Vasquez Okonkwo",
+    ],
+    [["my name is john smith"], "John Smith"],
+    [["my name is john smith and i have a leak"], "John Smith"],
+  ])("%p", (said, expected) => {
+    expect(notes(...said).statedName).toBe(expected);
+  });
+
+  it('a first name given, then two spelled with "last name" between them', () => {
+    expect(
+      notes("yes my name is cordelia", "mwangi m w a n g i and last name hartley h a r t l e y")
+        .spelledName,
+    ).toEqual(["cordelia", "mwangi", "hartley"]);
+  });
+});
