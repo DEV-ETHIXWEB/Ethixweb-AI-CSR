@@ -407,6 +407,8 @@ export function buildCallNotes(
 const FIXTURE =
   /\b((?:kitchen|bathroom|master|guest|hall|upstairs|downstairs|basement|outside|outdoor|front|back|main|second|half)\s+)?(water heater|hot water tank|hot water|garbage disposal|disposal|toilet|sink|faucet|tap|shower|bathtub|tub|drain|pipe|sewer line|sewer|septic|sump pump|water line|gas line|main line|valve|spigot|hose bib|sprinkler|boiler|radiator|water softener|dishwasher|washing machine|washer)s?\b/gi;
 const MAX_FIXTURES = 3;
+/** FIXTURE at the very start of the text. */
+const FIXTURE_AHEAD = new RegExp(`^(?:${FIXTURE.source})`, "i");
 
 /**
  * 2026-10-25, the client's test calls: "what plumbing issue are you facing"
@@ -1540,6 +1542,12 @@ function statedNameAt(
             .slice(1, 3)
             .some((word) => STREET_SUFFIXES.has(word))
         ) {
+          continue;
+        }
+        // 2026-10-30, Prateek's call: "okay sorry i'm back so the it it is
+        // clock bathroom sink" ("it's a clogged bathroom sink") gave the name
+        // Clock. A word straight before a fixture is describing it.
+        if (LOOSE_CUE.test(match[0]) && FIXTURE_AHEAD.test(lower.slice(firstEnd).trimStart())) {
           continue;
         }
         // "it's steadily dripping": an -ly word straight before a verb is

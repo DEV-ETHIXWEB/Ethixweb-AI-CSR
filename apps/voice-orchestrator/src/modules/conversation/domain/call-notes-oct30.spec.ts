@@ -183,3 +183,30 @@ describe("Prateek, 2026-10-30: a lone word straight after a first name", () => {
     }
   });
 });
+
+// "okay sorry i'm back so the it it is clock bathroom sink" ("it's a clogged
+// bathroom sink") gave the name Clock, and Grace said "Thanks for that, Clock".
+describe("Prateek, 2026-10-30: a word straight before a fixture is not a name", () => {
+  it("'it is clock bathroom sink' gives no name", () => {
+    const notes = notesAfter([
+      {
+        speaker: "caller",
+        text: "so i might need you to pause okay the issue is my bathroom sink is clogged and one second one second",
+      },
+      {
+        speaker: "agent",
+        text: "Sure, take your time. Is the sink currently overflowing or just draining slowly?",
+      },
+      { speaker: "caller", text: "okay sorry i'm back so the it it is clock bathroom sink" },
+    ]);
+    expect(notes.statedName).toBeNull();
+  });
+
+  it("'hey it's maria' and 'it's maria and the kitchen sink is clogged' are still names", () => {
+    expect(notesAfter([{ speaker: "caller", text: "hey it's maria" }]).statedName).toBe("Maria");
+    expect(
+      notesAfter([{ speaker: "caller", text: "it's maria and the kitchen sink is clogged" }])
+        .statedName,
+    ).toBe("Maria");
+  });
+});
