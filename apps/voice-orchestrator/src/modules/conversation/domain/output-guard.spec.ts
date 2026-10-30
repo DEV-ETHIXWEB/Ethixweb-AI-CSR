@@ -546,6 +546,16 @@ describe("the callback number is read back exactly", () => {
     ).toContain("2-oh-6-7-7-1-4-8-2-2");
   });
 
+  // 2026-10-27 tester call: "plus 7-2-oh-7-8-3-2-3-8-5".
+  it("drops a plus said without the 1", () => {
+    const callerId = () => new OutputGuard([], false, "", null, null, false, [], ["7207832385"]);
+    for (const said of ["+7207832385", "plus 7-2-0-7-8-3-2-3-8-5"]) {
+      const out = callerId().apply(`Is ${said} the best number to reach you?`);
+      expect(out).toContain("Is 7-2-oh-7-8-3-2-3-8-5 the best");
+      expect(out).not.toMatch(/plus|\+/);
+    }
+  });
+
   it("leaves house numbers and ZIP codes alone", () => {
     const said = guard().apply("That's 1-7-4-8 Northwest 60th Street, ZIP 9-8-1-0-7.");
     expect(said).toContain("1-7-4-8");

@@ -210,7 +210,9 @@ export type GuardAction =
  * longer than any run looked at, so it was read out as it was. Two extra
  * digits are two edits like any other.
  */
-const PHONE_RUN = /(?:\+\s?1[\s.-]*)?(?:\d[\s.()-]{0,2}){6,11}\d/g;
+// 2026-10-27 tester call: "+7207832385" was read out as "plus 7-2-oh-...". A
+// "+" or "plus" without the 1 goes with the number too.
+const PHONE_RUN = /(?:(?:\+|\bplus\s+)\s?(?:1[\s.-]*)?)?(?:\d[\s.()-]{0,2}){6,11}\d/gi;
 const PHONE_READBACK_MAX_EDITS = 2;
 
 function withTheRealNumber(sentence: string, knownPhones: readonly string[]): string {
