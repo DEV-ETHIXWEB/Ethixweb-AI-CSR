@@ -958,7 +958,10 @@ function lastNameOnItsOwn(
     return null;
   }
   for (let k = utterances.length - 1; k >= 1; k -= 1) {
-    if (!utterances[k - 1]!.answersNameQuestion || utterances[k]!.answersNameQuestion) {
+    const before = utterances[k - 1]!;
+    const gaveTheName =
+      before.answersNameQuestion || wordsOf(before.text).includes(stated.toLowerCase());
+    if (!gaveTheName || utterances[k]!.answersNameQuestion) {
       continue;
     }
     const words = wordsOf(utterances[k]!.text).filter((word) => !NAME_ANSWER_FILLER.has(word));

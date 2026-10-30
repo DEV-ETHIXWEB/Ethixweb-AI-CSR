@@ -169,6 +169,17 @@ describe("Prateek, 2026-10-30: a lone word straight after a first name", () => {
     expect(notes.lastNameMaybe).toBe("Oakley");
   });
 
+  it("also when the first name was volunteered, not asked for", () => {
+    const notes = notesAfter([
+      { speaker: "caller", text: "my kitchen drain is clogged" },
+      { speaker: "agent", text: "Is water backing up right now, or draining slowly?" },
+      { speaker: "caller", text: "it's cassandra" },
+      { speaker: "agent", text: "Nice to meet you, Cassandra. Is it backing up?" },
+      { speaker: "caller", text: "oakley" },
+    ]);
+    expect(notes.lastNameMaybe).toBe("Oakley");
+  });
+
   it("not when a last name is already known, a number, or a unit word", () => {
     const named = notesAfter([
       { speaker: "agent", text: "Can I get your name?" },

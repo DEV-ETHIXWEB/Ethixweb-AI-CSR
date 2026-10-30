@@ -2011,6 +2011,104 @@ const PRATEEK1029_SCENARIOS: Scenario[] = [
   },
 ];
 
+/** Prateek's 2026-10-30 calls on the live line. */
+const PRATEEK1030_SCENARIOS: Scenario[] = [
+  {
+    id: "prateek1030-01-labelled-three-names",
+    category: "prateek1030",
+    turns: [
+      "okay my kitchen faucet handle is broken so i need to get that fixed",
+      "walter is my first name n kosi n k o s i is my middle name and brian is my last name",
+      "it's five five one two finney avenue north seattle washington nine eight one zero three",
+      "yes",
+      "yes",
+    ],
+    checks: [
+      savedAs("saves all three names", /Walter[\s\S]*Nkosi[\s\S]*Brian/),
+      neverSays("never calls him only Nkosi", /\b(thanks|got it|all set),? nkosi\b/),
+    ],
+  },
+  {
+    id: "prateek1030-02-house-number-corrected",
+    category: "prateek1030",
+    turns: [
+      "my bathroom sink is draining really slowly",
+      "it's cassandra oakley",
+      "eight three one two thirty fourth avenue south seattle washington nine eight one four four",
+      "it's not eight three one two it's three three one two",
+      "yes",
+      "yes",
+    ],
+    checks: [
+      savedAs("saves 3312", /3312/),
+      {
+        label: "never saves 8312",
+        run: (ctx) => (/8312/.test(saved(ctx)) ? `saved: ${saved(ctx).slice(0, 300)}` : null),
+      },
+    ],
+  },
+  {
+    id: "prateek1030-03-street-renamed",
+    category: "prateek1030",
+    turns: [
+      "my kitchen faucet is dripping",
+      "my name is walter brian",
+      "it's five five one two greenny avenue north seattle washington nine eight one zero three",
+      "it's not greeny avenue it's finney finney avenue",
+      "yes",
+      "yes",
+    ],
+    checks: [savedAs("saves Finney", /[Ff]inney/)],
+  },
+  {
+    id: "prateek1030-04-text-not-call",
+    category: "prateek1030",
+    turns: [
+      "hi i am hard of hearing so going forward is there a text number or email i could use instead for things like scheduling",
+      "my kitchen faucet handle is broken",
+      "my name is walter brian",
+      "five five one two finney avenue north seattle washington nine eight one zero three",
+      "yes",
+      "yes",
+    ],
+    checks: [
+      savedAs("notes the text or email preference", /\b(text|email)\b/i),
+      neverSays(
+        "never says the team will call",
+        /\b(team|they)(?: will|'ll) (?:give you a )?call\b/,
+      ),
+    ],
+  },
+  {
+    id: "prateek1030-05-hold-asks-nothing",
+    category: "prateek1030",
+    turns: [
+      "just so you know i have got my toddler here",
+      "so i might need you to pause okay the issue is my bathroom sink is clogged and one second one second",
+    ],
+    checks: [
+      {
+        label: "asks nothing after 'one second'",
+        run: (ctx) => (/\?/.test(ctx.agentTurns[1] ?? "") ? `reply: ${ctx.agentTurns[1]}` : null),
+      },
+    ],
+  },
+  {
+    id: "prateek1030-06-last-name-on-its-own",
+    category: "prateek1030",
+    turns: [
+      "my kitchen drain is clogged",
+      "it's cassandra",
+      "oakley",
+      "yes",
+      "three three one two thirty fourth avenue south seattle washington nine eight one four four",
+      "yes",
+      "yes",
+    ],
+    checks: [savedAs("saves the last name", /Oakley/)],
+  },
+];
+
 const VENDOR_SCENARIOS: Scenario[] = [
   {
     id: "vendor-01-spelled-name-kept",
@@ -4189,6 +4287,7 @@ const SCENARIOS: Scenario[] = [
   ...ROUND4_SCENARIOS,
   ...ROUND5_SCENARIOS,
   ...PRATEEK1029_SCENARIOS,
+  ...PRATEEK1030_SCENARIOS,
   ...PRATEEK1027_SCENARIOS,
 ];
 
