@@ -210,3 +210,70 @@ describe("Prateek, 2026-10-30: a word straight before a fixture is not a name", 
     ).toBe("Maria");
   });
 });
+
+// The name read back as T-E-S-M-O-N-D O-K-O-R-I-E, the caller said "not t
+// it's d t t for top s m n", and Grace said "Your name is Dttsmn".
+describe("Prateek, 2026-10-30: 'not t it's d' corrects one letter", () => {
+  // The real call, up to the letter correction.
+  const turns: Turn[] = [
+    {
+      speaker: "caller",
+      text: "hi sorry i just called a minute ago i have the call dropped right in the middle so this is me calling stale back to finish",
+    },
+    {
+      speaker: "agent",
+      text: "Got it! I can help you finish that up. What problem were you experiencing?",
+    },
+    {
+      speaker: "caller",
+      text: "well i had already given my name it's esmont oproi and i think my phone number was two zero six seven seven one four eight two two",
+    },
+    { speaker: "agent", text: "You're right, I've got it. Es" },
+    {
+      speaker: "caller",
+      text: "well i had already given my name it's esmont oproi and i think my phone number was two zero six seven seven one four eight two two",
+    },
+    { speaker: "agent", text: "Could you spell your first name" },
+    {
+      speaker: "caller",
+      text: "and i'm not sure if actually it saved before and the issue is a leaking water heater and the address is eight eight one four rainier avenue south seattle washington nine eight one one eight",
+    },
+    {
+      speaker: "agent",
+      text: "[slowly] Let me make sure I have it right: Esmont, E-S-M-O-N-T, Oproi, O-P-R-O-I, at 8-8-1-4 Rainier Avenue South, ZIP 9-8-1-1-8. Is that right?",
+    },
+    { speaker: "caller", text: "yes but my name is not esmond it's desmond" },
+    { speaker: "agent", text: "Sorry about that! Could you spell your first name for me?" },
+    { speaker: "caller", text: "e e s m o n e last name is o k r o i d" },
+    {
+      speaker: "agent",
+      text: "Got it, Eesmone. [slowly] The callback number I have is 2-oh-6-7-7-1-4-8-2-2. Is that right?",
+    },
+    { speaker: "caller", text: "yes what's my name and name" },
+    {
+      speaker: "agent",
+      text: "You're Eesmone Okroid. [slowly] Let me confirm your details: at 8-8-1-4 Rainier Avenue South, ZIP 98118, with the callback number 2-oh-2-oh-6-7-7-1-4-8-2-2. Is that right?",
+    },
+    {
+      speaker: "caller",
+      text: "no bad not my name the have you you've jumbled up my name my name is s mund fokoroi it's t e s m o n d o k o r i e",
+    },
+    {
+      speaker: "agent",
+      text: "Sorry about that! Just to confirm, your name is Tesmond Okorie, spelled T-E-S-M-O-N-D, O-K-O-R-I-E.  Is that right?",
+    },
+    { speaker: "caller", text: "not t it's d t t for top s m n" },
+  ];
+
+  it("is Desmond Okorie", () => {
+    expect(notesAfter(turns).spelledName).toEqual(["desmond", "okorie"]);
+  });
+
+  it("letters with no vowel are never a name", () => {
+    const notes = notesAfter([
+      { speaker: "agent", text: "Could you spell your name?" },
+      { speaker: "caller", text: "d t t s m n" },
+    ]);
+    expect(notes.spelledName).toBeNull();
+  });
+});

@@ -210,27 +210,52 @@ export function buildCallNotes(
   // there is a reason to read them as one: Grace asked for a spelling, the
   // caller said they are spelling or giving their name, or the letters match
   // the name they gave.
-  const spellings = spelledNamesIn(nameTexts, spellingAsked).filter(
-    (spelling) =>
-      spellingAsked ||
-      utterances[spelling.index]?.answersNameQuestion === true ||
-      SPELLING_CONTEXT.test(nameTexts[spelling.index] ?? "") ||
-      isOnlyASpelling(nameTexts[spelling.index] ?? "") ||
-      (leadName !== null &&
-        spelling.words.some((word) =>
-          leadName
-            .toLowerCase()
-            .split(/[\s-]+/)
-            .some((stated) => likeness(word, stated) >= SAME_NAME_LIKENESS),
-        )) ||
-      (statedFound !== null &&
-        spelling.words.some((word) =>
-          [
-            statedFound.value.toLowerCase().replace(/\s+/g, ""),
-            ...statedFound.value.toLowerCase().split(/\s+/),
-          ].some((stated) => likeness(word, stated) >= SAME_NAME_LIKENESS),
-        )),
-  );
+  const spellings = spelledNamesIn(nameTexts, spellingAsked)
+    .filter((spelling) =>
+      // 2026-10-30, Prateek's call: "not t it's d t t for top s m n" became
+      // the name "Dttsmn". Letters with no vowel are not a name (Ng still is).
+      spelling.words.some((word) => word.length < 3 || /[aeiouy]/.test(word)),
+    )
+    .filter(
+      (spelling) =>
+        spellingAsked ||
+        utterances[spelling.index]?.answersNameQuestion === true ||
+        SPELLING_CONTEXT.test(nameTexts[spelling.index] ?? "") ||
+        isOnlyASpelling(nameTexts[spelling.index] ?? "") ||
+        (leadName !== null &&
+          spelling.words.some((word) =>
+            leadName
+              .toLowerCase()
+              .split(/[\s-]+/)
+              .some((stated) => likeness(word, stated) >= SAME_NAME_LIKENESS),
+          )) ||
+        (statedFound !== null &&
+          spelling.words.some((word) =>
+            [
+              statedFound.value.toLowerCase().replace(/\s+/g, ""),
+              ...statedFound.value.toLowerCase().split(/\s+/),
+            ].some((stated) => likeness(word, stated) >= SAME_NAME_LIKENESS),
+          )),
+    );
+  // Same call: the name read back as T-E-S-M-O-N-D, the caller said "not t
+  // it's d". One letter corrected changes that letter in the last spelling.
+  for (let c = nameTexts.length - 1; c >= 0; c -= 1) {
+    if (spellings.some((spelling) => spelling.index > c)) {
+      break;
+    }
+    const fix = letterCorrection(nameTexts[c]!);
+    const target = spellings.filter((spelling) => spelling.index <= c).at(-1);
+    if (!fix || !target) {
+      continue;
+    }
+    const at = target.words.findIndex((word) => word.includes(fix.from));
+    if (at >= 0) {
+      const words = [...target.words];
+      words[at] = words[at]!.replace(fix.from, fix.to);
+      spellings.push({ words, index: c });
+    }
+    break;
+  }
   let spelledFound = spellings.at(-1) ?? null;
   // A three-letter spelled run with nothing to corroborate it is far more
   // often speech-recognition debris than a name. Found 2026-10-22 in a real
@@ -963,6 +988,15 @@ function lastNameJustAsked(turns: ReadonlyArray<{ speaker: string; text: string 
     lastAgent < turns.length - 1 &&
     LAST_NAME_QUESTION.test(turns[lastAgent]!.text)
   );
+}
+
+/** "not t it's d", "not a t, a d": one letter of a spelling corrected. */
+function letterCorrection(text: string): { from: string; to: string } | null {
+  const match =
+    /\bnot\s+(?:an?\s+)?([a-z])\s*,?\s+(?:it'?s|its|it is|but|that'?s)\s+(?:an?\s+)?([a-z])\b/.exec(
+      text.toLowerCase(),
+    ) ?? /\bnot\s+(?:an?\s+)?([a-z])\s*,\s*(?:an?\s+)?([a-z])\b/.exec(text.toLowerCase());
+  return match?.[1] && match[2] && match[1] !== match[2] ? { from: match[1], to: match[2] } : null;
 }
 
 /**
