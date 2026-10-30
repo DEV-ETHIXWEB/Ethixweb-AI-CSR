@@ -1,4 +1,4 @@
-import { buildCallNotes } from "./call-notes";
+import { buildCallNotes, formatCallNotes } from "./call-notes";
 
 // 2026-10-30, Prateek's test calls on the live line.
 
@@ -141,5 +141,45 @@ describe("labelled name parts, from earlier recorded calls", () => {
       { speaker: "caller", text: "excellent but only my last name is o y e l a r a n oylaran" },
     ]);
     expect(notes.statedName).toBe("Barnaby Oyelaran");
+  });
+});
+
+// "it's cassandra", Grace asked for the address, and "oakley" came straight
+// after. The last name was dropped; she had to say it twice more.
+describe("Prateek, 2026-10-30: a lone word straight after a first name", () => {
+  const cassandra: Turn[] = [
+    { speaker: "agent", text: "Got it; thanks for sharing that. Can I get your name, please?" },
+    { speaker: "caller", text: "it's cassandra" },
+    { speaker: "agent", text: "Got it, Cassandra, C-A-S-S-A-N-D-R-A. What's the service address?" },
+    { speaker: "caller", text: "oakley" },
+  ];
+
+  it("is offered as the last name to confirm", () => {
+    const notes = notesAfter(cassandra);
+    expect(notes.lastNameMaybe).toBe("Oakley");
+    expect(formatCallNotes(notes)).toContain('"Is Oakley your last name?"');
+  });
+
+  it("stays offered on the next turn", () => {
+    const notes = notesAfter([
+      ...cassandra,
+      { speaker: "agent", text: "Thanks for that, Cassandra. What's the street address?" },
+      { speaker: "caller", text: "what's my second name" },
+    ]);
+    expect(notes.lastNameMaybe).toBe("Oakley");
+  });
+
+  it("not when a last name is already known, a number, or a unit word", () => {
+    const named = notesAfter([
+      { speaker: "agent", text: "Can I get your name?" },
+      { speaker: "caller", text: "it's cassandra oakley" },
+      { speaker: "agent", text: "What's the service address?" },
+      { speaker: "caller", text: "seattle" },
+    ]);
+    expect(named.lastNameMaybe).toBeUndefined();
+    for (const said of ["unit", "eight three one two", "yes"]) {
+      const notes = notesAfter([...cassandra.slice(0, 3), { speaker: "caller", text: said }]);
+      expect(notes.lastNameMaybe).toBeUndefined();
+    }
   });
 });

@@ -27,6 +27,8 @@ export interface CallNotes {
   spellingAsked: boolean;
   spelledName: string[] | null;
   statedName: string | null;
+  /** A lone word said straight after a first name only; see lastNameOnItsOwn. */
+  lastNameMaybe?: string;
   street: string | null;
   zip: string | null;
   phone: string | null;
@@ -370,10 +372,12 @@ export function buildCallNotes(
       stated = parts.map(capitalize).join(" ");
     }
   }
+  const lastNameMaybe = stated ? lastNameOnItsOwn(utterances, stated) : null;
   return {
     spellingAsked,
     spelledName: spelled,
     statedName: stated,
+    ...(lastNameMaybe ? { lastNameMaybe } : {}),
     street: lastStreet(callerTexts),
     zip: lastZip(callerTexts),
     phone: spokenPhoneDigits(callerTexts),
@@ -546,6 +550,13 @@ export function formatCallNotes(notes: CallNotes): string | null {
         `${splitForFields(notes.statedName)}. ` +
         "Confirm it back as EXACTLY those letters, never a different or more familiar-sounding " +
         "spelling, and use whatever they correct it to",
+    );
+  }
+  if (notes.lastNameMaybe) {
+    facts.push(
+      `right after their first name they said "${notes.lastNameMaybe}" on its own: unless it is ` +
+        `part of the address, it is most likely their last name, so ask once "Is ` +
+        `${notes.lastNameMaybe} your last name?"`,
     );
   }
   if (notes.street) {
@@ -904,6 +915,40 @@ const NAME_ANSWER_FILLER = new Set([
   "name",
   "s",
 ]);
+
+/**
+ * 2026-10-30, Prateek's call: "it's cassandra", Grace asked for the address,
+ * and "oakley" came straight after. The last name was dropped, and Cassandra
+ * had to say it again twice. A lone name-like word answering whatever Grace
+ * asked next, when only a first name is known, is most likely the last name,
+ * but could be a place, so it is offered to the model to confirm, not taken.
+ */
+function lastNameOnItsOwn(
+  utterances: ReadonlyArray<{ text: string; answersNameQuestion: boolean }>,
+  stated: string,
+): string | null {
+  if (stated.split(/\s+/).length !== 1) {
+    return null;
+  }
+  for (let k = utterances.length - 1; k >= 1; k -= 1) {
+    if (!utterances[k - 1]!.answersNameQuestion || utterances[k]!.answersNameQuestion) {
+      continue;
+    }
+    const words = wordsOf(utterances[k]!.text).filter((word) => !NAME_ANSWER_FILLER.has(word));
+    const word = words[0];
+    if (
+      words.length === 1 &&
+      word !== undefined &&
+      canBeName(word) &&
+      !UNIT_WORDS.has(word) &&
+      word !== stated.toLowerCase() &&
+      !/\d/.test(collapseSpokenDigits(utterances[k]!.text))
+    ) {
+      return capitalize(word);
+    }
+  }
+  return null;
+}
 
 /** Grace's latest words asked for the last name, and the caller has answered since. */
 function lastNameJustAsked(turns: ReadonlyArray<{ speaker: string; text: string }>): boolean {
