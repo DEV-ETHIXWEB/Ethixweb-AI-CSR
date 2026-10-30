@@ -583,16 +583,18 @@ export class HandleTurnUseCase {
     }
     // See WANTS_A_TEXT. Said this turn: acknowledge it; said earlier and the
     // request is not saved yet: make sure it reaches the team.
-    if (!conversation.leadId) {
-      if (WANTS_A_TEXT.test(command.transcript)) {
-        annotatedTranscript = `${TEXT_PREFERENCE_NOTE} ${annotatedTranscript}`;
-      } else if (
-        conversation.transcript.some(
-          (entry) => entry.speaker === "caller" && WANTS_A_TEXT.test(entry.text),
-        )
-      ) {
-        annotatedTranscript = `${TEXT_PREFERENCE_REMINDER} ${annotatedTranscript}`;
-      }
+    const textAskedNow = WANTS_A_TEXT.test(command.transcript);
+    const prefersText =
+      textAskedNow ||
+      conversation.transcript.some(
+        (entry) => entry.speaker === "caller" && WANTS_A_TEXT.test(entry.text),
+      );
+    if (textAskedNow && conversation.leadId) {
+      annotatedTranscript = `${TEXT_PREFERENCE_AFTER_SAVE} ${annotatedTranscript}`;
+    } else if (textAskedNow) {
+      annotatedTranscript = `${TEXT_PREFERENCE_NOTE} ${annotatedTranscript}`;
+    } else if (prefersText && !conversation.leadId) {
+      annotatedTranscript = `${TEXT_PREFERENCE_REMINDER} ${annotatedTranscript}`;
     }
     const addressNote = this.addressCheckNote(
       conversation,
@@ -914,6 +916,8 @@ export class HandleTurnUseCase {
       repeatRequested: wantsItAgain,
       // See output-guard.ts noQuestions, and endsWithHoldRequest.
       noQuestions: gasLeak || endsWithHoldRequest(command.transcript),
+      // See output-guard.ts prefersText.
+      prefersText,
       // See output-guard.ts withTheRealNumber: the number Grace reads back
       // has to be one of these, digit for digit.
       knownPhones: [
@@ -1768,6 +1772,7 @@ export class HandleTurnUseCase {
       nameWords: readonly string[];
       knownPhones: readonly string[];
       noQuestions?: boolean;
+      prefersText?: boolean;
     },
     onChunk?: (text: string) => void,
     /** What earlier passes of this same turn already said, so a later pass cannot say it again. */
@@ -1799,6 +1804,7 @@ export class HandleTurnUseCase {
       guardFacts.nameWords,
       guardFacts.knownPhones,
       guardFacts.noQuestions ?? false,
+      guardFacts.prefersText ?? false,
     );
     const emit = (segment: string): void => {
       const guarded = guard.apply(segment);
@@ -3106,12 +3112,20 @@ function annotateServiceAreaResult(
  * appointment time from here" and the preference was never noted. Grace cannot
  * text, but the team can, so the preference is passed on, without a promise.
  */
+//
+// 2026-10-30, Prateek's call: "is there a text number or email i could use
+// instead" and "could that come as a text rather than a call" were missed
+// entirely, and Grace closed with "The team will call you". Email counts too,
+// and once the preference is known Grace never says the team will call; see
+// output-guard.ts prefersText.
 const WANTS_A_TEXT =
-  /\b(?:text me|send (?:me )?a text|by text|via text|a text instead|text (?:instead|is better|is fine|would be better)|prefer (?:a )?text)\b/i;
+  /\b(?:text me|send (?:me )?a text|by text|via text|a text instead|text (?:instead|is better|is fine|would be better)|prefer (?:a |an )?(?:text|email)|(?:as|by|via) (?:a |an )?(?:text|email)|(?:text|email) rather than|text (?:number|line)|text or (?:an )?email|email (?:me|instead)|(?:instead of|rather than) (?:a )?(?:call|calling|phone call))\b/i;
 const TEXT_PREFERENCE_NOTE =
-  '[The caller would rather get a text than a call. Say you will note that they prefer a text for the team, without promising the team will text. Put "Prefers a text instead of a call" in problem_summary.]';
+  '[The caller would rather get a text or email than a call. Say you will note that for the team, without promising the team will text. Put "Prefers a text or email instead of a call" in problem_summary. Never say the team will call them; say the team will reach out.]';
 const TEXT_PREFERENCE_REMINDER =
-  '[Earlier the caller asked to be texted rather than called: problem_summary must include "Prefers a text instead of a call".]';
+  '[Earlier the caller asked for a text or email rather than a call: problem_summary must include "Prefers a text or email instead of a call". Never say the team will call them; say the team will reach out.]';
+const TEXT_PREFERENCE_AFTER_SAVE =
+  '[The caller would rather get a text or email than a call. Call updateLead to add "Prefers a text or email instead of a call" to problem_summary, then say you have noted it for the team. Never say the team will call them; say the team will reach out.]';
 
 const ASKS_ABOUT_COVERAGE =
   /\b(come out|come to|service|serve|cover|go out|work in|in your area|somewhere you)\b/i;

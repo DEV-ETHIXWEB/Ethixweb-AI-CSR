@@ -5545,6 +5545,10 @@ it("an upset caller asking for a person hears an apology first", async () => {
 
 // The client's Round 5 script 10: a caller who asks to be texted.
 describe("a caller who would rather get a text", () => {
+  const say = (value: string) => [
+    { type: "text_delta" as const, text: value },
+    { type: "done" as const, stopReason: "end_turn" as const },
+  ];
   it("is noted when said, and kept in mind until the request is saved", async () => {
     const repository = new FakeConversationRepository();
     repository.seed(baseConversation());
@@ -5564,6 +5568,53 @@ describe("a caller who would rather get a text", () => {
     expect(lastSent()).toContain("would rather get a text");
 
     await useCase.execute(baseCommand({ transcript: "yes", idempotencyKey: "turn-2" }));
-    expect(lastSent()).toContain("Prefers a text instead of a call");
+    expect(lastSent()).toContain("Prefers a text or email instead of a call");
+  });
+
+  // 2026-10-30, Prateek's call: neither phrasing was recognised, and Grace
+  // closed with "The team will call you to set up a time".
+  it.each([
+    "is there a text number or email i could use instead for things like scheduling",
+    "okay so for today's confirmation could that come as a text rather than a call since that is easier for me",
+  ])("Prateek 2026-10-30: %p is a text preference", async (transcript) => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    const { useCase } = buildUseCase({ aiProvider, repository });
+    await useCase.execute(baseCommand({ transcript }));
+    const sent = String(
+      (aiProvider.requests.at(-1)?.messages ?? []).filter((m) => m.role === "user").at(-1)
+        ?.content ?? "",
+    );
+    expect(sent).toContain("would rather get a text or email");
+  });
+
+  it("Prateek 2026-10-30: never hears that the team will call", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      say("Noted. The team will call you to set up a time. Anything else I can help with?"),
+      say("I can't send texts myself, but they'll call you back with the time. Anything else?"),
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+    const first = await useCase.execute(
+      baseCommand({ transcript: "could that come as a text rather than a call" }),
+    );
+    expect(first.responseText).toContain("The team will reach out to set up a time.");
+    const second = await useCase.execute(
+      baseCommand({ transcript: "okay", idempotencyKey: "turn-2" }),
+    );
+    expect(second.responseText).toContain("they will reach out with the time.");
+  });
+
+  it("a caller who never asked for a text still hears the team will call", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [say("You're all set. The team will call you to set up a time.")];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+    const result = await useCase.execute(baseCommand({ transcript: "yes that's right" }));
+    expect(result.responseText).toContain("The team will call you");
   });
 });

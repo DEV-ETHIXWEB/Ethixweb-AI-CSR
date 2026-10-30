@@ -75,6 +75,10 @@ const PRICE_SCOPE_HEDGE = /\b(whether|note|ask|not sure|don'?t know|can'?t say|c
 export const SAFE_CHANGE_LINE =
   "I can't change appointments from here, but I'll pass this to the team and they'll confirm it with you.";
 
+/** "The team will call you to set up a time", "They'll call you back": see prefersText. */
+const TEAM_WILL_CALL =
+  /\b(the team|our team|they|someone|a technician|we)(?: will|'ll) (?:give you a call(?: back)?|call you(?: back)?|call)\b/i;
+
 const META_LEAK =
   /\b(per (the|my) (instructions?|prompt|rules?|guidelines?)|according to (the|my) (instructions?|prompt|guidelines?)|the (caller|customer) (has|had|already|just|is|said|wants|signed)|already said goodbye|ended the call|the call is over|system note|as an ai\b|my (system )?prompt|no further (response|action) (is )?(needed|required|necessary)|\b(this|that|my|the next|in this) turn\b|(i'?m |i am |i'?ve |i have )(flagg|mark)(ed|ing) (this|it|that)( as| now|\b)|\bretrying\b|\b(i'?ll|i will|let me) retry\b|\bthe system (wants|needs|says|requires|rejected|flagged|won'?t|didn'?t|is asking)\b|(i'?m|i am) (checking|looking into|looking up|pulling up) (that|this|it|your)\b|\blet me (check|look up|pull up|look into|see) (that|this|it|your|on that|how)\b|\b(saving|submitting|sending) (your|the|this) (request|info|information|details|lead)( now)?\b)/i;
 
@@ -178,6 +182,7 @@ function hyphenateHouseNumber(sentence: string, houseNumber: string | null): str
 export type GuardAction =
   | "meta_leak"
   | "question_after_safety_line"
+  | "call_promised_to_texter"
   | "timing_promise"
   | "change_claim"
   | "cause_claim"
@@ -504,6 +509,11 @@ export class OutputGuard {
      * they are out; the gas-leak note already says so, and this enforces it.
      */
     private readonly noQuestions = false,
+    /**
+     * 2026-10-30, Prateek's call: asked for a text or email instead of a
+     * call, he still heard "The team will call you to set up a time".
+     */
+    private readonly prefersText = false,
   ) {
     this.spokeAlready = alreadySpokeThisTurn;
     this.questionsThisTurn = splitSentences(alreadySaidThisTurn)
@@ -701,7 +711,7 @@ export class OutputGuard {
     const segment = this.withoutStageDirections(rawSegment);
     const out: string[] = [];
     let slow = false;
-    for (const sentence of splitSentences(segment)) {
+    for (let sentence of splitSentences(segment)) {
       const plain = words(sentence);
       if (!plain) {
         out.push(sentence);
@@ -714,6 +724,10 @@ export class OutputGuard {
       if (this.noQuestions && isQuestion(sentence)) {
         this.actions.push("question_after_safety_line");
         continue;
+      }
+      if (this.prefersText && TEAM_WILL_CALL.test(sentence)) {
+        this.actions.push("call_promised_to_texter");
+        sentence = sentence.replace(TEAM_WILL_CALL, "$1 will reach out");
       }
       // Back-to-back identical sentences, however short ("Good luck with it.
       // Good luck with it."), QA 2026-10-13.
