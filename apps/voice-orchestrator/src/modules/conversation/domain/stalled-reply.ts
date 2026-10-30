@@ -160,6 +160,31 @@ export function isHoldRequest(callerTranscript: string): boolean {
   );
 }
 
+/**
+ * 2026-10-30, Prateek's call: "the issue is my bathroom sink is clogged and
+ * one second one second". Grace said "Sure, take your time. Is the sink
+ * overflowing or just draining slowly?" A caller who has stepped away cannot
+ * hear the question. The hold is what they ended on, so nothing is asked;
+ * "hold on, it's 4512 maple street" has moved on and is an ordinary turn.
+ */
+export function endsWithHoldRequest(callerTranscript: string): boolean {
+  const text = callerTranscript.trim().toLowerCase();
+  const matches = [
+    ...text.matchAll(
+      /\b(?:hold on|hang on|one (?:sec|second|moment|minute)|just a (?:sec|second|moment|minute)|give me a (?:sec|second|moment|minute)|wait a (?:sec|second|moment|minute)|(?:need you to |can you |please )pause)\b/g,
+    ),
+  ];
+  const last = matches.at(-1);
+  if (!last) {
+    return false;
+  }
+  const after = text.slice((last.index ?? 0) + last[0].length).match(/[a-z0-9']+/g) ?? [];
+  return after.length <= 3;
+}
+
+/** What Grace says to a hold request when the reply had nothing else to say. */
+export const HOLD_REPLY = "Sure, take your time.";
+
 export function isStalledReply(responseText: string): boolean {
   const text = responseText.trim();
   if (text.length === 0) {

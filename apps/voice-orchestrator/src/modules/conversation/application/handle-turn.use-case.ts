@@ -75,6 +75,8 @@ import {
 import { compressMessages } from "../domain/context-window";
 import {
   isHoldRequest,
+  endsWithHoldRequest,
+  HOLD_REPLY,
   isPureBackchannel,
   isRepeatRequest,
   isStalledReply,
@@ -910,8 +912,8 @@ export class HandleTurnUseCase {
       // recognised when the street type is not in the same sentence.
       houseNumber: /^\d{3,6}$/.test(houseNumber) ? houseNumber : null,
       repeatRequested: wantsItAgain,
-      // See output-guard.ts noQuestions.
-      noQuestions: gasLeak,
+      // See output-guard.ts noQuestions, and endsWithHoldRequest.
+      noQuestions: gasLeak || endsWithHoldRequest(command.transcript),
       // See output-guard.ts withTheRealNumber: the number Grace reads back
       // has to be one of these, digit for digit.
       knownPhones: [
@@ -1551,6 +1553,11 @@ export class HandleTurnUseCase {
       trailsOff(command.transcript) ||
       isHoldRequest(command.transcript) ||
       isPureBackchannel(command.transcript);
+    // A caller who asked Grace to wait hears that she will, not nothing.
+    if (!responseText.trim() && !interrupted && endsWithHoldRequest(command.transcript)) {
+      responseText = HOLD_REPLY;
+      onChunk?.(responseText);
+    }
     if (!responseText.trim() && !interrupted && !silenceWasIntended) {
       this.logger.warn("turn produced no spoken text — speaking the fallback line", {
         tenantId: conversation.tenantId,

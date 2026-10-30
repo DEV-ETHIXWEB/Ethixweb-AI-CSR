@@ -3873,6 +3873,34 @@ describe("HandleTurnUseCase keeps the call moving after an acknowledgment-only r
     expect(aiProvider.requests).toHaveLength(1);
   });
 
+  // 2026-10-30, Prateek's call: "...my bathroom sink is clogged and one second
+  // one second" got "Sure, take your time. Is the sink currently overflowing
+  // or just draining slowly?"
+  it("Prateek 2026-10-30: asks nothing when the caller ended on 'one second'", async () => {
+    const { result, chunks } = await run(
+      ["Sure, take your time. Is the sink currently overflowing or just draining slowly?"],
+      "so i might need you to pause okay the issue is my bathroom sink is clogged and one second one second",
+    );
+    expect(result.responseText).toBe("Sure, take your time.");
+    expect(chunks.join(" ")).not.toContain("?");
+  });
+
+  it("Prateek 2026-10-30: says it will wait when the reply was only a question", async () => {
+    const { result } = await run(
+      ["Is the sink overflowing?"],
+      "my bathroom sink is clogged give me a second",
+    );
+    expect(result.responseText).toBe("Sure, take your time.");
+  });
+
+  it("a caller who moved on after 'hold on' still gets the question", async () => {
+    const { result } = await run(
+      ["Got it, 4512 Maple Street. Is that right?"],
+      "hold on, it's four five one two maple street",
+    );
+    expect(result.responseText).toContain("Is that right?");
+  });
+
   it("adds at most one extra pass per turn", async () => {
     const { aiProvider } = await run(["Okay.", "Alright."]);
     expect(aiProvider.requests).toHaveLength(2);
