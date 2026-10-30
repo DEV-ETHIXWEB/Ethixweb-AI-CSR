@@ -1742,6 +1742,11 @@ function renamedStreet(before: string, now: string): string {
       /^(?:(?:okay|ok|no|yes|yeah|so|sorry|oh|actually|it'?s|its|it is|the street is|street is|the street name is)[\s,]+)+/,
       "",
     )
+    // 2026-10-30, Prateek's call: "it's not greeny avenue it's finney finney
+    // avenue". The wrong name comes first and the right one follows, often
+    // said twice.
+    .replace(/^not\s+(?:[a-z]+\s+){1,3}?(?:it'?s|its|it is|but)\s+/, "")
+    .replace(/\b([a-z]+)\s+\1\b/g, "$1")
     .trim();
   if (
     !earlier ||
@@ -1751,7 +1756,12 @@ function renamedStreet(before: string, now: string): string {
     return "";
   }
   const house = earlier.split(" ")[0]!;
-  const street = streetIn(`${house} ${cleaned}`);
+  let street = streetIn(`${house} ${cleaned}`);
+  // "finney avenue" for "greeny avenue north" keeps the north.
+  const direction = earlier.split(" ").at(-1)!;
+  if (street && DIRECTIONS.has(direction) && !DIRECTIONS.has(street.split(" ").at(-1)!)) {
+    street = `${street} ${direction}`;
+  }
   return street && street !== earlier ? street : "";
 }
 
@@ -1786,10 +1796,24 @@ function numberedStreetAfterHouse(before: string, now: string): string {
  * "not twelve fifteen, twelve fifty" runs the two numbers together.
  */
 const HOUSE_NUMBER_CORRECTION = /\b(\d{1,6})\s*,?\s+not\s+(\d{1,6})\b/;
+/**
+ * 2026-10-30, Prateek's call: "it's not eight three one two it's three three
+ * one two". The notes kept 8312, Grace read 8312 back again, and 8312 was
+ * saved. The other order is safe when a word stands between the two numbers.
+ */
+const HOUSE_NUMBER_CORRECTION_NOT_FIRST =
+  /\bnot\s+(\d{1,6})\s*,?\s+(?:it'?s|its|it is|but|it should be|should be|that'?s)\s+(\d{1,6})\b/;
 
 function houseNumberCorrection(text: string): { to: string; from: string } | null {
-  const match = collapseSpokenDigits(text.toLowerCase()).match(HOUSE_NUMBER_CORRECTION);
-  return match?.[1] && match[2] && match[1] !== match[2] ? { to: match[1], from: match[2] } : null;
+  const collapsed = collapseSpokenDigits(text.toLowerCase());
+  const match = collapsed.match(HOUSE_NUMBER_CORRECTION);
+  if (match?.[1] && match[2] && match[1] !== match[2]) {
+    return { to: match[1], from: match[2] };
+  }
+  const notFirst = collapsed.match(HOUSE_NUMBER_CORRECTION_NOT_FIRST);
+  return notFirst?.[1] && notFirst[2] && notFirst[1] !== notFirst[2]
+    ? { to: notFirst[2], from: notFirst[1] }
+    : null;
 }
 
 /**
