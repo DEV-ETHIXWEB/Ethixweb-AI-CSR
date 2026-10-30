@@ -205,8 +205,12 @@ export type GuardAction =
  * model the exact digits; it still slips. A number read back within two
  * digits of a number this call actually has is that number, so it is said
  * exactly. Anything further off is left alone: it is a different number.
+ *
+ * 2026-10-30, Prateek's call: "2-oh-2-oh-6-7-7-1-4-8-2-2", twelve digits, was
+ * longer than any run looked at, so it was read out as it was. Two extra
+ * digits are two edits like any other.
  */
-const PHONE_RUN = /(?:\+\s?1[\s.-]*)?(?:\d[\s.()-]{0,2}){6,10}\d/g;
+const PHONE_RUN = /(?:\+\s?1[\s.-]*)?(?:\d[\s.()-]{0,2}){6,11}\d/g;
 const PHONE_READBACK_MAX_EDITS = 2;
 
 function withTheRealNumber(sentence: string, knownPhones: readonly string[]): string {
@@ -219,7 +223,7 @@ function withTheRealNumber(sentence: string, knownPhones: readonly string[]): st
     if (digits.length === 11 && digits.startsWith("1")) {
       digits = digits.slice(1);
     }
-    if (digits.length < 8 || digits.length > 10) {
+    if (digits.length < 8 || digits.length > 10 + PHONE_READBACK_MAX_EDITS) {
       return run;
     }
     const nearest = knownPhones
@@ -250,7 +254,7 @@ function withTheRealNumber(sentence: string, knownPhones: readonly string[]): st
 
 /** A number said in words, "two-zero-six-five-five-five...". */
 const SPOKEN_PHONE_RUN =
-  /\b(?:(?:zero|oh|one|two|three|four|five|six|seven|eight|nine)[\s,-]+){7,10}(?:zero|oh|one|two|three|four|five|six|seven|eight|nine)\b/gi;
+  /\b(?:(?:zero|oh|one|two|three|four|five|six|seven|eight|nine)[\s,-]+){7,11}(?:zero|oh|one|two|three|four|five|six|seven|eight|nine)\b/gi;
 const SPOKEN_DIGIT: Record<string, string> = {
   zero: "0",
   oh: "0",

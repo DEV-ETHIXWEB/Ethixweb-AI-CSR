@@ -530,6 +530,22 @@ describe("the callback number is read back exactly", () => {
     expect(said).not.toContain("two-zero-six");
   });
 
+  // 2026-10-30, Prateek's call: "with the callback number 2-oh-2-oh-6-7-7-1-4-8-2-2".
+  it("drops two extra digits, in digits or in words", () => {
+    const callerGave = () =>
+      new OutputGuard([], false, "", null, null, false, [], ["8722784999", "2067714822"]);
+    expect(
+      callerGave().apply(
+        "Let me confirm your details: at 8814 Rainier Avenue South, ZIP 98118, with the callback number 2-0-2-0-6-7-7-1-4-8-2-2. Is that right?",
+      ),
+    ).toContain("callback number 2-oh-6-7-7-1-4-8-2-2.");
+    expect(
+      callerGave().apply(
+        "Your number is two zero two zero six seven seven one four eight two two, right?",
+      ),
+    ).toContain("2-oh-6-7-7-1-4-8-2-2");
+  });
+
   it("leaves house numbers and ZIP codes alone", () => {
     const said = guard().apply("That's 1-7-4-8 Northwest 60th Street, ZIP 9-8-1-0-7.");
     expect(said).toContain("1-7-4-8");
