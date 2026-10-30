@@ -338,6 +338,38 @@ export function buildCallNotes(
       }
     }
   }
+  // 2026-10-30, Prateek's call: "walter is my first name n kosi n k o s i is
+  // my middle name and brian is my last name". Read as a spelling, that
+  // became first name "Nkosi" with no last name, and Walter Nkosi Brian was
+  // saved as "Nkosi". Parts the caller labels are those parts.
+  let labelledAt = nameTexts.length - 1;
+  while (labelledAt >= 0 && labelledNameParts(nameTexts[labelledAt]!) === null) {
+    labelledAt -= 1;
+  }
+  if (
+    labelledAt >= 0 &&
+    labelledAt >= (statedFound?.index ?? -1) &&
+    labelledAt >= (spelledFound?.index ?? -1)
+  ) {
+    const labels = labelledNameParts(nameTexts[labelledAt]!)!;
+    const known = (stated ?? spelled?.join(" ") ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+    // "winter bond" for a known "winterbone" is that name, cut short by speech recognition.
+    const unlessCutShort = (label: string | undefined, had: string | undefined) =>
+      label && had && had.length > label.length && had.startsWith(label) ? had : label;
+    const knownLast = known.length >= 2 ? known.at(-1) : undefined;
+    const first = unlessCutShort(labels.first, known[0]) ?? known[0];
+    const middle = labels.middle ?? (known.length === 3 ? known[1] : undefined);
+    let last = unlessCutShort(labels.last, knownLast) ?? knownLast;
+    if (last === middle || last === first) {
+      last = undefined;
+    }
+    const parts = [first, middle, last].filter((part): part is string => part !== undefined);
+    if (first !== undefined && parts.length >= 1) {
+      // Only a name already taken as spelled stays one; a said name is not.
+      spelled = spelled === null ? null : parts;
+      stated = parts.map(capitalize).join(" ");
+    }
+  }
   return {
     spellingAsked,
     spelledName: spelled,
@@ -884,6 +916,113 @@ function lastNameJustAsked(turns: ReadonlyArray<{ speaker: string; text: string 
     lastAgent < turns.length - 1 &&
     LAST_NAME_QUESTION.test(turns[lastAgent]!.text)
   );
+}
+
+/**
+ * Name parts the caller labels, either way round: "walter is my first name",
+ * "my last name is brian", "nkosi middle name". Letters spelled with a part
+ * win over the word, so "n kosi n k o s i is my middle name" is "nkosi".
+ * Null when no part is labelled with a usable name.
+ */
+function labelledNameParts(
+  text: string,
+): { first?: string; middle?: string; last?: string } | null {
+  const tokens = wordsOf(text);
+  if (tokens.some((token) => NAME_PART_QUESTION.has(token))) {
+    return null;
+  }
+  const found: { first?: string; middle?: string; last?: string } = {};
+  let boundary = 0;
+  for (let k = 0; k < tokens.length; k += 1) {
+    const part = namePartAt(tokens, k);
+    if (!part) {
+      continue;
+    }
+    const labelEnd = tokens[k] === "surname" ? k + 1 : k + 2;
+    let value: string | null = null;
+    if (tokens[k - 1] === "my" && tokens[k - 2] === "is") {
+      value = nameAtEnd(tokens.slice(boundary, k - 2));
+    } else {
+      let end = labelEnd;
+      while (end < tokens.length && tokens[end] !== "and" && !namePartAt(tokens, end)) {
+        end += 1;
+      }
+      let start = labelEnd;
+      while (start < end && LABEL_FILLER.has(tokens[start]!)) {
+        start += 1;
+      }
+      const after = tokens.slice(start, end);
+      value = nameAtStart(after) ?? (k > boundary ? nameAtEnd(tokens.slice(boundary, k)) : null);
+      boundary = end;
+    }
+    if (value) {
+      found[part] = value;
+    }
+    boundary = Math.max(boundary, labelEnd);
+  }
+  return Object.keys(found).length > 0 ? found : null;
+}
+
+/** Between a label and its name: "last name IS smith", "first name WOULD BE ...". */
+const LABEL_FILLER = new Set(["is", "its", "it", "s", "would", "be", "will"]);
+
+const NAME_PART_QUESTION = new Set(["what", "whats", "which", "who", "how", "did", "do", "does"]);
+
+function namePartAt(tokens: readonly string[], k: number): "first" | "middle" | "last" | null {
+  if (tokens[k] === "surname") {
+    return "last";
+  }
+  if (tokens[k + 1] !== "name") {
+    return null;
+  }
+  switch (tokens[k]) {
+    case "first":
+      return "first";
+    case "middle":
+      return "middle";
+    case "last":
+    case "family":
+      return "last";
+    default:
+      return null;
+  }
+}
+
+/** The name ending these words: a spelled run of two or more letters, else the last name-like word. */
+function nameAtEnd(tokens: readonly string[]): string | null {
+  let letters = "";
+  let k = tokens.length - 1;
+  while (k >= 0 && tokens[k]!.length === 1) {
+    letters = tokens[k] + letters;
+    k -= 1;
+  }
+  if (letters.length >= 2) {
+    return letters;
+  }
+  const word = tokens.filter((token) => token !== "and" && canBeName(token)).at(-1);
+  return word ?? null;
+}
+
+/** The name starting these words: the spelled run after it if there is one, else the word. */
+function nameAtStart(tokens: readonly string[]): string | null {
+  const firstWord = tokens.findIndex((token) => token.length > 1);
+  // "o y e l a r a n oylaran": spelled first, then said.
+  const leading = tokens.slice(0, firstWord < 0 ? tokens.length : firstWord).join("");
+  if (leading.length >= 2) {
+    return leading;
+  }
+  let letters = "";
+  for (const token of tokens.slice(firstWord + 1)) {
+    if (token.length !== 1) {
+      break;
+    }
+    letters += token;
+  }
+  if (letters.length >= 2) {
+    return letters;
+  }
+  const word = tokens[firstWord];
+  return word !== undefined && canBeName(word) ? word : null;
 }
 
 function wordsOf(text: string): string[] {
