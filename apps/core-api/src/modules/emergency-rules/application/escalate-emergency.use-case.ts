@@ -208,8 +208,16 @@ function matchesPattern(haystack: string, pattern: string): boolean {
   if (patternWords.length === 0) {
     return false;
   }
-  if (patternWords[0] === "no" && patternWords.length > 1) {
-    return matchesShortage(haystack.toLowerCase().match(/\w+/g) ?? [], patternWords.slice(1));
+  const absence = ABSENCE_PREFIXES.find(
+    (prefix) =>
+      prefix.length < patternWords.length && prefix.every((word, at) => patternWords[at] === word),
+  );
+  if (absence) {
+    return matchesShortage(
+      haystack.toLowerCase().match(/\w+/g) ?? [],
+      patternWords.slice(absence.length),
+      absence,
+    );
   }
   const haystackWords = haystack.toLowerCase().match(/\w+/g) ?? [];
   const present = new Set(haystackWords);
@@ -309,7 +317,7 @@ const NOT_A_SHORTAGE = new Set([
   "pressure",
 ]);
 
-/** The one word allowed between "no" and the rest: "no running water", "no hot water at all". */
+/** The one word allowed between the marker and the rest: "no running water", "don't have any water". */
 const SHORTAGE_GAP_WORDS = new Set([
   "running",
   "hot",
@@ -321,16 +329,42 @@ const SHORTAGE_GAP_WORDS = new Set([
   "fresh",
 ]);
 
-function matchesShortage(words: readonly string[], rest: readonly string[]): boolean {
-  for (let at = 0; at < words.length; at += 1) {
-    if (words[at] !== "no") {
+/**
+ * 2026-11-04: the shortage rule above was dispatched on `patternWords[0] ===
+ * "no"` alone, so only "no water" and "no hot water" ever reached it. The
+ * other two shortage patterns in DEFAULT_EMERGENCY_KEYWORDS, "don't have
+ * water" and "without water", fell through to plain word containment and
+ * matched any sentence those words happened to share:
+ *
+ *   "I don't have a water softener, do you install them"  -> urgent outage
+ *
+ * NOT_A_SHORTAGE already lists "softener" and "heater" for exactly this
+ * case; the pattern simply never got far enough to be checked against it.
+ * Each marker is matched as adjacent words, so a pattern is about absence
+ * whichever way the list happens to spell it.
+ */
+const ABSENCE_PREFIXES: ReadonlyArray<readonly string[]> = [
+  ["no"],
+  ["without"],
+  ["don", "t", "have"],
+  ["dont", "have"],
+];
+
+function matchesShortage(
+  words: readonly string[],
+  rest: readonly string[],
+  marker: readonly string[],
+): boolean {
+  for (let at = 0; at + marker.length <= words.length; at += 1) {
+    if (!marker.every((word, offset) => words[at + offset] === word)) {
       continue;
     }
+    const after = at + marker.length;
     for (const gap of [0, 1]) {
-      if (gap === 1 && !SHORTAGE_GAP_WORDS.has(words[at + 1] ?? "")) {
+      if (gap === 1 && !SHORTAGE_GAP_WORDS.has(words[after] ?? "")) {
         continue;
       }
-      const start = at + 1 + gap;
+      const start = after + gap;
       if (rest.every((word, offset) => words[start + offset] === word)) {
         const next = words[start + rest.length] ?? "";
         if (!NOT_A_SHORTAGE.has(next)) {

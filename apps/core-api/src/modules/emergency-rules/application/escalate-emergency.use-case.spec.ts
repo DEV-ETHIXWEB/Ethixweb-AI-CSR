@@ -505,3 +505,36 @@ describe("scattered words are not an emergency (2026-11-04)", () => {
     expect((await classify(description)).action).toBe(action);
   });
 });
+
+/**
+ * 2026-11-04. The shortage rule was dispatched on the pattern starting with
+ * the literal word "no", so only "no water" and "no hot water" ever reached
+ * it. "don't have water" and "without water" fell through to plain word
+ * containment and matched any sentence those words happened to share,
+ * despite NOT_A_SHORTAGE already listing "softener" and "heater" for
+ * exactly this case.
+ */
+describe("every way of saying it is missing goes through the shortage rule (2026-11-04)", () => {
+  const classify = (description: string) =>
+    buildUseCase().execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      callId: "call-1",
+      description,
+    });
+
+  it.each([
+    ["I don't have a water softener, do you install them"],
+    ["I don't have a water heater yet, I want a quote to put one in"],
+  ])("leaves %p alone", async (description) => {
+    expect((await classify(description)).action).toBe("standard_lead");
+  });
+
+  it.each([
+    ["i don't have any water"],
+    ["I don't have water at all this morning"],
+    ["we have been without water since last night"],
+  ])("still treats %p as urgent", async (description) => {
+    expect((await classify(description)).action).toBe("priority_notify");
+  });
+});
