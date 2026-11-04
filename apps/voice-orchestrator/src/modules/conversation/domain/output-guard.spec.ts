@@ -853,3 +853,48 @@ describe("Grace never claims she changed an appointment (2026-11-04)", () => {
     expect(apply(said)).toBe(said);
   });
 });
+
+/**
+ * 2026-11-04. Six of the eight ways of promising a call before arrival went
+ * through. The subject list had no "you" or "someone", the only verb was
+ * "call", and a contraction broke the subject match outright: `he` then
+ * required whitespace before the verb, and "He'll call" has an apostrophe
+ * there.
+ *
+ * The original finding was a caller relying on this to unlock her gate, so
+ * being wrong leaves someone standing outside a locked gate. The qualifier
+ * is what keeps the rule off honest lines: "the team will call you back"
+ * carries no before/ahead/first, so it is not touched.
+ */
+describe("more ways of promising a call before arrival (2026-11-04)", () => {
+  it.each([
+    "He'll call before he comes.",
+    "You'll get a call before they arrive.",
+    "Our tech always rings ahead.",
+    "Someone will call you first.",
+    "They text you before arriving.",
+    "The plumber will give you a call when he's on his way.",
+    "The technician will call you when he's close.",
+    "They'll give you a heads up before they show up.",
+  ])("%p never reaches the caller", (said) => {
+    const out = apply(said);
+    expect(out).not.toBe(said);
+    // "...when he's on his way" is caught by the dispatch rule first, which
+    // removes the promise just as completely. Asserting one specific
+    // replacement here would be asserting rule ORDER, which is not the point.
+    expect(out).toMatch(
+      /^(?:I'll note that you'd like a call before they arrive\.|The team will call you to confirm when someone can come out\.)$/,
+    );
+  });
+
+  it.each([
+    "The team will call you to confirm when someone can come out.",
+    "The team will call you back shortly.",
+    "Is this the best number to call you back on?",
+    "I'll make sure they call before arriving.",
+    "I'll ask them to call ahead.",
+    "They'll go over the pricing with you when they call.",
+  ])("leaves %p alone", (said) => {
+    expect(apply(said)).toBe(said);
+  });
+});

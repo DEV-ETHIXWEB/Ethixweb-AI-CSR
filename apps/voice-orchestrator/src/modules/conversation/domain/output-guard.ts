@@ -95,8 +95,36 @@ const FEE_HEDGE =
  * said to a caller relying on it to unlock her gate.
  */
 export const SAFE_CALL_AHEAD_LINE = "I'll note that you'd like a call before they arrive.";
-const CALL_AHEAD_CLAIM =
-  /\b(?:technicians?|techs?|plumbers?|they|he|she)\b(?:\s+(?:will|usually|typically|always|normally|generally|do|does|should))*\s+(?:give you a )?calls?\b[^.?!]{0,20}\b(?:before|ahead|prior|on (?:their|the) way)\b/i;
+/**
+ * 2026-11-04: six of the eight ways of making this promise went through.
+ * The subject list had no "you" or "someone", the only verb was "call", and
+ * a contraction broke the subject match outright, because `he` then needed
+ * whitespace before the verb and "He'll call" has an apostrophe there:
+ *
+ *   "He'll call before he comes."      "You'll get a call before they arrive."
+ *   "Our tech always rings ahead."     "Someone will call you first."
+ *   "They text you before arriving."
+ *   "The plumber will give you a call when he's on his way."
+ *
+ * The last one is a near-miss of a rule already here: "on the way" listed
+ * their|the but not his|her. The original finding was a caller relying on
+ * this to unlock her gate, so the cost of being wrong is someone standing
+ * outside a locked gate, not just an inaccurate sentence.
+ *
+ * The qualifier is what keeps this off honest lines. "The team will call you
+ * to confirm" and "the team will call you back" carry no before/ahead/first,
+ * so they are not touched.
+ */
+const CALL_AHEAD_SUBJECT =
+  "(?:technicians?|techs?|plumbers?|they|he|she|someone|somebody|the team|our team|we|you)";
+const CALL_AHEAD_VERB =
+  "(?:calls?|call|ring|rings|text|texts|reach out|let you know|give you a (?:call|ring|heads up)|get a (?:call|ring|text))";
+const CALL_AHEAD_WHEN =
+  "(?:before|ahead|prior|first|en\\s?route|on (?:the|their|his|her) way|when (?:they|he|she)(?:'?re|'?s| is| are)? (?:close|nearby|on (?:the|their|his|her) way))";
+const CALL_AHEAD_CLAIM = new RegExp(
+  `\\b${CALL_AHEAD_SUBJECT}\\b(?:'?ll|'?s|'?re)?(?:\\s+(?:will|would|usually|typically|always|normally|generally|do|does|should|can|might))*\\s+${CALL_AHEAD_VERB}\\b[^.?!]{0,25}\\b${CALL_AHEAD_WHEN}\\b`,
+  "i",
+);
 const CALL_AHEAD_HEDGE =
   /\b(note|ask|request|make sure|let them know|can'?t|cannot|not sure|don'?t know)\b/i;
 /**
