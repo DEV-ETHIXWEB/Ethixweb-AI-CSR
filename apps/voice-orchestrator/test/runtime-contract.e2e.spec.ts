@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { AiCompletionChunk } from "../src/modules/ai-provider/domain/ai-provider.port";
 import {
   authHeader,
   bootVoiceRuntimeSimulator,
@@ -57,6 +58,94 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       sim.aiProvider.reset();
     }
     return res;
+  }
+
+  /** The id the faked core-api returns from POST /internal/customers. */
+  const SAVED_CUSTOMER_ID = "0f8b1d7a-5c3e-4a92-b6d4-7e1a2c3b4d5e";
+
+  /**
+   * Gives the conversation a customer the way a real call gets one, for the
+   * three tests below that go on to create a lead.
+   *
+   * WHY IT IS NEEDED: since 2026-10-22, HandleTurnUseCase refuses createLead
+   * when the conversation has no customer this call actually saved and the
+   * `customer_id` is not one a tool returned (CUSTOMER_NOT_SAVED_ERROR,
+   * "the single largest cause of lost leads" was the model mis-transcribing
+   * or inventing that UUID). Those three tests predate the guard and passed
+   * `customer_id: randomUUID()`, so the lead was correctly refused and no
+   * POST /internal/leads was ever made. They were asserting a lead that
+   * production would rightly never write.
+   *
+   * It takes TWO turns on purpose. The save gates (save-readiness.ts) are
+   * about what was ALREADY said, so the caller spells their own first name
+   * and gives the address on turn one, and Grace reads that address back and
+   * asks for a callback number in her reply. By turn two the name, address
+   * and callback-number gates are each satisfied the way a real call
+   * satisfies them, rather than bypassed, so these tests exercise the
+   * real lead path instead of a shortcut around it.
+   */
+  async function saveCustomer(conversation: { id: string; tenantId: string }) {
+    sim.coreApiClient.postResponses.set("/internal/customers", { id: SAVED_CUSTOMER_ID });
+
+    const turn = async (transcript: string, responses: AiCompletionChunk[][]) => {
+      sim.aiProvider.responses = responses;
+      sim.aiProvider.reset();
+      const res = await sim.inject({
+        method: "POST",
+        url: `/v1/conversations/${conversation.id}/turns`,
+        headers: authHeader(sim.serviceToken),
+        payload: {
+          tenantId: conversation.tenantId,
+          idempotencyKey: randomUUID(),
+          transcript,
+          allowedTools: ["createCustomer"],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+    };
+
+    await turn("hi, this is Siobhan, s i o b h a n, Okonkwo, I'm at 4512 Maple Street in Kent", [
+      [
+        {
+          type: "text_delta",
+          text: "Thanks Siobhan. That's 4512 Maple Street, Kent. Is that right, and what's the best number to reach you?",
+        },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ]);
+
+    await turn("yes that's right", [
+      [
+        {
+          type: "tool_call",
+          toolCall: {
+            id: "save_customer_1",
+            name: "createCustomer",
+            arguments: {
+              name: { first: "Siobhan", last: "Okonkwo" },
+              phone: "+15551234567",
+              address: { street: "4512 Maple Street", city: "Kent", state: "WA", zip: "98032" },
+              source: "ai_csr",
+            },
+          },
+        },
+        { type: "done", stopReason: "tool_use" },
+      ],
+      [
+        { type: "text_delta", text: "Got it, thank you." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ]);
+
+    // The guard this helper exists to satisfy only passes if the customer
+    // genuinely saved, so prove it did rather than assume it. Asserted by
+    // the core-api POST, not by reading the conversation back:
+    // ConversationResponseDto deliberately omits customerId (PII), so a
+    // GET here would report `undefined` whether or not the save worked.
+    expect(sim.coreApiClient.postCalls.map((call) => call.path)).toContain("/internal/customers");
+
+    sim.aiProvider.reset();
+    return SAVED_CUSTOMER_ID;
   }
 
   describe("service authentication", () => {
@@ -406,6 +495,8 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       const started = await startConversation();
       const conversation = started.json();
 
+      const customerId = await saveCustomer(conversation);
+
       const leadId = randomUUID();
       sim.coreApiClient.postResponses.set("/internal/leads", { id: leadId });
       sim.aiProvider.responses = [
@@ -416,7 +507,7 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
               id: "call_1",
               name: "createLead",
               arguments: {
-                customer_id: randomUUID(),
+                customer_id: customerId,
                 business_id: conversation.businessId,
                 call_id: conversation.callId,
                 problem_summary: "Kitchen sink leaking under the cabinet",
@@ -721,6 +812,7 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
     it("caller hangs up AFTER lead creation — the lead is preserved, never lost, and the Call is closed as completed not abandoned", async () => {
       const started = await startConversation();
       const conversation = started.json();
+      const customerId = await saveCustomer(conversation);
       const leadId = randomUUID();
       sim.coreApiClient.postResponses.set("/internal/leads", { id: leadId });
       sim.aiProvider.responses = [
@@ -731,7 +823,7 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
               id: "call_1",
               name: "createLead",
               arguments: {
-                customer_id: randomUUID(),
+                customer_id: customerId,
                 business_id: conversation.businessId,
                 call_id: conversation.callId,
                 problem_summary: "Burst pipe in the basement",
@@ -849,6 +941,7 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
       const conversation = started.json();
       expect(conversation.callId).toBe(callId);
 
+      const customerId = await saveCustomer(conversation);
       sim.coreApiClient.postResponses.set("/internal/leads", { id: randomUUID() });
       sim.aiProvider.responses = [
         [
@@ -858,7 +951,7 @@ describe("Voice Runtime contract (e2e, simulated)", () => {
               id: "call_1",
               name: "createLead",
               arguments: {
-                customer_id: randomUUID(),
+                customer_id: customerId,
                 business_id: conversation.businessId,
                 call_id: callId,
                 problem_summary: "test",
