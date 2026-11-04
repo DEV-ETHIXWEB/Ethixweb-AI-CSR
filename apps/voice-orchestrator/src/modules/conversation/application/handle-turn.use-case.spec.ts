@@ -1982,6 +1982,83 @@ describe("HandleTurnUseCase", () => {
     expect(result.responseText).toBe("Let me get someone on the line for you.");
   });
 
+  /**
+   * 2026-11-04 regression. The backstop only knew the single phrasing it
+   * was found with, so eleven of fifteen realistic handoff promises went
+   * through unbacked: the caller heard "I'll transfer you" and stayed on
+   * the AI. It was simultaneously loose enough that ordinary intake lines
+   * ("let me get you booked in") would fire a real SIP transfer.
+   *
+   * Both directions are asserted here, in one table each, because the two
+   * failures trade off against each other: widening the pattern to catch
+   * the misses is only correct if the skips stay skipped.
+   */
+  const buildTransferProbe = async (agentText: string) => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation());
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: agentText },
+        { type: "done", stopReason: "end_turn" },
+      ],
+      [
+        { type: "text_delta", text: "anything else?" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const transferHandler = {
+      execute: jest.fn().mockResolvedValue({ transferDestination: "+15559876543" }),
+    };
+    const { useCase } = buildUseCase({
+      aiProvider,
+      repository,
+      registeredTools: [{ name: "transferToHuman", handler: transferHandler }],
+    });
+    await useCase.execute(
+      baseCommand({ transcript: "can I talk to someone", allowedTools: ["transferToHuman"] }),
+    );
+    return transferHandler;
+  };
+
+  it.each([
+    "I'll transfer you to someone who can help.",
+    "I'll connect you with one of our team members.",
+    "I'm going to transfer you over to the team.",
+    "I'm going to connect you with someone now.",
+    "Let me put you through to the team.",
+    "I'll put you through now.",
+    "I'll get someone on the line for you.",
+    "Transferring you now.",
+    "Connecting you to a team member.",
+    "Let me grab someone for you.",
+    "Let me get a real person for you.",
+    "I'll hand you over to the on-call tech.",
+    "Let me get my manager.",
+    "One second, let me transfer you.",
+    "Hold on, I'll connect you with someone.",
+    "I'm putting you through to dispatch.",
+  ])("a promise of %p actually transfers the caller", async (agentText) => {
+    const transferHandler = await buildTransferProbe(agentText);
+    expect(transferHandler.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    "Let me get you booked in for tomorrow.",
+    "Let me get that sorted for you.",
+    "One second, let me get that information for you.",
+    "Hold on, let me get the address right.",
+    "Let me get you a rough price for that.",
+    "The team will call you back shortly.",
+    "I'll get this over to the team right away.",
+    "Let me get some details from you first.",
+    "I'll get your request submitted now.",
+    "Let me get you on the schedule.",
+  ])("ordinary intake line %p never fires a transfer", async (agentText) => {
+    const transferHandler = await buildTransferProbe(agentText);
+    expect(transferHandler.execute).not.toHaveBeenCalled();
+  });
+
   it("does NOT force-call transferToHuman for ordinary text that merely contains 'get' or 'you' — the phrase match is specific, not a generic trigger", async () => {
     const repository = new FakeConversationRepository();
     repository.seed(baseConversation());

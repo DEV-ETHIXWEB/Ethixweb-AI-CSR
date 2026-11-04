@@ -2883,10 +2883,48 @@ function buildSearchCustomerBackstopCall(phone: string): AiToolCallRequest {
  * caller left believing they're being transferred when they are not is a
  * worse failure than one skipped lookup.
  */
+/**
+ * 2026-11-04: the first version of this pattern only knew the one phrasing
+ * it was found with. It matched "let me connect you" and "I'm transferring
+ * you" but not "I'll transfer you", "I'll connect you", "I'm going to
+ * transfer you", "let me put you through" or a bare "Transferring you now",
+ * which are the ways the model most often says it. Eleven of fifteen
+ * realistic promises went through unbacked, which is the exact failure the
+ * comment above calls the single worst class of bug here.
+ *
+ * It was also loose in the other direction, and that matters just as much:
+ * `let me get (you|someone)` and `one sec,? let me get` fired on "let me
+ * get you booked in", "let me get you on the schedule" and "one second,
+ * let me get that information for you" — ordinary intake lines that would
+ * each have thrown the caller at a real SIP transfer. Dumping calls on the
+ * on-call executive is its own reported defect, so the object is now
+ * required to be a PERSON (someone, a technician, my manager) or an
+ * explicit connection ("over to", "on the line", "through to"), never a
+ * bare "you" followed by anything at all.
+ */
+const TRANSFER_LEAD_IN = "(?:let me|lemme|i'?ll|i will|i'?m going to|i'?m gonna|let's|we'?ll)";
+/** The thing being fetched is a human, not a booking slot or a price. */
+const A_PERSON =
+  "(?:someone|somebody|a (?:person|human|real person|team member|tech|technician|manager|supervisor|dispatcher)|my (?:manager|supervisor|colleague|teammate)|the (?:team|owner|manager|supervisor|dispatcher|on-call))";
+/** What turns a bare "get you ..." into a handoff rather than an errand. */
+const CONNECTION = "(?:over to|on the line|on with|connected|through to|in touch with)";
+
+const UNBACKED_TRANSFER_PROMISE = new RegExp(
+  "\\b(?:" +
+    `${TRANSFER_LEAD_IN}\\s+(?:just\\s+|quickly\\s+)?(?:connect|transfer)\\s+you` +
+    `|${TRANSFER_LEAD_IN}\\s+(?:just\\s+)?put\\s+you\\s+(?:straight\\s+)?through` +
+    `|${TRANSFER_LEAD_IN}\\s+(?:just\\s+)?hand\\s+you\\s+(?:over|off)` +
+    `|${TRANSFER_LEAD_IN}\\s+(?:just\\s+)?(?:get|grab|find|pull in|bring)\\s+${A_PERSON}` +
+    `|${TRANSFER_LEAD_IN}\\s+(?:just\\s+)?get\\s+you\\s+${CONNECTION}` +
+    "|i'?m\\s+(?:connecting|transferring|putting)\\s+you" +
+    "|(?:^|[.!?]\\s+)(?:connecting|transferring)\\s+you\\b" +
+    `|(?:get|getting)\\s+(?:you|${A_PERSON})\\s+${CONNECTION}` +
+    ")",
+  "i",
+);
+
 function looksLikeUnbackedTransferPromise(text: string): boolean {
-  return /\b(let me get (you|someone)|let me (connect|transfer) you|i'?m (connecting|transferring) you|one sec,? (let me get|i'?ll get)|hold on,? (let me get|i'?ll get)|get (you|someone) (over to|on the line with|connected))\b/i.test(
-    text,
-  );
+  return UNBACKED_TRANSFER_PROMISE.test(text);
 }
 
 function buildTransferPromiseBackstopCall(transcript: string): AiToolCallRequest {
