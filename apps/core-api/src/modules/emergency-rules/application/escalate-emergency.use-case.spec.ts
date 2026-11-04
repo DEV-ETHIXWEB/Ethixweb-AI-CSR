@@ -456,3 +456,52 @@ describe("water flowing and a business losing money", () => {
     );
   });
 });
+
+/**
+ * 2026-11-04. Any-order word containment had no notion of distance, so a
+ * pattern matched when its words appeared anywhere in the turn, however far
+ * apart and whatever the sentence actually said. Four ordinary calls were
+ * read as critical and would each have forwarded a live call to the on-call
+ * human, one of them telling a caller who had just said there is no leak to
+ * follow gas-leak safety steps.
+ *
+ * The fix bounds the gap between the first and last matched word at 4,
+ * which is the widest gap any real caller phrase in DEFAULT_EMERGENCY_KEYWORDS
+ * was built from. The second block is the half that matters more: it pins
+ * the real emergencies that have to keep matching, so a future tightening
+ * cannot quietly buy precision with a missed emergency.
+ */
+describe("scattered words are not an emergency (2026-11-04)", () => {
+  const classify = (description: string) =>
+    buildUseCase().execute({
+      tenantId: "tenant-1",
+      businessId: "business-1",
+      callId: "call-1",
+      description,
+    });
+
+  it.each([
+    ["can you check the gas fitting, there's no leak I just want it looked at"],
+    ["I want to replace the pipe under the sink, nothing burst, it's just old"],
+    ["the smell in the bathroom is bad but it's not gas, just the drain"],
+    ["there's water in the basement but it stopped, I looked everywhere for the shutoff"],
+  ])("leaves %p alone", async (description) => {
+    expect((await classify(description)).action).toBe("standard_lead");
+  });
+
+  it.each([
+    ["a pipe burst in my basement", "forward_call"],
+    ["my burst pipe is flooding the kitchen", "forward_call"],
+    ["i smell gas in the kitchen", "forward_call"],
+    ["there is water everywhere in my kitchen", "forward_call"],
+    ["smelling something like a burning smell near the water heater", "forward_call"],
+    ["it smells like it's burning in here", "forward_call"],
+    ["there is sewage coming up through the shower drain", "forward_call"],
+    ["the ceiling is caving in from the water", "forward_call"],
+    ["water is pouring out of the wall", "forward_call"],
+    ["i have water up to my ankles in the basement", "forward_call"],
+    ["my basement is flooding right now", "forward_call"],
+  ])("still escalates %p", async (description, action) => {
+    expect((await classify(description)).action).toBe(action);
+  });
+});

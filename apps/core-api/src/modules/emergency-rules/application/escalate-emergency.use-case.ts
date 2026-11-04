@@ -211,8 +211,76 @@ function matchesPattern(haystack: string, pattern: string): boolean {
   if (patternWords[0] === "no" && patternWords.length > 1) {
     return matchesShortage(haystack.toLowerCase().match(/\w+/g) ?? [], patternWords.slice(1));
   }
-  const haystackWords = new Set(haystack.toLowerCase().match(/\w+/g) ?? []);
-  return patternWords.every((word) => haystackWords.has(word));
+  const haystackWords = haystack.toLowerCase().match(/\w+/g) ?? [];
+  const present = new Set(haystackWords);
+  if (!patternWords.every((word) => present.has(word))) {
+    return false;
+  }
+  return withinSpan(haystackWords, patternWords);
+}
+
+/**
+ * 2026-11-04: any-order containment had no notion of distance, so the
+ * pattern's words only had to appear SOMEWHERE in the turn. That read
+ * sentences as emergencies that plainly say the opposite, and each one
+ * forwards a live call to the on-call human:
+ *
+ *   "can you check the gas fitting, there's no leak"      -> gas leak
+ *   "replace the pipe under the sink, nothing burst"      -> burst pipe
+ *   "the smell is bad but it's not gas, just the drain"   -> smell gas
+ *   "water in the basement but it stopped, I looked everywhere"
+ *                                                         -> water everywhere
+ *
+ * Flooding the executive with the calls the AI was bought to filter is a
+ * reported defect in its own right, and a caller who says there is no leak
+ * being told gas-leak safety steps is worse than merely wasteful.
+ *
+ * The bound is measured, not guessed. Across every real caller phrase the
+ * patterns above were added for ("a pipe burst in my basement", "smells
+ * like it's burning", "the water is actively filling in my kitchen",
+ * "water up to my ankles"), the widest gap between the first and last
+ * matched word is 4. Every false positive listed above is 5 or more, so 4
+ * separates them cleanly and no phrase the list was built from stops
+ * matching.
+ *
+ * This deliberately does NOT try to read negation generally. "It's not an
+ * emergency, but there's water everywhere" must stay an emergency: caller
+ * denial is a downgrade signal only, never a dismissal. Distance is the
+ * narrow mechanism that drops these four without touching that rule.
+ */
+const MAX_PATTERN_SPAN = 4;
+
+/** True when one occurrence of every pattern word fits inside MAX_PATTERN_SPAN. */
+function withinSpan(haystackWords: readonly string[], patternWords: readonly string[]): boolean {
+  const needed = new Set(patternWords);
+  if (needed.size < 2) {
+    return true;
+  }
+  const hits = haystackWords
+    .map((word, at) => ({ word, at }))
+    .filter((hit) => needed.has(hit.word));
+  const counts = new Map<string, number>();
+  let left = 0;
+  for (const right of hits) {
+    counts.set(right.word, (counts.get(right.word) ?? 0) + 1);
+    while (counts.size === needed.size) {
+      const leftHit = hits[left];
+      if (leftHit === undefined) {
+        break;
+      }
+      if (right.at - leftHit.at <= MAX_PATTERN_SPAN) {
+        return true;
+      }
+      const remaining = (counts.get(leftHit.word) ?? 0) - 1;
+      if (remaining <= 0) {
+        counts.delete(leftHit.word);
+      } else {
+        counts.set(leftHit.word, remaining);
+      }
+      left += 1;
+    }
+  }
+  return false;
 }
 
 /**
