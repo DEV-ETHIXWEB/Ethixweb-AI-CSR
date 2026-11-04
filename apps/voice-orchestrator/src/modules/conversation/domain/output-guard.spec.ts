@@ -812,3 +812,44 @@ describe("more ways of promising a visit nobody agreed to (2026-11-04)", () => {
     expect(apply(said)).toBe(said);
   });
 });
+
+/**
+ * 2026-11-04. Grace cannot touch an appointment at all, but the claim
+ * pattern only covered a change already in the past and only with a pronoun
+ * in front of it, so the ways she most naturally says it reached the caller.
+ *
+ * The future tense matters as much as the past: "I'll cancel that for you"
+ * is a promise Grace has no mechanism to keep, the same defect as a transfer
+ * she cannot make. A caller who believes their visit is cancelled when it is
+ * not either waits for a truck that never comes or gets one they cancelled.
+ */
+describe("Grace never claims she changed an appointment (2026-11-04)", () => {
+  it.each([
+    "I'll cancel that for you now.",
+    "Consider it cancelled.",
+    "I went ahead and cancelled it.",
+    "I removed you from the schedule.",
+    "Your visit is off the schedule now.",
+    "I updated your appointment to Thursday.",
+    "Done, your appointment is cancelled.",
+    "Let me get that rescheduled.",
+    "I'll move your appointment to Monday.",
+    "I've pushed back your visit.",
+  ])("%p is replaced with the safe line", (said) => {
+    expect(apply(said)).toContain("I can't change appointments from here");
+  });
+
+  it.each([
+    // Noting a request is not making the change, and saying so is exactly
+    // what Grace is supposed to do.
+    "I'll note that you want to move it, and the team will confirm.",
+    "I'll let the team know you need to change the time.",
+    "I can't cancel that from here.",
+    "I'm not able to reschedule appointments.",
+    "Would you like me to note that you'd prefer a different day?",
+    "Same-day service is sometimes available when booked before 2pm.",
+    "Can you tell me what time works better for you?",
+  ])("leaves %p alone", (said) => {
+    expect(apply(said)).toBe(said);
+  });
+});

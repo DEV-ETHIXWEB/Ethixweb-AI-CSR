@@ -148,14 +148,49 @@ const SOFT_PROMISE = /('ll|\bwill\b|\bcan\b|\bcould\b|\bgoing to\b|\bgonna\b|\bs
 const HEDGE =
   /\b(can'?t|cannot|unable|not able|no promise|won'?t|note|noted|prefer|preference|depends|if possible|may|might|possibly|possible|sometimes|usually|typically|hopefully|try|whether|open|24\/7)\b/i;
 
-const CHANGE_CLAIM =
-  /\b(i'?ve|i have|it'?s|that'?s|you'?re|has been|have been|is now|are now)\b[^.?!]{0,30}\b(cancell?ed|rescheduled|moved|booked)\b|\blet me (get|have) that (cancell?ed|rescheduled|moved)\b|\b(cancell?ed|rescheduled) (it |that )?(for you|your appointment)\b/i;
+/**
+ * 2026-11-04: Grace cannot touch an appointment at all, but the pattern only
+ * covered a claim already in the past and only with a pronoun in front of
+ * it. The ways she most naturally says it went through:
+ *
+ *   "I'll cancel that for you now."     "Consider it cancelled."
+ *   "I went ahead and cancelled it."    "I removed you from the schedule."
+ *   "Your visit is off the schedule."   "I updated your appointment to Thursday."
+ *
+ * A caller who believes their visit is cancelled when it is not either waits
+ * for a truck that never comes or gets one they cancelled. The future tense
+ * matters as much as the past here: "I'll cancel that" is a promise Grace has
+ * no mechanism to keep, which is the same defect as a transfer she cannot
+ * make.
+ */
+const CHANGE_VERB =
+  "(?:cancell?(?:ed|ing)?|resched(?:ule|uled|uling)?|mov(?:e|ed|ing)|chang(?:e|ed|ing)|push(?:ed)?\\s+back|bump(?:ed)?|updat(?:e|ed)|remov(?:e|ed))";
+const CHANGE_CLAIM = new RegExp(
+  [
+    // Deliberately no bare "is" or "been" in this lead-in. "Same-day service
+    // is sometimes available when booked before 2pm" is honest policy, and a
+    // bare "is" put it within reach of "booked" 30 characters later.
+    "\\b(?:i'?ve|i have|it'?s|that'?s|you'?re|your|has been|have been|is now|are now)\\b[^.?!]{0,30}\\b(?:cancell?ed|rescheduled|moved|booked|pushed back|bumped)\\b",
+    `\\b(?:i|i'?ll|i will|let me|i'?m going to|i can|i just)\\b[^.?!]{0,25}\\b${CHANGE_VERB}\\b[^.?!]{0,20}\\b(?:it|that|this|your|the)\\b(?:\\s+(?:appointment|visit|booking|slot|time|schedule|one))?`,
+    `\\blet me (?:get|have)\\s+(?:that|it|this|your\\s+\\w+)\\s+${CHANGE_VERB}\\b`,
+    "\\b(?:cancell?ed|rescheduled|moved)\\s+(?:it\\s+|that\\s+)?(?:for you|your appointment|your visit)\\b",
+    "\\bconsider (?:it|that|this) (?:cancell?ed|rescheduled|moved|done|handled)\\b",
+    "\\b(?:off|taken off|removed from|remove you from|removed you from)\\s+(?:the\\s+)?(?:schedule|books|calendar)\\b",
+  ].join("|"),
+  "i",
+);
 
 /** A guess at what causes or links problems, which cannot be known from a phone call. */
 const CAUSE_CLAIM =
   /\b(could|might|may|probably|likely|usually|possibly|sounds like|typically)\b[^.?!]{0,60}\b(connected|related|linked|ties? to|tied to|caused by|due to|the same (issue|problem|clog|drain|line|cause|leak))\b|\b(usually|probably|typically|often) (a|the) (worn|faulty|clogged|bad|broken|loose|cracked)\b|\b(usually|probably|typically) (ties|points) to\b|\b(?:reasons?|causes?|things|issues),? (?:like|such as)\b[^.?!]{0,40}\b(?:faulty|worn|failed|failing|bad|broken|loose|cracked|clogged|corroded|leaky|damaged|stuck|age|aging|old)\b|\b(?:caused by|happen for|come from|due to) (?:a few|several|many|various|a number of|some)(?: different)? (?:things|issues|reasons|causes|problems)\b(?![^.?!]*\btechnician)/i;
 
-const CHANGE_HEDGE = /\b(can'?t|cannot|unable|not able|won'?t)\b/i;
+/**
+ * Noting a request is not making the change, and saying so is exactly what
+ * Grace is supposed to do: "I'll note that you want to move it, and the team
+ * will confirm" has to survive the widened claim pattern above untouched.
+ */
+const CHANGE_HEDGE =
+  /\b(can'?t|cannot|unable|not able|won'?t|note|noted|pass (?:this|that|it) (?:on |along )?to|let the team know|the team will)\b/i;
 
 const STREET_READBACK =
   /\b\d{1,6}\s+(?:[A-Za-z0-9'.]+\s+){0,3}(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|place|pl|court|ct|circle|cir|terrace|ter|parkway|pkwy|highway|hwy)\b/i;
