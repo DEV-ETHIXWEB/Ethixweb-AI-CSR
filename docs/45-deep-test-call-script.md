@@ -42,18 +42,24 @@ earlier state exists.
 - **FAIL** — states the leak as fact, or silently drops the Venmo question.
   _(problem-flattening; compound utterance)_
 
-### 2 — A hard name, with a correction
+### 2 — A three-word name, with a correction
 
-> "It's Siobhan. S, I, O, B, H, A, N. Last name Okonkwo."
+Three words on purpose. A middle word used to get dropped on the way to the
+booking, and it is the part nobody notices is missing until the lead is
+read back.
+
+> "It's Siobhan Adaeze Okonkwo. Siobhan is S, I, O, B, H, A, N."
 
 then immediately, before she finishes reading it back:
 
 > "No wait, not B, it's a V. S, I, O, V, H, A, N."
 
-- **PASS** — takes the correction, keeps the first name, does not restart
-  the whole name. Spells it back for confirmation.
-- **FAIL** — loses the surname, treats "no wait" as a new name, or saves
-  without ever spelling it back. _(name grounding; letter correction)_
+- **PASS** — keeps **all three words**, takes the letter correction into
+  the first name only, and does not restart the whole name. Spells it back
+  for confirmation.
+- **FAIL** — drops "Adaeze", loses the surname, treats "no wait" as a new
+  name, or saves without ever spelling it back. _(three-word names; name
+  grounding; letter correction)_
 
 ### 3 — Address that is not the caller's own
 
@@ -171,7 +177,9 @@ Check the lead that was created, not just what you heard:
 
 1. **A lead exists**, and it is attached to a customer saved on this call.
    A lead with an invented `customer_id` is refused by design.
-2. **The name is `Siovhan Okonkwo`** — the correction from turn 2 survived.
+2. **The name is `Siovhan Adaeze Okonkwo`** — all three words are there and
+   the correction from turn 2 survived. A missing middle word is the
+   failure that is easiest to miss by ear.
 3. **The address is the Kent property**, not Seattle.
 4. **The problem notes contain her own words**, with the uncertainty intact
    ("might be a leak", not "leak confirmed").
