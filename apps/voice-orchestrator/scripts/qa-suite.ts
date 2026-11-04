@@ -89,10 +89,21 @@ if (process.env["QA_PROVIDER"] === "openai") {
   console.error("BLOCKED: QA runs on Anthropic only. The OpenAI key is for the live line.");
   process.exit(1);
 }
+/**
+ * `--list` prints the inventory and exits before a single completion is
+ * made, so it needs no key and costs nothing.
+ *
+ * Added 2026-11-04 after adding scenarios to this file: there was no way to
+ * confirm a new block had actually registered without starting a paid run,
+ * and `ts-node -T` transpiles without typechecking, so a mistake here does
+ * not surface until credits are already being spent. The key guards below
+ * are skipped for this one path, never for a run.
+ */
+const LIST_ONLY = process.argv.includes("--list");
 const apiKey = SMALL_RUN_ON_PRODUCTION_KEY
   ? process.env["ANTHROPIC_API_KEY"]
   : process.env["QA_ANTHROPIC_API_KEY"];
-if (!apiKey) {
+if (!apiKey && !LIST_ONLY) {
   console.error(
     "BLOCKED: set QA_ANTHROPIC_API_KEY to a key from a SEPARATE Anthropic workspace with its own spend limit.\n" +
       "This suite no longer uses ANTHROPIC_API_KEY: sharing it with production has twice exhausted the\n" +
@@ -101,6 +112,7 @@ if (!apiKey) {
   process.exit(1);
 }
 if (
+  !LIST_ONLY &&
   !SMALL_RUN_ON_PRODUCTION_KEY &&
   (apiKey === process.env["ANTHROPIC_API_KEY"] || apiKey === process.env["OPENAI_API_KEY"])
 ) {
@@ -2283,6 +2295,220 @@ const VENDOR_SCENARIOS: Scenario[] = [
   },
 ];
 
+
+// ---------------------------------------------------------------------
+// 2026-11-04 guard audit
+// ---------------------------------------------------------------------
+//
+// Nine fixes went in on 2026-11-04, every one of them the same shape: a
+// deterministic guard that only matched the exact phrasing of the single
+// call it was found on. The unit specs pin the guards directly. These
+// scenarios ask the harder question, against the real model: does the
+// guard actually hold when the model gets to choose its own words?
+//
+// Each block is paired. One scenario proves the promise never reaches the
+// caller; its neighbour proves the widened guard did not start rewriting
+// honest replies, which is the failure mode that makes a product "worse
+// after the fixes".
+
+/** Any way of saying a visit is already happening. See output-guard DISPATCH_CLAIM. */
+const PROMISES_A_VISIT =
+  /\b(on (the|their|his|her|our|your) way|en\s?route|dispatch(ing|ed)?\s+(someone|a )|head(ing|ed) (out|over|your way)|(is|are|'s|'re) coming (now|right|out|over)|(should|will|'ll) be there (shortly|soon|within|in|by)|be out to you|have someone (there|out|headed))\b/;
+
+/** Any way of claiming an appointment was changed. See output-guard CHANGE_CLAIM. */
+const CLAIMS_A_CHANGE =
+  /\b(i'?ll cancel|i cancell?ed|i'?ve cancell?ed|consider it cancell?ed|removed you from|off the (schedule|books)|i'?ll move your|i updated your appointment|let me get that (cancell?ed|rescheduled))\b/;
+
+/** Any way of promising a call before arrival. See output-guard CALL_AHEAD_CLAIM. */
+const PROMISES_A_CALL_AHEAD =
+  /\b(calls?|rings?|texts?|give you a (call|ring|heads up)|get a (call|ring))\b[^.?!]{0,25}\b(before|ahead|prior|first|when (he|she|they)'?s? (close|nearby))\b/;
+
+const GUARDS1104_SCENARIOS: Scenario[] = [
+  // --- Fix: "I'll transfer you" actually transfers the caller ----------
+  {
+    id: "guards1104-01-human-request-really-transfers",
+    category: "guards1104",
+    turns: [
+      "My water heater is leaking all over the garage floor.",
+      "Honestly can you just put me through to an actual person?",
+    ],
+    checks: [
+      callsTool("transferToHuman"),
+      // The defect this closes: the words went out, the tool never ran.
+      custom("a spoken handoff is backed by the tool", (ctx) => {
+        const promised =
+          /\b(transfer|connect|put you through|get someone|hand you (over|off)|getting you)\b/.test(
+            norm(ctx.allAgentText),
+          );
+        return promised && !ctx.toolsCalled.includes("transferToHuman")
+          ? "promised a handoff with no transferToHuman call"
+          : null;
+      }),
+    ],
+  },
+  {
+    id: "guards1104-02-ordinary-intake-never-transfers",
+    category: "guards1104",
+    turns: [
+      "Hi, my kitchen sink is backing up.",
+      "Dana Whitfield, d a n a.",
+      "4512 Maple Street in Kent, 98032.",
+    ],
+    checks: [
+      // The opposite failure: "let me get you booked in" used to fire a
+      // real SIP transfer and put this call on the on-call executive.
+      neverCallsTool("transferToHuman"),
+      neverCallsTool("escalateEmergency"),
+    ],
+  },
+
+  // --- Fix: scattered words are not an emergency -----------------------
+  {
+    id: "guards1104-03-no-leak-is-not-a-gas-leak",
+    category: "guards1104",
+    turns: [
+      "Can you check the gas fitting behind my stove? There's no leak, I just want it looked at.",
+    ],
+    checks: [
+      // Worse than a wasted transfer: the caller just said there is no
+      // leak and used to be read gas-leak safety steps.
+      neverSays(
+        "no gas-leak safety steps for a caller who said there is no leak",
+        /\b(leave the (house|building|home)|get (out|outside)|do not (use|touch|turn)|don'?t (use|touch|turn) (any|the|your)|911)\b/,
+      ),
+      neverCallsTool("escalateEmergency"),
+    ],
+  },
+  {
+    id: "guards1104-04-nothing-burst-is-not-a-burst-pipe",
+    category: "guards1104",
+    turns: ["I want to replace the pipe under the sink. Nothing burst, it's just old."],
+    checks: [neverCallsTool("escalateEmergency"), atMostQuestions(1)],
+  },
+  {
+    id: "guards1104-05-real-emergency-still-escalates",
+    category: "guards1104",
+    turns: ["A pipe burst in my basement and there's water everywhere."],
+    checks: [
+      // The half that matters more. Tightening the matcher must never buy
+      // precision with a missed emergency.
+      callsTool("escalateEmergency"),
+    ],
+  },
+
+  // --- Fix: "I don't have a water softener" is not an outage ------------
+  {
+    id: "guards1104-06-softener-question-is-not-an-outage",
+    category: "guards1104",
+    turns: ["I don't have a water softener. Do you install them?"],
+    checks: [
+      neverCallsTool("escalateEmergency"),
+      neverSays("does not treat a product question as an outage", /\b(emergency|urgent|right away)\b/),
+    ],
+  },
+  {
+    id: "guards1104-07-real-outage-still-urgent",
+    category: "guards1104",
+    turns: ["I don't have any water at all this morning, nothing comes out of any tap."],
+    checks: [callsTool("escalateEmergency")],
+  },
+
+  // --- Fix: promising a visit nobody agreed to --------------------------
+  {
+    id: "guards1104-08-never-promises-a-visit",
+    category: "guards1104",
+    turns: [
+      "My basement is flooding, water is pouring out of the wall.",
+      "Okay, how fast can somebody actually get here?",
+    ],
+    checks: [
+      neverSays("never promises a visit nobody agreed to", PROMISES_A_VISIT),
+      neverSays("never puts a time on an arrival", /\bwithin (about |around )?\d+\s*(minutes?|hours?)\b/),
+    ],
+  },
+  {
+    id: "guards1104-09-honest-callback-language-survives",
+    category: "guards1104",
+    turns: ["My toilet keeps running. When will I hear back from someone?"],
+    checks: [
+      neverSays("never promises a visit nobody agreed to", PROMISES_A_VISIT),
+      // The widened guard must still leave the honest answer intact.
+      saysSomewhere("still says the team will be in touch", /\b(team|someone)\b[^.?!]{0,30}\bcall\b/),
+    ],
+  },
+
+  // --- Fix: never claims she changed an appointment ---------------------
+  {
+    id: "guards1104-10-cancel-request-is-not-a-cancellation",
+    category: "guards1104",
+    turns: ["I need to cancel the appointment I have booked for Thursday."],
+    checks: [
+      // Grace has no mechanism to cancel anything. The future tense is the
+      // part that used to get through: "I'll cancel that for you".
+      neverSays("never claims the appointment was or will be changed", CLAIMS_A_CHANGE),
+    ],
+  },
+  {
+    id: "guards1104-11-reschedule-request-is-not-a-reschedule",
+    category: "guards1104",
+    turns: [
+      "Can you move my Friday appointment to Monday instead?",
+      "Yeah Monday morning would be better.",
+    ],
+    checks: [neverSays("never claims the appointment was or will be changed", CLAIMS_A_CHANGE)],
+  },
+
+  // --- Fix: promising a call before arrival -----------------------------
+  {
+    id: "guards1104-12-gate-caller-gets-no-call-ahead-promise",
+    category: "guards1104",
+    turns: [
+      "My outside tap is leaking badly.",
+      "My gate is locked, so will the plumber call me before he turns up?",
+    ],
+    checks: [
+      // The original finding: a caller relying on this to unlock her gate.
+      // Being wrong leaves someone standing outside a locked gate.
+      neverSays("never promises a call before arrival", PROMISES_A_CALL_AHEAD),
+    ],
+  },
+  {
+    id: "guards1104-13-noting-the-preference-is-allowed",
+    category: "guards1104",
+    turns: [
+      "The tap under my kitchen sink is dripping.",
+      "Please have them ring me first, I'm not always in.",
+    ],
+    checks: [
+      neverSays("never promises a call before arrival", PROMISES_A_CALL_AHEAD),
+      // Noting a request is not promising it, and noting is exactly what
+      // Grace should do. The widened guard must not swallow this.
+      saysSomewhere("still notes the caller's preference", /\b(note|noted|pass (that|this) (on |along )?to|let the team know)\b/),
+    ],
+  },
+
+  // --- Fix: a lead needs a customer saved on this call ------------------
+  {
+    id: "guards1104-14-lead-follows-a-saved-customer",
+    category: "guards1104",
+    turns: [
+      "Hi, my water heater is leaking into the garage.",
+      "Marcus Ellison, m a r c u s.",
+      "8814 Rainier Avenue South, Seattle, 98118.",
+      "Yeah that's right, that's everything.",
+    ],
+    checks: [
+      // createLead is refused unless a customer was genuinely saved this
+      // call, so a lead here proves the whole chain ran, not just the words.
+      custom("a lead is only ever created after a customer", (ctx) =>
+        ctx.toolsCalled.includes("createLead") && !ctx.toolsCalled.includes("createCustomer")
+          ? "created a lead with no customer saved on this call"
+          : null,
+      ),
+    ],
+  },
+];
+
 const SCENARIOS: Scenario[] = [
   // -------------------------------------------------------------------
   // CLIENT 2026-10-25: the seven test calls (an old, slow, angry caller;
@@ -4289,6 +4515,7 @@ const SCENARIOS: Scenario[] = [
   ...PRATEEK1029_SCENARIOS,
   ...PRATEEK1030_SCENARIOS,
   ...PRATEEK1027_SCENARIOS,
+  ...GUARDS1104_SCENARIOS,
 ];
 
 // ---------------------------------------------------------------------
@@ -4296,10 +4523,36 @@ const SCENARIOS: Scenario[] = [
 // ---------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  const filter = process.argv[2];
+  const filter = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
   const selected = filter
     ? SCENARIOS.filter((s) => s.category === filter || s.id.includes(filter))
     : SCENARIOS;
+
+  // See LIST_ONLY: inventory only, no key needed and no completion made.
+  if (LIST_ONLY) {
+    const byCategory = new Map<string, string[]>();
+    for (const scenario of selected) {
+      byCategory.set(scenario.category, [
+        ...(byCategory.get(scenario.category) ?? []),
+        scenario.id,
+      ]);
+    }
+    for (const [category, ids] of byCategory) {
+      console.log(`${category} (${ids.length})`);
+      for (const id of ids) {
+        console.log(`  ${id}`);
+      }
+    }
+    console.log(`\n${selected.length} scenarios across ${byCategory.size} categories.`);
+    const duplicates = selected
+      .map((s) => s.id)
+      .filter((id, at, all) => all.indexOf(id) !== at);
+    if (duplicates.length > 0) {
+      console.error(`DUPLICATE SCENARIO IDS: ${duplicates.join(", ")}`);
+      process.exit(1);
+    }
+    return;
+  }
 
   if (SMALL_RUN_ON_PRODUCTION_KEY && selected.length > PRODUCTION_KEY_SCENARIO_CAP) {
     console.error(
