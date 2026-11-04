@@ -35,8 +35,45 @@ export const SAFE_CAUSE_LINE = "A technician will need to look at that to confir
  * Each is a promise of a visit nobody has agreed to.
  */
 export const SAFE_DISPATCH_LINE = "The team will call you to confirm when someone can come out.";
-const DISPATCH_CLAIM =
-  /\b(dispatch(?:ing|ed)? (?:someone|a (?:tech|technician|plumber)|them|a team)|(?:help|someone|somebody|a (?:tech|technician|plumber)|they|the team|our team)(?: is|'s| are|'re)? (?:already )?on (?:the|their|his|her) way|(?:is|are) heading (?:out|over|your way)|(?:get|be) (?:there|out there|to you) (?:within|in) |arriv(?:e|ing) (?:within|in) |sending (?:someone|a (?:tech|technician|plumber)) (?:out|over|now|right))/i;
+
+/**
+ * 2026-11-04: the pattern only knew the four phrasings it was found with,
+ * and half of the ways the model actually makes this promise went straight
+ * through to the caller:
+ *
+ *   "a tech is en route to you"          "we're on our way"
+ *   "the plumber is coming now"          "they're heading out now"
+ *   "someone should be there shortly"    "I have someone headed your way"
+ *   "someone will be out to you within 90 minutes"
+ *
+ * Two of those are near-misses of rules that were already here, which is
+ * what makes the shape worth naming: "on the way" listed the|their|his|her
+ * but not our|your, and the heading branch accepted "is|are heading" but
+ * not the contraction in "they're heading". Every promise below is a visit
+ * nobody has agreed to, which is the one thing this guard exists to stop.
+ *
+ * Checked in both directions, because a guard that rewrites honest replies
+ * is its own bug: the safe lines above, "the team will reach out to you",
+ * "I'll have someone call you" and "can you get in the house" must all pass
+ * through untouched, so each branch names its verb rather than matching
+ * "out to you" or "in <time>" on their own.
+ */
+const DISPATCH_TECH = "(?:tech|technician|plumber|crew|team|guy)";
+const DISPATCH_CLAIM = new RegExp(
+  [
+    `\\bdispatch(?:ing|ed)?\\s+(?:someone|somebody|them|a\\s+${DISPATCH_TECH}|our\\s+${DISPATCH_TECH})`,
+    "\\bon\\s+(?:the|their|his|her|our|your|my)\\s+way\\b",
+    "\\ben\\s?route\\b",
+    "\\bhead(?:ing|ed)\\s+(?:out|over|your\\s+way|to\\s+you|that\\s+way)\\b",
+    "\\b(?:be|get|arrive|arriving)\\s+(?:there\\s+|out\\s+there\\s+|to\\s+you\\s+)?(?:within|in)\\s+(?:about\\s+|around\\s+|under\\s+)?(?:\\d|an?\\b|one|two|half|the\\s+(?:hour|next|half))",
+    `\\bsend(?:ing)?\\s+(?:someone|somebody|a\\s+${DISPATCH_TECH}|our\\s+${DISPATCH_TECH})\\s+(?:out|over|now|right|your|to)`,
+    "\\b(?:be|come|get)\\s+out\\s+to\\s+you\\b",
+    `\\bhave\\s+(?:someone|somebody|a\\s+${DISPATCH_TECH})\\s+(?:there|out|headed|heading|on)\\b`,
+    "\\b(?:is|are|'s|'re)\\s+coming\\s+(?:now|right|out|over|to\\s+you)\\b",
+    "\\b(?:should|will|'ll)\\s+be\\s+there\\s+(?:shortly|soon|within|in|by|around)\\b",
+  ].join("|"),
+  "i",
+);
 /**
  * Whether the visit or estimate costs anything is not published either way
  * (the business's own knowledge says never to claim it). 2026-10-26, the

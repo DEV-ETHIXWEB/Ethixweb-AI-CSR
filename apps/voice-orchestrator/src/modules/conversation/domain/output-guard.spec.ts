@@ -760,3 +760,55 @@ describe("OutputGuard: listing possible causes is diagnosing", () => {
     expect(new OutputGuard().apply(said)).toBe(said);
   });
 });
+
+/**
+ * 2026-11-04. The dispatch guard only knew the four phrasings it was found
+ * with on 2026-10-26, so half the ways the model actually makes this promise
+ * reached the caller. Two were near-misses of rules already present: "on the
+ * way" listed the|their|his|her but not our|your, and the heading branch
+ * took "is|are heading" but not the contraction in "they're heading".
+ *
+ * The second block matters as much as the first. A guard that rewrites
+ * honest replies is its own defect, so the safe lines and the ordinary
+ * phrasings that sit close to these patterns are pinned here too.
+ */
+describe("more ways of promising a visit nobody agreed to (2026-11-04)", () => {
+  it.each([
+    "A tech is en route to you.",
+    "Someone is en route now.",
+    "We're on our way.",
+    "They're heading out now.",
+    "I have someone headed your way.",
+    "The plumber is coming now.",
+    "Someone should be there shortly.",
+    "Someone will be out to you within 90 minutes.",
+    "We'll have someone there within the hour.",
+    "Someone will arrive within the hour.",
+    "I'm sending our crew out.",
+  ])("%p never reaches the caller", (said) => {
+    const out = apply(said);
+    expect(out).not.toBe(said);
+    // Either safe line is a correct outcome. A promise that names a time
+    // ("within 90 minutes") is caught by the timing rule first, which
+    // removes the visit promise just as completely; asserting one specific
+    // replacement would be asserting rule ORDER, which is not the point.
+    expect(out).toMatch(
+      /^(?:The team will call you to confirm when someone can come out\.|The team will confirm the timing with you\.)$/,
+    );
+  });
+
+  it.each([
+    "The team will call you to confirm when someone can come out.",
+    "The team will confirm the timing with you.",
+    "Someone will call you back shortly.",
+    "I'll have someone call you about that.",
+    // Not "...today": a time word is the timing rule's business, not this
+    // one's, and it rewrites the line for its own separate reason.
+    "The team will reach out to you.",
+    "I'll get this over to the team right away.",
+    "Will they be able to get in the house?",
+    "There is water in the hallway.",
+  ])("leaves %p alone", (said) => {
+    expect(apply(said)).toBe(said);
+  });
+});
