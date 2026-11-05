@@ -59,6 +59,27 @@ export const SAFE_DISPATCH_LINE = "The team will call you to confirm when someon
  * "out to you" or "in <time>" on their own.
  */
 const DISPATCH_TECH = "(?:tech|technician|plumber|crew|team|guy)";
+/**
+ * 2026-11-05, caught on a real-model QA run of the servicearea category. A
+ * caller rang from Portland, Oregon, and heard:
+ *
+ *   "The team will call you to confirm when someone can come out.
+ *    I'd recommend calling a local plumber there."
+ *
+ * Self-contradictory, and the first half was this guard's own doing. The
+ * model had correctly said it could NOT come out that far, and the rule
+ * widened on 2026-11-04 matched "come out to you" inside the refusal and
+ * replaced it with a promise. That is worse than the bug the widening
+ * fixed: turning a correct no into a false yes.
+ *
+ * So a sentence that says it cannot happen is not a claim that it will.
+ * Same shape as CHANGE_HEDGE, and applied per sentence like every other
+ * rule here, so "we can't come out to you" is left alone while "someone
+ * will be out to you within 90 minutes" is still caught.
+ */
+const DISPATCH_HEDGE =
+  /\b(can'?t|cannot|can not|unable|not able|won'?t|will not|don'?t|do not|aren'?t|are not|isn'?t|is not|no one|nobody|outside (?:our|the))\b/i;
+
 const DISPATCH_CLAIM = new RegExp(
   [
     `\\bdispatch(?:ing|ed)?\\s+(?:someone|somebody|them|a\\s+${DISPATCH_TECH}|our\\s+${DISPATCH_TECH})`,
@@ -653,6 +674,21 @@ export class OutputGuard {
     private readonly prefersText = false,
   ) {
     this.spokeAlready = alreadySpokeThisTurn;
+    /**
+     * 2026-11-05, caught on a real-model QA run: a 39-word reply got
+     * through a 35-word limit. A turn can run more than one completion
+     * pass (one before a tool call, one after), each pass builds its own
+     * guard, and the word budget was starting from zero every time. Each
+     * pass was under the limit; what the caller heard was the two glued
+     * together.
+     *
+     * The budget belongs to the TURN, not the pass, so a later pass starts
+     * from what the earlier one already spent. Length is latency on a
+     * phone, which is the whole reason the limit exists.
+     */
+    this.wordsSoFar = alreadySaidThisTurn.trim()
+      ? alreadySaidThisTurn.trim().split(/\s+/).filter(Boolean).length
+      : 0;
     this.questionsThisTurn = splitSentences(alreadySaidThisTurn)
       .filter((sentence) => isQuestion(sentence))
       .map(normalizedWords);
@@ -930,7 +966,12 @@ export class OutputGuard {
       }
       // Not a transfer ("I'm getting you connected to someone who can dispatch a tech"): that
       // connection is real, and replacing it mid-transfer would confuse the caller.
-      if (!isQuestion(sentence) && DISPATCH_CLAIM.test(plain) && !/\bconnect/i.test(plain)) {
+      if (
+        !isQuestion(sentence) &&
+        DISPATCH_CLAIM.test(plain) &&
+        !DISPATCH_HEDGE.test(plain) &&
+        !/\bconnect/i.test(plain)
+      ) {
         this.actions.push("dispatch_claim");
         if (!this.used.has(SAFE_DISPATCH_LINE)) {
           this.used.add(SAFE_DISPATCH_LINE);

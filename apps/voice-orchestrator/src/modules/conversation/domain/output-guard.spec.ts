@@ -936,3 +936,71 @@ describe("a stock enthusiasm opener is not spoken (2026-11-05)", () => {
     expect(apply(said)).toBe(said);
   });
 });
+
+/**
+ * 2026-11-05, caught on a real-model QA run of the servicearea category. A
+ * caller rang from Portland, Oregon, and heard:
+ *
+ *   "The team will call you to confirm when someone can come out.
+ *    I'd recommend calling a local plumber there."
+ *
+ * Self-contradictory, and the first half was this guard's own doing. The
+ * model had correctly said it could NOT come out that far; the dispatch
+ * rule widened on 2026-11-04 matched "come out to you" inside that refusal
+ * and replaced it with a promise.
+ *
+ * Turning a correct no into a false yes is worse than the bug the widening
+ * fixed, so a sentence that says it cannot happen is no longer read as a
+ * claim that it will.
+ */
+describe("a refusal is not a dispatch promise (2026-11-05)", () => {
+  it.each([
+    "We can't come out to you in Portland.",
+    "We aren't able to come out to you there.",
+    "Unfortunately we can't get out to you that far.",
+    "We don't come out to you outside King and Pierce counties.",
+    "We can't send anyone out to Portland.",
+    "No one is on the way yet.",
+  ])("leaves the refusal %p alone", (said) => {
+    expect(apply(said)).toBe(said);
+  });
+
+  it.each([
+    "Someone will be out to you within 90 minutes.",
+    "A tech is en route to you.",
+    "We're on our way.",
+    "The plumber is coming now.",
+  ])("still catches the promise %p", (said) => {
+    expect(apply(said)).not.toBe(said);
+  });
+});
+
+/**
+ * 2026-11-05, caught on a real-model QA run: a 39-word reply got through a
+ * 35-word limit. A turn can run more than one completion pass (one before a
+ * tool call, one after), each pass builds its own OutputGuard, and the word
+ * budget was starting from zero every time. Each pass was under the limit;
+ * what the caller heard was the two glued together.
+ *
+ * Length is latency on a phone, which is the whole reason the limit exists,
+ * so the budget belongs to the turn rather than the pass.
+ */
+describe("the word budget spans the whole turn (2026-11-05)", () => {
+  const firstPass =
+    "We only cover the Greater Seattle area, so we can't send anyone out to Portland.";
+
+  it("a second pass starts from what the first already spent", () => {
+    const guard = new OutputGuard([], true, firstPass);
+    const second = guard.apply(
+      "I'd reach out to a plumber local to you. Hope you get it fixed soon.",
+    );
+    const spokenWords = (firstPass + " " + second).trim().split(/\s+/).filter(Boolean).length;
+    expect(spokenWords).toBeLessThanOrEqual(35);
+  });
+
+  it("a first pass with nothing said before it keeps its full budget", () => {
+    const guard = new OutputGuard([], false, "");
+    const only = guard.apply(firstPass);
+    expect(only.trim()).toBe(firstPass);
+  });
+});
