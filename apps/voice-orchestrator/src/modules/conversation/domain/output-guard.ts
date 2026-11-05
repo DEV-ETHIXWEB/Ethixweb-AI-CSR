@@ -280,6 +280,7 @@ function hyphenateHouseNumber(sentence: string, houseNumber: string | null): str
 }
 
 export type GuardAction =
+  | "stock_opener"
   | "meta_leak"
   | "question_after_safety_line"
   | "call_promised_to_texter"
@@ -575,6 +576,36 @@ const DELIVERY_CUE = /^\s*[a-z]+(?:[ -][a-z]+)?\s*$/i;
 /** Sentences past this word count are dropped (complete sentences only). */
 const SOFT_WORD_LIMIT = 35;
 
+/**
+ * 2026-11-05, caught on a real-model QA run: "Absolutely, we can help with
+ * that." The platform prompt already bans this opener and the suite has a
+ * universal invariant against it, but nothing enforced it, so it came out
+ * on the model's own choice of words.
+ *
+ * It is the vendor-call-centre register the client objected to by name.
+ * Grace answers; she does not perform enthusiasm first.
+ *
+ * Only ever stripped from the FRONT of a sentence and only when real words
+ * follow, so a reply that is nothing but "Absolutely." keeps its one word
+ * rather than becoming silence, and the same word mid-sentence ("that's
+ * absolutely fine") is untouched.
+ */
+const STOCK_OPENER =
+  /^(?:absolutely|certainly|definitely|of course|sure thing|great question|good question|happy to help|i'?d be happy to help)\b[,!.]*\s*/i;
+
+/** True when the sentence is the opener and nothing else ("Great question."). */
+function isOnlyAStockOpener(sentence: string): boolean {
+  return STOCK_OPENER.test(sentence) && !/[a-z]{2}/i.test(sentence.replace(STOCK_OPENER, ""));
+}
+
+function withoutStockOpener(sentence: string): string {
+  const trimmed = sentence.replace(STOCK_OPENER, "");
+  if (trimmed === sentence || !/[a-z]{2}/i.test(trimmed)) {
+    return sentence;
+  }
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
 export class OutputGuard {
   private readonly used = new Set<string>();
   private readonly recentStatements: string[][];
@@ -817,11 +848,30 @@ export class OutputGuard {
     const segment = this.withoutStageDirections(rawSegment);
     const out: string[] = [];
     let slow = false;
-    for (let sentence of splitSentences(segment)) {
+    const sentences = splitSentences(segment);
+    // "Great question." and "Happy to help!" arrive as a sentence of their
+    // own, so there is nothing after them to keep and stripping in place
+    // would leave the opener behind. Such a sentence is dropped outright,
+    // but only when the reply says something else too: a reply that is
+    // nothing but "Absolutely." keeps its one word rather than becoming the
+    // silence this guard exists to prevent elsewhere.
+    const hasRealContent = sentences.some(
+      (candidate) => words(candidate) !== "" && !isOnlyAStockOpener(candidate),
+    );
+    for (let sentence of sentences) {
+      if (hasRealContent && isOnlyAStockOpener(sentence)) {
+        this.actions.push("stock_opener");
+        continue;
+      }
       const plain = words(sentence);
       if (!plain) {
         out.push(sentence);
         continue;
+      }
+      const unstocked = withoutStockOpener(sentence);
+      if (unstocked !== sentence) {
+        this.actions.push("stock_opener");
+        sentence = unstocked;
       }
       if (META_LEAK.test(plain) || REASONING_LEAK.test(plain)) {
         this.actions.push("meta_leak");

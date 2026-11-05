@@ -898,3 +898,41 @@ describe("more ways of promising a call before arrival (2026-11-04)", () => {
     expect(apply(said)).toBe(said);
   });
 });
+
+/**
+ * 2026-11-05, caught on a real-model QA run of the register category:
+ * "Absolutely, we can help with that." The platform prompt already bans
+ * this opener and the suite has a universal invariant against it, but
+ * nothing enforced it, so it came out whenever the model chose those words.
+ *
+ * It is the vendor-call-centre register the client objected to by name.
+ * Grace answers; she does not perform enthusiasm first.
+ */
+describe("a stock enthusiasm opener is not spoken (2026-11-05)", () => {
+  it.each([
+    ["Absolutely, we can help with that.", "We can help with that."],
+    ["Certainly, I can take those details.", "I can take those details."],
+    ["Of course, what's the address?", "What's the address?"],
+    [
+      "Great question. The team confirms timing when they call.",
+      "The team confirms timing when they call.",
+    ],
+    ["Happy to help! What's going on with the sink?", "What's going on with the sink?"],
+  ])("%p becomes %p", (said, expected) => {
+    expect(apply(said)).toBe(expected);
+  });
+
+  it.each([
+    // Mid-sentence is ordinary English, not a call-centre opener.
+    "That's absolutely fine, take your time.",
+    "I can certainly pass that to the team.",
+    // A reply that is only the word keeps it rather than becoming silence.
+    "Absolutely.",
+    "Of course.",
+    // Ordinary replies are untouched.
+    "Got it, what's the address?",
+    "The team will call you to confirm when someone can come out.",
+  ])("leaves %p alone", (said) => {
+    expect(apply(said)).toBe(said);
+  });
+});
