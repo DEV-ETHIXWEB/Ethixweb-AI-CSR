@@ -178,6 +178,11 @@ const META_LEAK =
 const REASONING_LEAK =
   /\b(the|in the|request|call|my) notes\b|\b(refused|rejected)\b|\b(complaint|new|the|a|this) lead\b|\bcreate (the|a) (lead|record|request)\b|\b(i'?ll|i will|let me|i need to) save\b|\b(couldn'?t|could not|can'?t|cannot) (update|save|add|submit|create)\b|\b(on file|in (the|our) system|the record)\b|\b(escalateEmergency|createCustomer|createLead|updateLead|searchCustomer|transferToHuman|getServiceAreas|getBusinessHours|lookupPreviousCalls)\b|\bcaller\b|^\s*(i )?need to (call|ask|check|use|run|respond|reply|confirm|get)\b|^\s*(speak|respond|reply) (in|with)\b/i;
 
+/** The acknowledgment a reply opens with, fused or standing alone ("Got it, Harold."). */
+const ACK_OPENER = /^(got it|gotcha|okay|ok|alright|all right|perfect|great|sure|understood)\b/i;
+/** How many of the recent replies may open with the same acknowledgment before it is dropped. */
+const ACK_OPENER_LIMIT = 2;
+
 /** A sentence that is only an acknowledgment, with no information in it. */
 const PURE_ACK =
   /^(got it|okay|ok|alright|all right|right|sure|perfect|great|gotcha|thanks|thank you|no problem|mm-?hm|understood|thanks for (telling|letting) me( know)?)[.!]?$/i;
@@ -634,6 +639,11 @@ function withoutStockOpener(sentence: string): string {
 export class OutputGuard {
   private readonly used = new Set<string>();
   private readonly recentStatements: string[][];
+  /**
+   * Acknowledgment words that have already opened two of the last three
+   * replies. See the PURE_ACK drop below.
+   */
+  private readonly spentAcks: ReadonlySet<string>;
   /** The digits each of recentStatements carries, in the same order; see repeatsRecentStatement. */
   private readonly recentStatementDigits: string[];
   private readonly questionsLastTurn: string[][];
@@ -701,6 +711,28 @@ export class OutputGuard {
       .filter((sentence) => !isQuestion(sentence))
       .filter((sentence) => normalizedWords(sentence).length >= REPEAT_MIN_WORDS);
     this.recentStatements = statements.map(normalizedWords);
+    /**
+     * 2026-11-05, real-model QA (prateek1029-03 and round4-01): "Got it"
+     * opened three replies in a row. The suite has carried an invariant
+     * against this since the client named it as the tell on call 515d3539
+     * ("got it" three times in one call), but PURE_ACK below only ever
+     * deduped WITHIN a turn, so nothing stopped it across turns.
+     *
+     * Counted over the recent replies the guard is already given. A third
+     * use is dropped rather than reworded: Grace has plenty of other
+     * openers, and inventing a substitute risks saying something she was
+     * never asked to say.
+     */
+    const ackCounts = new Map<string, number>();
+    for (const reply of recentAgentReplies) {
+      const opener = ACK_OPENER.exec(reply.trim())?.[1]?.toLowerCase();
+      if (opener) {
+        ackCounts.set(opener, (ackCounts.get(opener) ?? 0) + 1);
+      }
+    }
+    this.spentAcks = new Set(
+      [...ackCounts].filter(([, count]) => count >= ACK_OPENER_LIMIT).map(([word]) => word),
+    );
     this.recentStatementDigits = statements.map(digitsIn);
     // On a second pass of the same turn the previous COMPLETED turn's reply is
     // one further back: the use case appends this turn's own pass-1 text.
@@ -955,6 +987,17 @@ export class OutputGuard {
         PURE_ACK.test(plain) &&
         (this.spokeAlready || out.some((part) => words(part).length > 0))
       ) {
+        continue;
+      }
+      // See spentAcks: the same opener has already carried two of the last
+      // three replies. Only an acknowledgment-ONLY sentence is dropped, so
+      // a fused "Got it, Harold." keeps the caller's name rather than being
+      // rewritten into something Grace was never asked to say.
+      if (
+        PURE_ACK.test(plain) &&
+        this.spentAcks.has((ACK_OPENER.exec(plain)?.[1] ?? "").toLowerCase())
+      ) {
+        this.actions.push("repeated_statement");
         continue;
       }
       if (this.repeatsRecentStatement(sentence)) {

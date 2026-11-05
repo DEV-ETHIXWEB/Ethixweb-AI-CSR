@@ -1038,3 +1038,38 @@ describe("a second person's name is not rewritten to the caller's (2026-11-05)",
     );
   });
 });
+
+/**
+ * 2026-11-05, real-model QA (prateek1029-03 and round4-01): "Got it" opened
+ * three replies in a row. The suite has carried an invariant against this
+ * since the client named it as the tell on call 515d3539 ("got it" three
+ * times in one call), but PURE_ACK only ever deduped within a turn, so
+ * nothing stopped it across turns.
+ */
+describe("the same acknowledgment does not open a third reply (2026-11-05)", () => {
+  const after = (recent: string[], said: string) => new OutputGuard(recent).apply(said);
+
+  it("drops a third bare 'Got it.'", () => {
+    const out = after(
+      ["Got it. Is it dripping now?", "Got it, Harold. Is water pooling?"],
+      "Got it. And what's the ZIP code?",
+    );
+    expect(out).not.toMatch(/got it/i);
+    expect(out).toContain("ZIP code");
+  });
+
+  it("allows the second one", () => {
+    const out = after(["Got it. Is it dripping now?"], "Got it. And what's the ZIP code?");
+    expect(out).toMatch(/got it/i);
+  });
+
+  it("counts each opener separately", () => {
+    const out = after(["Got it. One.", "Got it. Two."], "Perfect. And the ZIP code?");
+    expect(out).toMatch(/perfect/i);
+  });
+
+  it("leaves a fused opener alone, so the caller's name is not lost", () => {
+    const said = "Got it, Harold. What's the ZIP code?";
+    expect(after(["Got it. One.", "Got it. Two."], said)).toContain("Harold");
+  });
+});
