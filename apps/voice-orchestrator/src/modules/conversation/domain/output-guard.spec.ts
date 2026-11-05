@@ -1004,3 +1004,37 @@ describe("the word budget spans the whole turn (2026-11-05)", () => {
     expect(only.trim()).toBe(firstPass);
   });
 });
+
+/**
+ * 2026-11-05, real-model QA (fullmix-10, a son calling for his elderly
+ * mother). The caller was Nathaniel Prempeh and the person at the house was
+ * Agnes Prempeh. Grace spelled the mother's name; the spelled-run rule saw
+ * letters that were not the CALLER's and rewrote them by position, so what
+ * went out was:
+ *
+ *   "Let me make sure I have it right: Agnes, N-A-T-H-A-N-I-E-L, Prempeh"
+ *
+ * A second person on the call is ordinary here: a tenant, a spouse, a
+ * parent. The word and its letters agreeing is the signal that the model
+ * got it right, whoever the name belongs to.
+ */
+describe("a second person's name is not rewritten to the caller's (2026-11-05)", () => {
+  const guard = () =>
+    new OutputGuard([], false, "", "Nathaniel", null, false, ["nathaniel", "prempeh"]);
+
+  it.each([
+    "Let me make sure I have it right: Agnes, A-G-N-E-S, Prempeh, P-R-E-M-P-E-H.",
+    "Her name is Agnes, A-G-N-E-S.",
+    "Got it, Nathaniel, N-A-T-H-A-N-I-E-L.",
+  ])("leaves the consistent spelling %p alone", (said) => {
+    expect(guard().apply(said)).toBe(said);
+  });
+
+  it("still corrects letters that contradict the word beside them", () => {
+    // The original defect this rule exists for: the word is the caller's
+    // name and the letters are somebody else's.
+    expect(guard().apply("Thanks, Siobhan, J-O-H-N, is that right?")).toContain(
+      "N-A-T-H-A-N-I-E-L",
+    );
+  });
+});

@@ -221,7 +221,11 @@ const CHANGE_CLAIM = new RegExp(
     // bare "is" put it within reach of "booked" 30 characters later.
     "\\b(?:i'?ve|i have|it'?s|that'?s|you'?re|your|has been|have been|is now|are now)\\b[^.?!]{0,30}\\b(?:cancell?ed|rescheduled|moved|booked|pushed back|bumped)\\b",
     `\\b(?:i|i'?ll|i will|let me|i'?m going to|i can|i just)\\b[^.?!]{0,25}\\b${CHANGE_VERB}\\b[^.?!]{0,20}\\b(?:it|that|this|your|the)\\b(?:\\s+(?:appointment|visit|booking|slot|time|schedule|one))?`,
-    `\\blet me (?:get|have)\\s+(?:that|it|this|your\\s+\\w+)\\s+${CHANGE_VERB}\\b`,
+    // 2026-11-05, real-model QA: "I can help get that rescheduled." The
+    // object comes BEFORE the verb here, which the lead-in branch above
+    // (verb then object) cannot see, and "I can help" reads as a promise
+    // Grace has no way to keep.
+    `\\b(?:let me|i can|i'?ll|i will|we can|i'?m able to)\\s+(?:help\\s+)?(?:get|have)\\s+(?:that|it|this|your\\s+\\w+)\\s+${CHANGE_VERB}\\b`,
     "\\b(?:cancell?ed|rescheduled|moved)\\s+(?:it\\s+|that\\s+)?(?:for you|your appointment|your visit)\\b",
     "\\bconsider (?:it|that|this) (?:cancell?ed|rescheduled|moved|done|handled)\\b",
     "\\b(?:off|taken off|removed from|remove you from|removed you from)\\s+(?:the\\s+)?(?:schedule|books|calendar)\\b",
@@ -858,11 +862,26 @@ export class OutputGuard {
     }
     let runIndex = -1;
     let changed = false;
-    const cleaned = sentence.replace(SPELLED_RUN, (run) => {
+    const cleaned = sentence.replace(SPELLED_RUN, (run: string, offset: number, whole: string) => {
       runIndex += 1;
       const spoken = lettersOf(run);
       // Already one of the caller's own names, in any position: leave it.
       if (this.nameWords.some((word) => sameName(spoken, word))) {
+        return run;
+      }
+      // 2026-11-05, real-model QA (fullmix-10, a son calling for his
+      // elderly mother): the caller was Nathaniel Prempeh and the person at
+      // the house was Agnes Prempeh. Grace spelled the mother's name, this
+      // rule saw letters that were not the CALLER's, and by position
+      // rewrote them, so what went out was "Agnes, N-A-T-H-A-N-I-E-L".
+      //
+      // The word and its letters agreeing is the whole signal. A run that
+      // spells the word right in front of it is a name said correctly, even
+      // when that name belongs to someone else on the call; only a run that
+      // CONTRADICTS the word beside it is the mis-spelling this exists to
+      // catch ("Siobhan, J-O-H-N").
+      const wordBefore = /([A-Za-z'\u2019-]+)[\s,:]*$/.exec(whole.slice(0, offset))?.[1] ?? "";
+      if (wordBefore && sameName(spoken, wordBefore.toLowerCase())) {
         return run;
       }
       const expected = this.nameWords[runIndex];
