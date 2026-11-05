@@ -1,18 +1,43 @@
-# Promotion Facts — expiration-sensitive, re-verify before 10/31/2026
+# Promotion Facts — expiration-sensitive, re-verify before 12/31/2026
 
 Crawled live 2026-09-05 from https://www.allphaseplumbing.com/coupons.
 All three current offers share the same expiration date and the same
 eligibility restrictions.
 
-FACT: $100 off drain cleaning, includes a free camera inspection of the mainline sewer. Residential homeowners only, one per household, must be shown at time of service, not valid with other offers. Expires 10/31/2026.
-SOURCE URL: https://www.allphaseplumbing.com/coupons
-VERIFIED: 2026-09-05 | STATUS: approved (currently active — 2026-09-05 is well before the 10/31/2026 expiration)
+## 2026-11-05 — STILL ACTIVE. The printed date is stale, not the offers.
 
-FACT: 10% off the next residential plumbing service call, capped at $250. Same restrictions as above. Expires 10/31/2026.
-SOURCE URL: https://www.allphaseplumbing.com/coupons
-VERIFIED: 2026-09-05 | STATUS: approved (currently active)
+The coupons page was re-fetched on 2026-11-05 and still displays
+"EXPIRES 10/31/2026" on all three, with no replacements. On the face of it
+that means the CSR had been offering dead discounts for five days.
 
-FACT: $250 off any residential water heater (install/replacement). Same restrictions as above. Expires 10/31/2026.
+It had not. Akash confirmed on 2026-11-05 that the client has these
+running **through December 2026**; the website simply has not been
+updated. So the stale value is on the public page, and the offers
+themselves are good.
+
+Two things follow, and they point in opposite directions, so do not
+collapse them:
+
+1. **Do NOT disable these rows.** The 10/31/2026 date printed on the page
+   is wrong, and the re-verify instruction below would otherwise tell the
+   next reader to switch off three offers the business is actively running.
+2. **The exact end date is still unconfirmed.** "Through December" was
+   given verbally, not from a document. Treat 12/31/2026 as a working
+   assumption to re-check, not as a verified fact, and get the real date
+   before trusting these past the end of the year.
+
+Worth raising with the client separately: their own customers read that
+page, see 10/31/2026, and conclude the offers have ended.
+
+FACT: $100 off drain cleaning, includes a free camera inspection of the mainline sewer. Residential homeowners only, one per household, must be shown at time of service, not valid with other offers. Page prints 10/31/2026; actually runs through December 2026.
+SOURCE URL: https://www.allphaseplumbing.com/coupons
+VERIFIED: 2026-09-05; still active per Akash 2026-11-05 (runs through December 2026, exact date unconfirmed) | STATUS: approved
+
+FACT: 10% off the next residential plumbing service call, capped at $250. Same restrictions as above. Page prints 10/31/2026; actually runs through December 2026.
+SOURCE URL: https://www.allphaseplumbing.com/coupons
+VERIFIED: 2026-09-05; still active per Akash 2026-11-05 | STATUS: approved
+
+FACT: $250 off any residential water heater (install/replacement). Same restrictions as above. Page prints 10/31/2026; actually runs through December 2026.
 SOURCE URL: https://www.allphaseplumbing.com/coupons
 VERIFIED: 2026-09-05 | STATUS: approved (currently active)
 
