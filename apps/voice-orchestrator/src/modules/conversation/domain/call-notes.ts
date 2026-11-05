@@ -778,44 +778,64 @@ function spelledIntoItsSlot(
   statedIndex: number,
 ): string[] {
   const statedWords = stated.toLowerCase().split(/\s+/).filter(Boolean);
-  if (statedWords.length !== 2) {
+  // 2026-11-05: this used to bail on anything that was not exactly two
+  // words, which silently dropped the middle name of a three-word name the
+  // moment the caller spelled any part of it:
+  //
+  //   "my name is Harold James Winterbone"
+  //   "Winterbone, W-I-N-T-E-R-B-O-N-E"   ->  saved as "Harold Winterbone"
+  //
+  // Spelling a name back is what a caller does when they want it RIGHT, so
+  // losing a part at exactly that moment is the worst time to lose it. Any
+  // number of parts is placed now; the two-part case behaves as before.
+  if (statedWords.length < 2) {
     return [word];
   }
-  const slotOf = (spelledWord: string): 0 | 1 | null => {
+  const slotOf = (spelledWord: string): number | null => {
     // "okafor-bright" is placed by "okafor".
     const candidate = spelledWord.split("-")[0]!;
-    const toFirst = likeness(candidate, statedWords[0]!);
-    const toLast = likeness(candidate, statedWords[1]!);
-    if (Math.max(toFirst, toLast) < SAME_NAME_LIKENESS) {
-      return null;
-    }
-    return toFirst >= toLast ? 0 : 1;
+    let best: number | null = null;
+    let bestScore = 0;
+    statedWords.forEach((statedWord, at) => {
+      const score = likeness(candidate, statedWord);
+      if (score >= SAME_NAME_LIKENESS && score > bestScore) {
+        best = at;
+        bestScore = score;
+      }
+    });
+    return best;
   };
   // 2026-10-25, the client: "name is donald burke b e r g not p". "berg" is
   // not close enough to "burke" to place by sound, and taking it as the
   // whole name dropped Donald. Letters said in the same breath as a full
   // name, unlike the first name, spell the last.
   const sameBreath = spellings.at(-1)?.index === statedIndex;
+  // Letters in the same breath as a full name spell its LAST part, not its
+  // first (2026-10-25, "donald burke b e r g not p").
   const slot =
-    slotOf(word) ?? (sameBreath && likeness(word, statedWords[0]!) < SAME_NAME_LIKENESS ? 1 : null);
+    slotOf(word) ??
+    (sameBreath && likeness(word, statedWords[0]!) < SAME_NAME_LIKENESS
+      ? statedWords.length - 1
+      : null);
   if (slot === null) {
     return [word];
   }
-  const other = slot === 0 ? 1 : 0;
-  const earlier = spellings
-    .slice(0, -1)
-    .filter((spelling) => spelling.index >= statedIndex && spelling.words.length === 1)
-    .map((spelling) => spelling.words[0]!)
-    .reverse()
-    .find((candidate) => slotOf(candidate) === other);
-  const result = ["", ""];
+  const earlierFor = (at: number) =>
+    spellings
+      .slice(0, -1)
+      .filter((spelling) => spelling.index >= statedIndex && spelling.words.length === 1)
+      .map((spelling) => spelling.words[0]!)
+      .reverse()
+      .find((candidate) => slotOf(candidate) === at);
+  // Every part the caller gave is kept; only the spelled one is replaced,
+  // and any other part they spelled earlier wins over what was merely heard.
+  const result = statedWords.map((statedWord, at) => earlierFor(at) ?? statedWord);
   // Live test, 2026-10-26: "desmond okaforbright", then "o k a f o r dash"
   // (the rest came in the next breath). Letters spelling only the start of
   // the name already given do not cut it short.
   const given = statedWords[slot]!;
   result[slot] =
     word.length >= 3 && given.length > word.length && given.startsWith(word) ? given : word;
-  result[other] = earlier ?? statedWords[other]!;
   return result;
 }
 
@@ -1655,17 +1675,27 @@ function statedNameAt(
         // the END of what the caller said, so a name can never swallow
         // "...and my sink is leaking". Each word must still pass canBeName,
         // and the whole name is capped so a mis-parse stays small.
-        const tail = second
-          ? /^\s+([a-z][a-z'-]+(?:\s+[a-z][a-z'-]+)*)\s*[.!?]?\s*$/
-              .exec(lower.slice(end))?.[1]
-              ?.split(/\s+/)
-          : undefined;
-        const keepsTail =
-          tail !== undefined &&
-          tail.length > 0 &&
-          tail.length <= MAX_EXTRA_NAME_WORDS &&
-          canBeName(second) &&
-          tail.every((word) => canBeName(word));
+        // 2026-11-05: requiring the extra words to END the utterance was
+        // too strict. "my name is Harold James Winterbone and my sink is
+        // clogged" is how people actually talk, and it lost the surname.
+        //
+        // Taking name-capable words and STOPPING at the first that is not
+        // keeps the same protection for a better reason: "and", "my" and
+        // "is" are not names, so "my name is Dana and my sink is leaking"
+        // still stops dead at "and" and saves Dana alone.
+        // Tokenised WITH digits attached, so "9th" arrives as one token and
+        // is rejected whole. Matching letters only would read "9th" as "th"
+        // and take it for a name: "I am Robert Chen, 1912 9th avenue west"
+        // became "Robert Chen Th".
+        const tailWords = second ? (lower.slice(end).match(/[a-z0-9][a-z0-9'-]*/g) ?? []) : [];
+        const tail: string[] = [];
+        for (const word of tailWords) {
+          if (tail.length >= MAX_EXTRA_NAME_WORDS || /\d/.test(word) || !canBeName(word)) {
+            break;
+          }
+          tail.push(word);
+        }
+        const keepsTail = tail.length > 0 && canBeName(second);
         said.push({
           index,
           at,
@@ -1726,7 +1756,26 @@ function statedNameAt(
       if (!first || likeness(item.own, first.toLowerCase()) >= SAME_NAME_LIKENESS) {
         first = capitalize(item.own);
       } else {
-        last = capitalize(item.own);
+        // 2026-11-05: `last` can hold more than one word ("James
+        // Winterbone" for a three-word name), and spelling ONE of them
+        // used to overwrite the whole field:
+        //
+        //   "my name is Harold James Winterbone"
+        //   "Winterbone, W-I-N-T-E-R-B-O-N-E"  ->  "Harold Winterbone"
+        //
+        // Spelling a name is what a caller does when they want it right,
+        // so losing a part there is the worst possible moment. Only the
+        // part that was spelled is replaced.
+        const parts: string[] = last ? last.split(" ") : [];
+        const at = parts.findIndex(
+          (part: string) => likeness(item.own!, part.toLowerCase()) >= SAME_NAME_LIKENESS,
+        );
+        if (parts.length > 1 && at !== -1) {
+          parts[at] = capitalize(item.own);
+          last = parts.join(" ");
+        } else {
+          last = capitalize(item.own);
+        }
       }
       index = item.index;
       continue;

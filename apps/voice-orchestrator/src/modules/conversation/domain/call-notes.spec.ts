@@ -1349,3 +1349,54 @@ describe("a name keeps every word the caller said (2026-11-04)", () => {
     expect(nameIn(said)).toBe(expected);
   });
 });
+
+/**
+ * 2026-11-05, reported from live calls: a caller gave a full name in three
+ * words, the third was not kept, and repeating or spelling it did not help.
+ *
+ * Three separate causes, all of which lose the same word:
+ *
+ * 1. The name was not the last thing said. "my name is Harold James
+ *    Winterbone and my sink is clogged" kept "Harold James", because the
+ *    extra words had to END the utterance. They now stop at the first word
+ *    that cannot be a name, which "and" cannot.
+ * 2. Spelling one part overwrote all of them. "Winterbone, W-I-N-T-E-R-
+ *    B-O-N-E" after a three-word name gave "Harold Winterbone". Only the
+ *    part that was spelled is replaced now.
+ * 3. spelledIntoItsSlot bailed on anything that was not exactly two words.
+ *
+ * Spelling a name back is what a caller does when they want it right, so
+ * losing a part at that exact moment is the worst time to lose it.
+ */
+describe("a three-word name survives being repeated and spelled (2026-11-05)", () => {
+  const stated = (turns: string[]) => buildCallNotes(turns).statedName;
+
+  it.each([
+    ["my name is Harold James Winterbone"],
+    ["my full name is Harold James Winterbone"],
+    ["my name is Harold James Winterbone and my sink is clogged"],
+    ["it's Harold James Winterbone, the water heater is leaking"],
+  ])("keeps all three words of %p", (said) => {
+    expect(stated([said])).toBe("Harold James Winterbone");
+  });
+
+  it.each([
+    [["my name is Harold James Winterbone", "Winterbone, W I N T E R B O N E"]],
+    [["my name is Harold James Winterbone", "Harold, H A R O L D"]],
+    [["my name is Harold James Winterbone", "Harold James Winterbone"]],
+    [["my name is Harold Winterbone", "no, my full name is Harold James Winterbone"]],
+  ])("keeps all three across %p", (turns) => {
+    expect(stated(turns)).toBe("Harold James Winterbone");
+  });
+
+  it.each([
+    ["my name is Dana and my sink is leaking", "Dana"],
+    ["my name is Tom my toilet is overflowing right now", "Tom"],
+    ["my name is Dana Whitfield and the sink is clogged", "Dana Whitfield"],
+    ["I am Robert Chen, 1912 9th avenue west, the disposal is jammed", "Robert Chen"],
+    ["it's Sarah Parker calling about the leak", "Sarah Parker"],
+    ["call me Tom, the pipe burst", "Tom"],
+  ])("still never swallows what follows: %p", (said, expected) => {
+    expect(stated([said])).toBe(expected);
+  });
+});
