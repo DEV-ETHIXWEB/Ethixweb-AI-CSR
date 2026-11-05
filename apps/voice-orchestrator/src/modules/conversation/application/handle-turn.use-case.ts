@@ -899,6 +899,15 @@ export class HandleTurnUseCase {
       annotatedTranscript = annotateMissingLead(
         annotatedTranscript,
         hasUsableCustomer(conversation),
+        // 2026-11-05, real-model QA (round5-09): the caller gave a name, a
+        // number and an address in one breath and described the problem
+        // ("a repair you did for me has started acting up again"). Grace
+        // asked what was broken five different ways and saved nothing. The
+        // reminder only ever listed what to COLLECT, so with all of it
+        // already collected it read as no instruction at all.
+        Boolean(notes.statedName ?? notes.spelledName) &&
+          Boolean(notes.street) &&
+          Boolean(notes.phone ?? conversation.callerAni),
       );
     }
     // See call-notes.ts: what the caller already said, restated every turn so
@@ -2951,7 +2960,21 @@ function buildTransferPromiseBackstopCall(transcript: string): AiToolCallRequest
  * true the moment it succeeds — this keeps the reminder accurate instead
  * of nagging the model toward a call it's already made.
  */
-function annotateMissingLead(transcript: string, customerCreated: boolean): string {
+function annotateMissingLead(
+  transcript: string,
+  customerCreated: boolean,
+  haveEverything = false,
+): string {
+  // See the call site: everything needed is already in hand, so the only
+  // honest next action is to save it. Saying so beats repeating the list.
+  if (!customerCreated && haveEverything) {
+    return (
+      "[you already have their name, street address and callback number, and they have said " +
+      "what is wrong. Nothing is saved yet this call: call createCustomer now, then createLead " +
+      "with their own words as the problem. Do not ask for more detail about the problem first.] " +
+      transcript
+    );
+  }
   // v53: this used to say "don't wait for an address or zip code first", the
   // old rule behind saves with no address (the save gate then refused them
   // anyway). It now points at whatever is actually missing.

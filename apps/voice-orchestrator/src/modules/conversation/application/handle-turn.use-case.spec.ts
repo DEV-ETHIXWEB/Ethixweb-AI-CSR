@@ -1326,7 +1326,12 @@ describe("HandleTurnUseCase", () => {
       // now ("answer that first"), which would suppress the reminder.
       await useCase2.execute(baseCommand({ transcript: "okay" }));
       const sentMessage = aiProvider2.requests[0]?.messages.filter((m) => m.role === "user").pop();
-      expect(sentMessage?.content).toContain("call createCustomer and then createLead");
+      // The point of this test is WHICH note is injected: the retryable
+      // lead reminder, not the permanent CRM-unavailable one. The reminder
+      // has two wordings (2026-11-05) depending on whether the caller has
+      // already given everything, so match what both say rather than
+      // pinning one of them.
+      expect(sentMessage?.content).toMatch(/call createCustomer (?:and then|now, then) createLead/);
       expect(sentMessage?.content).not.toContain("CRM/lead system is not available");
     });
 
