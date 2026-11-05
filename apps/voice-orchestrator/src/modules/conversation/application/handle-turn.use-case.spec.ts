@@ -5742,8 +5742,8 @@ describe("the doubt after a missed callback reaches the model", () => {
     const { useCase } = buildUseCase({ aiProvider, repository });
     await useCase.execute(baseCommand({ transcript }));
     return String(
-      aiProvider.requests[0]?.messages.filter((message) => message.role === "user").pop()?.content ??
-        "",
+      aiProvider.requests[0]?.messages.filter((message) => message.role === "user").pop()
+        ?.content ?? "",
     );
   };
 
@@ -5770,8 +5770,8 @@ describe("the doubt after a missed callback reaches the model", () => {
     const { useCase } = buildUseCase({ aiProvider, repository });
     await useCase.execute(baseCommand({ transcript: "How do I know you're any good?" }));
     const sent = String(
-      aiProvider.requests[0]?.messages.filter((message) => message.role === "user").pop()?.content ??
-        "",
+      aiProvider.requests[0]?.messages.filter((message) => message.role === "user").pop()
+        ?.content ?? "",
     );
     expect(sent).not.toContain("second call");
   });
