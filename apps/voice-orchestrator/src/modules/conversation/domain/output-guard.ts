@@ -133,6 +133,27 @@ export const SAFE_PRICE_POLICY_LINE =
   "I don't have that here, but the team will go over the price when they call.";
 const PRICE_POLICY_WORDS =
   /\b(surcharges?|discounts?|promotions?|promos?|coupons?|vouchers?|specials?|deals?|referral (?:credit|bonus|discount|program)|flat rate|(?:extra|additional|added|hidden) (?:charge|fee|cost)s?|(?:weekend|holiday|after-?hours|overtime|emergency) (?:rate|fee|charge|pricing)s?)\b/i;
+/**
+ * 2026-11-05, after reading the live site: the asymmetry matters.
+ *
+ * The business DOES publish that "after-hours rates do apply for nights,
+ * weekends, and holidays", so warning a caller about a charge is both true
+ * and the safe direction to be wrong in: nobody is upset by a surcharge
+ * that does not materialise. The first version of this rule blocked that
+ * sentence too, which replaced a published fact with a deflection.
+ *
+ * Denying a charge is the dangerous half, and it is what was actually
+ * caught on QA ("No holiday surcharge, we charge the same flat rate
+ * year-round"). So is promising money off: a discount, promo or referral
+ * credit nobody authorised. Those two stay blocked; a plain statement that
+ * a surcharge applies now goes through.
+ */
+const PRICE_POLICY_DENIAL =
+  /\b(no|not|aren'?t|isn'?t|won'?t|never|without|same (?:flat )?rate|free)\b/i;
+/** Money off: a thing Grace can never promise, whoever asks. */
+const PRICE_POLICY_BENEFIT =
+  /\b(discounts?|promotions?|promos?|coupons?|vouchers?|specials?|deals?|referral (?:credit|bonus|discount|program))\b/i;
+
 /** An assertion that such a thing does or does not exist. */
 const PRICE_POLICY_CLAIM =
   /\b(?:we|they|there|it)\s*(?:'?s|'?re|is|are|do|does|don'?t|doesn'?t|have|has|offer|run|charge|apply|aren'?t|isn'?t)\b|\b(?:no|not? any|yes|same)\b/i;
@@ -1084,6 +1105,10 @@ export class OutputGuard {
         !isQuestion(sentence) &&
         PRICE_POLICY_WORDS.test(plain) &&
         PRICE_POLICY_CLAIM.test(plain) &&
+        // See PRICE_POLICY_DENIAL: a surcharge said to APPLY is published
+        // and errs the safe way, so only a denial, or a promise of money
+        // off, is replaced.
+        (PRICE_POLICY_DENIAL.test(plain) || PRICE_POLICY_BENEFIT.test(plain)) &&
         !PRICE_POLICY_HEDGE.test(plain)
       ) {
         this.actions.push("fee_claim");

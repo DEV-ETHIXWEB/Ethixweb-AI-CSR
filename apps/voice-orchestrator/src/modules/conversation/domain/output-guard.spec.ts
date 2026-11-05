@@ -1094,7 +1094,6 @@ describe("a pricing policy nobody published is not stated as fact (2026-11-05)",
     "There's no extra charge for weekends.",
     "We're running a special this month.",
     "Yes, we have a discount for new customers.",
-    "There's an after-hours fee on evening calls.",
   ])("%p is replaced with the safe line", (said) => {
     expect(apply(said)).toContain("the team will go over the price when they call");
   });
@@ -1105,6 +1104,14 @@ describe("a pricing policy nobody published is not stated as fact (2026-11-05)",
     "The team will confirm the price before any work starts.",
     "Got it, what's the address?",
     "Is there anything else going on in the house?",
+    // 2026-11-05: the business DOES publish "after-hours rates do apply for
+    // nights, weekends, and holidays". Warning a caller about a charge is
+    // true and errs the safe way; nobody is upset by a surcharge that never
+    // materialises. Only DENYING a charge, or promising money off, is the
+    // invention this rule is for.
+    "After-hours rates do apply for nights, weekends, and holidays.",
+    "There is an after-hours rate for nights and weekends.",
+    "There's an emergency rate on holiday calls.",
   ])("leaves %p alone", (said) => {
     expect(apply(said)).toBe(said);
   });
