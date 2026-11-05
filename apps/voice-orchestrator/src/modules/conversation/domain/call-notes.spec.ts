@@ -1259,6 +1259,52 @@ describe("three-word names keep every word", () => {
 });
 
 /**
+ * 2026-10-14 AWS test call. The caller gave an address, Grace read nine
+ * digits back as a house number twice, and the call ended with no address
+ * and no lead:
+ *
+ *   caller: "one one four five zero five two zero four avenue east"
+ *   Grace:  "I'll read it back as you gave it: 1-1-4-5-0-5-2-0-4 Avenue East"
+ *   caller: "well it's one four five zero five"
+ *   Grace:  "Is the house number 1-4-5-0-5-2-0-4?"
+ *   Grace:  "Sorry, I'm still not sure of the house number."
+ *
+ * The parser was right to refuse the run: that long means a house number and
+ * a numbered street said without a pause, and splitting it would invent an
+ * address. The defect is that the refusal was silent, so with nothing in the
+ * notes the model filled the gap by reading the run back as a house number.
+ */
+describe("a digit run too long to be a house number (2026-10-14)", () => {
+  const notesFor = (said: string) => formatCallNotes(buildCallNotes([said])) ?? "";
+
+  it("says the run cannot be a house number, and names the one question to ask", () => {
+    const text = notesFor("one one four five zero five two zero four avenue east");
+    expect(text).toContain("TOO LONG to be a house number");
+    expect(text).toContain("1-1-4-5-0-5-2-0-4");
+    expect(text).toContain("Do NOT read it back as a house number");
+    expect(text).toContain("What's the house number on its own?");
+    // The whole point: no address was captured, so none may be claimed.
+    expect(text).not.toContain("street address as heard");
+  });
+
+  it.each([
+    ["4512 maple street kent", "4512 maple street"],
+    ["11450 52nd avenue east", "11450 52nd avenue east"],
+    ["one one four five zero fifty second avenue east", "11450 fifty second avenue east"],
+  ])("leaves the ordinary address %p alone", (said, expected) => {
+    const text = notesFor(said);
+    expect(text).toContain(`street address as heard: "${expected}"`);
+    expect(text).not.toContain("TOO LONG to be a house number");
+  });
+
+  it("a long run that is a phone number, with no street after it, is not this", () => {
+    expect(notesFor("my number is two zero six five five five zero one four seven")).not.toContain(
+      "TOO LONG to be a house number",
+    );
+  });
+});
+
+/**
  * 2026-11-04. A spoken name kept only its first two words, so every name
  * longer than that was filed under a wrong, plausible-looking surname:
  *

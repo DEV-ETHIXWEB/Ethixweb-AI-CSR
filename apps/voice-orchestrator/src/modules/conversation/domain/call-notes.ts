@@ -30,6 +30,11 @@ export interface CallNotes {
   /** A lone word said straight after a first name only; see lastNameOnItsOwn. */
   lastNameMaybe?: string;
   street: string | null;
+  /**
+   * A digit run too long to be a house number, said right before a street
+   * word, when no address parsed out of it. See overlongHouseNumber.
+   */
+  longHouseNumberRun?: string;
   zip: string | null;
   phone: string | null;
   property: "home" | "business" | null;
@@ -404,6 +409,12 @@ export function buildCallNotes(
     statedName: stated,
     ...(lastNameMaybe ? { lastNameMaybe } : {}),
     street: lastStreet(callerTexts),
+    ...(lastStreet(callerTexts) === null
+      ? (() => {
+          const run = overlongHouseNumber(callerTexts);
+          return run ? { longHouseNumberRun: run } : {};
+        })()
+      : {}),
     zip: lastZip(callerTexts),
     phone: spokenPhoneDigits(callerTexts),
     property: propertyType(callerTexts),
@@ -588,6 +599,15 @@ export function formatCallNotes(notes: CallNotes): string | null {
   }
   if (notes.street) {
     facts.push(`street address as heard: "${notes.street}"`);
+  }
+  if (!notes.street && notes.longHouseNumberRun) {
+    facts.push(
+      `they said ${notes.longHouseNumberRun.length} digits in a row before the street ` +
+        `("${notes.longHouseNumberRun.split("").join("-")}"). That is TOO LONG to be a house ` +
+        `number, so it is a house number and a numbered street run together. Do NOT read it ` +
+        `back as a house number and do NOT guess where it splits. Ask once, for the two parts ` +
+        `separately: "What's the house number on its own?"`,
+    );
   }
   if (notes.zip) {
     facts.push(`ZIP: ${notes.zip.split("").join("-")}`);
@@ -1951,6 +1971,40 @@ function answeredName(turns: ReadonlyArray<{ speaker: string; text: string }>): 
     }
   }
   return found;
+}
+
+/**
+ * 2026-10-14 AWS test call, and the reason this note exists:
+ *
+ *   caller: "one one four five zero five two zero four avenue east"
+ *   Grace:  "I'll read it back as you gave it: 1-1-4-5-0-5-2-0-4 Avenue East"
+ *   caller: "well it's one four five zero five"
+ *   Grace:  "Is the house number 1-4-5-0-5-2-0-4?"
+ *   Grace:  "Sorry, I'm still not sure of the house number."
+ *
+ * The call ended there with no address and no lead. A run that long is a
+ * house number and a numbered street said without a pause, and the parser
+ * deliberately refuses to split it rather than invent an address
+ * (service-area.ts documents that choice). But nothing TOLD the model that,
+ * so with no address in the notes it filled the silence by reading nine
+ * digits back as a house number, twice, which is how the caller ended up
+ * correcting a number that was never a number.
+ *
+ * So the refusal is now said out loud. The model gets the run, the fact
+ * that it cannot be a house number, and the one question to ask.
+ */
+const HOUSE_NUMBER_MAX_DIGITS = 5;
+
+function overlongHouseNumber(callerTexts: readonly string[]): string | undefined {
+  const streetWord = new RegExp(`\\b(?:${[...STREET_SUFFIXES].join("|")})\\b`, "i");
+  for (let i = callerTexts.length - 1; i >= 0; i -= 1) {
+    const text = collapseSpokenDigits(withoutFillerAfterNumbers(callerTexts[i] ?? ""));
+    const match = new RegExp(`\\b(\\d{${HOUSE_NUMBER_MAX_DIGITS + 1},})\\b`).exec(text);
+    if (match && streetWord.test(text.slice(match.index + match[1]!.length))) {
+      return match[1];
+    }
+  }
+  return undefined;
 }
 
 function lastStreet(callerTexts: readonly string[]): string | null {
