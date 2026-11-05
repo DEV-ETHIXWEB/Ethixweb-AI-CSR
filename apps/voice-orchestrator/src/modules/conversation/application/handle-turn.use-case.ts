@@ -27,6 +27,12 @@ import {
   zipMissingNote,
 } from "../domain/save-readiness";
 import {
+  doubtsItWillHappen,
+  MISSED_CALLBACK_DOUBT_NOTE,
+  missedCallbackNote,
+  reportsMissedCallback,
+} from "../domain/missed-callback";
+import {
   isNameGroundedInCaller,
   NAME_NOT_GIVEN_ERROR,
   DUPLICATE_NAME_ERROR,
@@ -792,6 +798,19 @@ export class HandleTurnUseCase {
       !conversation.transcript.some(
         (entry) => entry.speaker === "agent" && /leave the building/i.test(entry.text),
       );
+    // See missed-callback.ts. Ranked under danger and gas only: a caller the
+    // business already let down is the call most likely to become a bad
+    // review, and the apology has to land before any question.
+    const missedCallback = !inDanger && !gasLeak && reportsMissedCallback(command.transcript);
+    // The follow-up the apology always earns. Only after a missed call has
+    // actually been reported on this call, so an ordinary "how do I know"
+    // about something else is not answered as though it were this.
+    const doubtsTheCallback =
+      !inDanger &&
+      !gasLeak &&
+      !missedCallback &&
+      doubtsItWillHappen(command.transcript) &&
+      callerTextsSoFar.some((text) => reportsMissedCallback(text));
     // See UNSAVED_GOODBYE_NOTE. Only a short goodbye with no new problem in
     // it: "never mind, my sink is also leaking" is not one.
     const goodbye =
@@ -808,6 +827,8 @@ export class HandleTurnUseCase {
     const directiveFired =
       inDanger ||
       gasLeak ||
+      missedCallback ||
+      doubtsTheCallback ||
       goodbye ||
       upsetWantsPerson ||
       nameDeclinedNow ||
@@ -829,6 +850,10 @@ export class HandleTurnUseCase {
       annotatedTranscript = `${IN_DANGER_NOTE} ${annotatedTranscript}`;
     } else if (gasLeak) {
       annotatedTranscript = `${GAS_LEAK_NOTE} ${annotatedTranscript}`;
+    } else if (missedCallback) {
+      annotatedTranscript = `${missedCallbackNote(conversation.callId)} ${annotatedTranscript}`;
+    } else if (doubtsTheCallback) {
+      annotatedTranscript = `${MISSED_CALLBACK_DOUBT_NOTE} ${annotatedTranscript}`;
     } else if (isTrailingOff) {
       annotatedTranscript = `${TRAILING_FRAGMENT_NOTE} ${annotatedTranscript}`;
     } else if (goodbye) {
@@ -924,7 +949,12 @@ export class HandleTurnUseCase {
       houseNumber: /^\d{3,6}$/.test(houseNumber) ? houseNumber : null,
       repeatRequested: wantsItAgain,
       // See output-guard.ts noQuestions, and endsWithHoldRequest.
-      noQuestions: gasLeak || endsWithHoldRequest(command.transcript),
+      // doubtsTheCallback: the note alone was not enough. On the real model
+      // turn three still came back "Is this for your home?", which is the
+      // one thing that must not happen when a caller has just asked how
+      // they can trust the call will come. The guard makes a question on
+      // this turn structurally impossible rather than merely discouraged.
+      noQuestions: gasLeak || doubtsTheCallback || endsWithHoldRequest(command.transcript),
       // See output-guard.ts prefersText.
       prefersText,
       // See output-guard.ts withTheRealNumber: the number Grace reads back

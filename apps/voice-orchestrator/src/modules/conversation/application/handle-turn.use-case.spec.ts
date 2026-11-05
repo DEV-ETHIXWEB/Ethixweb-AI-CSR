@@ -5700,3 +5700,79 @@ describe("a caller who would rather get a text", () => {
     expect(result.responseText).toContain("The team will call you");
   });
 });
+
+/**
+ * 2026-11-05. The apology for a missed callback lands, and then the caller
+ * asks the question the apology always earns: "How do I know this time it's
+ * actually going to happen?" On the real model that turn got "Can you tell
+ * me what's going on with the water heater?" on one run and an empty turn
+ * on another. Changing the subject there is the failure, not a detail: that
+ * question is the entire reason they rang back.
+ */
+describe("the doubt after a missed callback reaches the model", () => {
+  const turnsSoFar = [
+    {
+      turnIndex: 0,
+      speaker: "caller" as const,
+      text: "I called two days ago and was told someone would call me back. Nobody did.",
+      confidence: 0.95,
+      offsetMs: 0,
+      at: new Date().toISOString(),
+    },
+    {
+      turnIndex: 1,
+      speaker: "agent" as const,
+      text: "I'm sorry, that one got missed. Can I get your name?",
+      confidence: null,
+      offsetMs: 10,
+      at: new Date().toISOString(),
+    },
+  ];
+
+  const sentOn = async (transcript: string) => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation({ transcript: turnsSoFar }));
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "I can't promise a time, but it goes in as a second call." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+    await useCase.execute(baseCommand({ transcript }));
+    return String(
+      aiProvider.requests[0]?.messages.filter((message) => message.role === "user").pop()?.content ??
+        "",
+    );
+  };
+
+  it("tells the model to answer it rather than ask something new", async () => {
+    const sent = await sentOn(
+      "How do I know this time it's actually going to happen? I don't want to have to call a third time.",
+    );
+    expect(sent).toContain("ANSWER THIS");
+    expect(sent).toContain("Ask no question at all this turn");
+    expect(sent).toContain("second call");
+    expect(sent).toContain("cannot promise a time");
+  });
+
+  it("stays quiet when no missed callback was ever reported", async () => {
+    const repository = new FakeConversationRepository();
+    repository.seed(baseConversation({ transcript: [] }));
+    const aiProvider = new FakeAiProvider();
+    aiProvider.responses = [
+      [
+        { type: "text_delta", text: "Sure." },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ];
+    const { useCase } = buildUseCase({ aiProvider, repository });
+    await useCase.execute(baseCommand({ transcript: "How do I know you're any good?" }));
+    const sent = String(
+      aiProvider.requests[0]?.messages.filter((message) => message.role === "user").pop()?.content ??
+        "",
+    );
+    expect(sent).not.toContain("second call");
+  });
+});

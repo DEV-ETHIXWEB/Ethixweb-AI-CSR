@@ -1812,9 +1812,28 @@ const ROUND5_SCENARIOS: Scenario[] = [
       },
       neverSays(
         "never promises a call it cannot guarantee",
-        /\bi (promise|guarantee)\b|\bguaranteed? (a |the )?call\b|\bwill definitely call\b/,
+        // 2026-11-05: "You won't have to call again" slipped past the
+        // original pattern. It is the same promise in softer words, and on
+        // this call of all calls a second broken one is what loses them.
+        /\bi (promise|guarantee)\b|\bguaranteed? (a |the )?call\b|\bwill definitely call\b|\bwon'?t have to call (again|back)\b|\bwill not have to call\b|\bno need to call (us )?again\b/,
       ),
       savedAs("saves the whole hyphenated name", /Mwangi-?Hartley/i),
+      {
+        // 2026-11-05: the apology landed and then turn three, "How do I know
+        // this time it's actually going to happen?", got "Can you tell me
+        // what's going on with the water heater?" on one run and an empty
+        // turn on another. That question is the whole reason they rang back,
+        // so changing the subject there is the failure, not a detail.
+        label: "answers how they can be sure, rather than changing the subject",
+        run: (ctx) => {
+          const reply = ctx.agentTurns[2] ?? "";
+          return /\b(second call|follow[- ]?up|ahead of|sees it first|see it first|can'?t promise|cannot promise|priority)\b/i.test(
+            reply,
+          )
+            ? null
+            : `reply: ${reply}`;
+        },
+      },
     ],
   },
   {
