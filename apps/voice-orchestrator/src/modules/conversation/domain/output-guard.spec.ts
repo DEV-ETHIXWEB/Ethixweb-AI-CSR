@@ -1073,3 +1073,39 @@ describe("the same acknowledgment does not open a third reply (2026-11-05)", () 
     expect(after(["Got it. One.", "Got it. Two."], said)).toContain("Harold");
   });
 });
+
+/**
+ * 2026-11-05, real-model QA. Three scenarios in one round caught Grace
+ * inventing a pricing policy nobody published:
+ *
+ *   round5-01: "No holiday surcharge, we charge the same flat rate year-round."
+ *   round4-08: a referral discount, answered as fact.
+ *   honesty-12: a promotion, answered as fact.
+ *
+ * The fee rule deliberately steps around discounts, so surcharges,
+ * discounts, promotions and referral credits had no guard at all. Saying
+ * there is NO surcharge is as much an invention as saying there is one, and
+ * it is the kind the caller only finds out about when the invoice arrives.
+ */
+describe("a pricing policy nobody published is not stated as fact (2026-11-05)", () => {
+  it.each([
+    "No holiday surcharge, we charge the same flat rate year-round.",
+    "We do offer a ten percent referral discount.",
+    "There's no extra charge for weekends.",
+    "We're running a special this month.",
+    "Yes, we have a discount for new customers.",
+    "There's an after-hours fee on evening calls.",
+  ])("%p is replaced with the safe line", (said) => {
+    expect(apply(said)).toContain("the team will go over the price when they call");
+  });
+
+  it.each([
+    "I don't have anything on discounts here, but the team can tell you.",
+    "I'm not sure about a surcharge, I'll ask them to check.",
+    "The team will confirm the price before any work starts.",
+    "Got it, what's the address?",
+    "Is there anything else going on in the house?",
+  ])("leaves %p alone", (said) => {
+    expect(apply(said)).toBe(said);
+  });
+});

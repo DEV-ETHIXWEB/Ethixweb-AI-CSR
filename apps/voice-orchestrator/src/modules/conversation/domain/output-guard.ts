@@ -115,6 +115,30 @@ const FEE_HEDGE =
  * production model: "The technician typically calls before arriving",
  * said to a caller relying on it to unlock her gate.
  */
+/**
+ * 2026-11-05, real-model QA. Three scenarios in one round caught Grace
+ * inventing a pricing policy nobody published:
+ *
+ *   round5-01: "No holiday surcharge, we charge the same flat rate year-round."
+ *   round4-08: a referral discount, answered as fact.
+ *   honesty-12: a promotion, answered as fact.
+ *
+ * The fee rule above deliberately steps around discounts (its own
+ * `off|coupon|discount` exclusion), so surcharges, discounts, promotions
+ * and referral credits had no guard at all. Saying there is NO surcharge is
+ * as much an invention as saying there is one, and it is the kind a caller
+ * only discovers is wrong when the invoice arrives.
+ */
+export const SAFE_PRICE_POLICY_LINE =
+  "I don't have that here, but the team will go over the price when they call.";
+const PRICE_POLICY_WORDS =
+  /\b(surcharges?|discounts?|promotions?|promos?|coupons?|vouchers?|specials?|deals?|referral (?:credit|bonus|discount|program)|flat rate|(?:extra|additional|added|hidden) (?:charge|fee|cost)s?|(?:weekend|holiday|after-?hours|overtime|emergency) (?:rate|fee|charge|pricing)s?)\b/i;
+/** An assertion that such a thing does or does not exist. */
+const PRICE_POLICY_CLAIM =
+  /\b(?:we|they|there|it)\s*(?:'?s|'?re|is|are|do|does|don'?t|doesn'?t|have|has|offer|run|charge|apply|aren'?t|isn'?t)\b|\b(?:no|not? any|yes|same)\b/i;
+const PRICE_POLICY_HEDGE =
+  /\b(don'?t (?:have|know)|do not have|not sure|can'?t say|cannot say|couldn'?t say|i'?d have to check|the team (?:will|can|would)|they (?:can|will) (?:go over|tell|confirm)|note|noted|ask|asking|confirm\w*|check with)\b/i;
+
 export const SAFE_CALL_AHEAD_LINE = "I'll note that you'd like a call before they arrive.";
 /**
  * 2026-11-04: six of the eight ways of making this promise went through.
@@ -1051,6 +1075,21 @@ export class OutputGuard {
         if (!this.used.has(SAFE_FEE_LINE)) {
           this.used.add(SAFE_FEE_LINE);
           out.push(`${SAFE_FEE_LINE} `);
+        }
+        continue;
+      }
+      // See SAFE_PRICE_POLICY_LINE: a surcharge, discount or promotion
+      // stated as fact, either way round, when nothing published says so.
+      if (
+        !isQuestion(sentence) &&
+        PRICE_POLICY_WORDS.test(plain) &&
+        PRICE_POLICY_CLAIM.test(plain) &&
+        !PRICE_POLICY_HEDGE.test(plain)
+      ) {
+        this.actions.push("fee_claim");
+        if (!this.used.has(SAFE_PRICE_POLICY_LINE)) {
+          this.used.add(SAFE_PRICE_POLICY_LINE);
+          out.push(`${SAFE_PRICE_POLICY_LINE} `);
         }
         continue;
       }
