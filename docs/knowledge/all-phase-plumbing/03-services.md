@@ -25,6 +25,12 @@ VERIFIED: 2026-09-05 | STATUS: approved
 
 ## Toilets
 
+FACT: Installs water-saving toilets, including dual-flush and low-flow designs ("a wide selection of modern, water-saving toilets that enhance comfort and reduce utility costs"). No specific brands are named anywhere on the site, and no gallons-per-flush figures or WaterSense certification are published, so Grace may say they install low-flow and dual-flush toilets but must not name a brand or quote a flush rate.
+SOURCE: /services/plumbing/toilets
+SOURCE URL: https://www.allphaseplumbing.com/services/plumbing/toilets
+VERIFIED: 2026-11-05
+STATUS: approved — added 2026-11-05 after a real-model QA scenario (round5-08) deflected a water-efficiency question entirely. The answer was published the whole time; this file simply never carried it, so Grace had nothing to answer from.
+
 FACT: Handles running toilets, weak/incomplete flushing, leaking seals/base leaks, faulty flapper/refill valves, cracked tank or bowl. Replacement is recommended after 2+ repairs in a year, structural tank/bowl damage, or an old high-water-consumption model — newer efficient units often pay back their cost in utility savings within a few years. Also does new installs (renovation/new construction, including smart toilets and bidet-integrated units).
 SOURCE URL: https://www.allphaseplumbing.com/services/plumbing/toilets
 VERIFIED: 2026-09-05 | STATUS: approved

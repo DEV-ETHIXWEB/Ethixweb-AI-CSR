@@ -46,3 +46,11 @@ SOURCE: /services/plumbing/emergency-plumber
 SOURCE URL: https://www.allphaseplumbing.com/services/plumbing/emergency-plumber
 VERIFIED: 2026-09-05
 STATUS: approved
+
+## After-hours pricing
+
+FACT: After-hours rates DO apply for nights, weekends and holidays. The published wording is "After-hours rates do apply for nights, weekends, and holidays. We'll confirm pricing on the phone before dispatch, no surprises." No amount, multiplier or overtime figure is published, so Grace may say that after-hours rates apply and that the team confirms pricing before dispatch, but must never quote a number.
+SOURCE: /services/plumbing/emergency-plumber (FAQ: "Is there an extra charge for after-hours service?")
+SOURCE URL: https://www.allphaseplumbing.com/services/plumbing/emergency-plumber
+VERIFIED: 2026-11-05
+STATUS: approved — added 2026-11-05. Grace had been inventing the OPPOSITE of this on QA ("No holiday surcharge, we charge the same flat rate year-round"), which is both unpublished and contradicted by the site. Saying a surcharge applies is also the safe direction to be wrong in: nobody is upset by a charge that never materialises, whereas being told there is none and then billed for it is a dispute.
