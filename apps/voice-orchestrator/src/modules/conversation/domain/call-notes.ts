@@ -1434,6 +1434,13 @@ const NOT_A_NAME_EXTRA = new Set([
  * Harding, and the cost is one extra question; accepting "Trying" as a name
  * writes it to the customer record.
  */
+/**
+ * Beyond a first and second word, how many more a spoken name may absorb.
+ * "jose de la cruz" needs two; the cap keeps a mis-parse small rather than
+ * letting a whole sentence become a surname.
+ */
+const MAX_EXTRA_NAME_WORDS = 3;
+
 function canBeName(token: string): boolean {
   // Apostrophes are stripped for the LOOKUP (so "i'm" tests as "im" and
   // "don't" as "dont"); a real apostrophe name like O'Brien is unaffected,
@@ -1613,14 +1620,37 @@ function statedNameAt(
         // 2026-10-28/29, Prateek's calls: "my name is petronella elena
         // vasquez" kept only "Petronella Elena". A third name word that ends
         // what they said belongs to the name too.
-        const third = second
-          ? /^\s+([a-z][a-z'-]+)\s*[.!?]?\s*$/.exec(lower.slice(end))?.[1]
+        // 2026-11-04: the same reasoning holds past a third word, and
+        // stopping at one extra word silently halved longer names:
+        //   "maria del carmen ruiz"   was saved as "Maria Del"
+        //   "jose de la cruz"         was saved as "Jose De"
+        //   "peter van der berg"      was saved as "Peter Van"
+        // Compound Spanish and Dutch surnames are ordinary here, and the
+        // truncated half is a plausible-looking name, so nothing downstream
+        // can tell it went wrong: the record is simply filed under the
+        // wrong surname.
+        //
+        // The safety rule that made a third word safe is what makes the
+        // rest safe, and it is kept exactly: the extra words must run to
+        // the END of what the caller said, so a name can never swallow
+        // "...and my sink is leaking". Each word must still pass canBeName,
+        // and the whole name is capped so a mis-parse stays small.
+        const tail = second
+          ? /^\s+([a-z][a-z'-]+(?:\s+[a-z][a-z'-]+)*)\s*[.!?]?\s*$/
+              .exec(lower.slice(end))?.[1]
+              ?.split(/\s+/)
           : undefined;
+        const keepsTail =
+          tail !== undefined &&
+          tail.length > 0 &&
+          tail.length <= MAX_EXTRA_NAME_WORDS &&
+          canBeName(second) &&
+          tail.every((word) => canBeName(word));
         said.push({
           index,
           at,
           first: match[1] ?? "",
-          second: third && canBeName(second) && canBeName(third) ? `${second} ${third}` : second,
+          second: keepsTail ? [second, ...tail].join(" ") : second,
           loose,
         });
       }

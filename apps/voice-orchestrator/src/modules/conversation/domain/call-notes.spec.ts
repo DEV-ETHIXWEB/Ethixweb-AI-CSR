@@ -1257,3 +1257,49 @@ describe("three-word names keep every word", () => {
     ).toEqual(["cordelia", "mwangi", "hartley"]);
   });
 });
+
+/**
+ * 2026-11-04. A spoken name kept only its first two words, so every name
+ * longer than that was filed under a wrong, plausible-looking surname:
+ *
+ *   "maria del carmen ruiz"  ->  Maria Del
+ *   "jose de la cruz"        ->  Jose De
+ *   "peter van der berg"     ->  Peter Van
+ *
+ * Compound Spanish and Dutch surnames are ordinary in this service area,
+ * and the truncated half looks like a real name, so nothing downstream can
+ * tell it went wrong.
+ *
+ * The safety rule that made a third word safe is what makes the rest safe
+ * and is unchanged: the extra words must run to the END of what the caller
+ * said, so a name can never swallow "...and my sink is leaking".
+ */
+describe("a name keeps every word the caller said (2026-11-04)", () => {
+  const nameIn = (said: string) => {
+    const text = formatCallNotes(buildCallNotes([said])) ?? "";
+    const both = text.match(/first name "([^"]*)", last name "([^"]*)"/);
+    if (both) {
+      return `${both[1]} ${both[2]}`;
+    }
+    return text.match(/first "([^"]*)", and no last name/)?.[1] ?? "(none)";
+  };
+
+  it.each([
+    ["my name is Tom", "Tom"],
+    ["my name is Dana Whitfield", "Dana Whitfield"],
+    ["my name is Siobhan Adaeze Okonkwo", "Siobhan Adaeze Okonkwo"],
+    ["my name is Maria Del Carmen Ruiz", "Maria Del Carmen Ruiz"],
+    ["it's Jose De La Cruz", "Jose De La Cruz"],
+    ["my name is Peter Van Der Berg", "Peter Van Der Berg"],
+  ])("%p keeps every word", (said, expected) => {
+    expect(nameIn(said)).toBe(expected);
+  });
+
+  it.each([
+    ["my name is Dana and my sink is leaking", "Dana"],
+    ["my name is Tom my toilet is overflowing right now", "Tom"],
+    ["my name is Dana Whitfield and the sink is clogged", "Dana Whitfield"],
+  ])("%p never swallows what follows the name", (said, expected) => {
+    expect(nameIn(said)).toBe(expected);
+  });
+});
