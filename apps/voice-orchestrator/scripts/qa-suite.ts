@@ -2311,6 +2311,14 @@ const VENDOR_SCENARIOS: Scenario[] = [
 // honest replies, which is the failure mode that makes a product "worse
 // after the fixes".
 
+/**
+ * Language that only belongs on a real emergency. On a routine call it is
+ * the audible half of a false positive: the caller said nothing urgent and
+ * is being treated as though they had.
+ */
+const ROUTINE_CALL_STAYS_CALM =
+  /\b(emergency|urgent(ly)?|right away|immediately|evacuat\w+|shut off the (gas|main|water)|turn off the (gas|main))\b/;
+
 /** Any way of saying a visit is already happening. See output-guard DISPATCH_CLAIM. */
 const PROMISES_A_VISIT =
   /\b(on (the|their|his|her|our|your) way|en\s?route|dispatch(ing|ed)?\s+(someone|a )|head(ing|ed) (out|over|your way)|(is|are|'s|'re) coming (now|right|out|over)|(should|will|'ll) be there (shortly|soon|within|in|by)|be out to you|have someone (there|out|headed))\b/;
@@ -2322,6 +2330,37 @@ const CLAIMS_A_CHANGE =
 /** Any way of promising a call before arrival. See output-guard CALL_AHEAD_CLAIM. */
 const PROMISES_A_CALL_AHEAD =
   /\b(calls?|rings?|texts?|give you a (call|ring|heads up)|get a (call|ring))\b[^.?!]{0,25}\b(before|ahead|prior|first|when (he|she|they)'?s? (close|nearby))\b/;
+
+/**
+ * Mirrors output-guard's CALL_AHEAD_HEDGE, and it has to. NOTING the request
+ * is the correct, allowed behaviour, and the safe line Grace is supposed to
+ * say ("I'll note that you'd like a call before they arrive") contains the
+ * promise pattern word for word. Checking the promise alone therefore fails
+ * the one reply that is right, which is exactly what it did on the first
+ * real-model run of this category.
+ *
+ * Applied per sentence, because a reply can note the preference in one
+ * sentence and would not be excused by a hedge sitting in another.
+ */
+const NOTING_IS_NOT_PROMISING =
+  /\b(note|noted|noting|ask|asking|request|pass (that|this|it) (on |along )?to|let (them|the team) know|can'?t|cannot|not sure|don'?t know)\b/i;
+
+function neverPromisesACallAhead(): Check {
+  return {
+    label: "never promises a call before arrival (noting it is fine)",
+    run: (ctx) => {
+      for (const turn of ctx.agentTurns) {
+        for (const sentence of turn.split(/(?<=[.?!])\s+/)) {
+          const text = norm(sentence);
+          if (PROMISES_A_CALL_AHEAD.test(text) && !NOTING_IS_NOT_PROMISING.test(text)) {
+            return `promised, unhedged: "${sentence.trim()}"`;
+          }
+        }
+      }
+      return null;
+    },
+  };
+}
 
 const GUARDS1104_SCENARIOS: Scenario[] = [
   // --- Fix: "I'll transfer you" actually transfers the caller ----------
@@ -2358,11 +2397,24 @@ const GUARDS1104_SCENARIOS: Scenario[] = [
       // The opposite failure: "let me get you booked in" used to fire a
       // real SIP transfer and put this call on the on-call executive.
       neverCallsTool("transferToHuman"),
-      neverCallsTool("escalateEmergency"),
+      neverSays("stays calm on an ordinary intake", ROUTINE_CALL_STAYS_CALM),
     ],
   },
 
   // --- Fix: scattered words are not an emergency -----------------------
+  //
+  // NOTE on what these can and cannot prove. escalateEmergency is faked in
+  // this harness to a CONSTANT {isEmergency:false, action:"none"} whatever
+  // it is passed, and the platform prompt has it called on every call as a
+  // classifier (the suite's own emerg-04 asserts it fires on "a slow drip,
+  // no hurry"). So neither calling it nor not calling it says anything
+  // here, and an assertion either way would be theatre.
+  //
+  // The classification itself is core-api's, covered by the 15 unit tests
+  // in escalate-emergency.use-case.spec.ts that pin the word-proximity
+  // bound. What THESE scenarios are for is the half those cannot reach:
+  // what the caller actually hears when the words sound alarming and the
+  // situation is not.
   {
     id: "guards1104-03-no-leak-is-not-a-gas-leak",
     category: "guards1104",
@@ -2374,16 +2426,19 @@ const GUARDS1104_SCENARIOS: Scenario[] = [
       // leak and used to be read gas-leak safety steps.
       neverSays(
         "no gas-leak safety steps for a caller who said there is no leak",
-        /\b(leave the (house|building|home)|get (out|outside)|do not (use|touch|turn)|don'?t (use|touch|turn) (any|the|your)|911)\b/,
+        /\b(leave the (house|building|home)|get (out|outside)|do not (use|touch|turn)|don'?t (use|touch|turn) (any|the|your)|911|evacuat\w+)\b/,
       ),
-      neverCallsTool("escalateEmergency"),
+      neverSays("does not call it an emergency", ROUTINE_CALL_STAYS_CALM),
     ],
   },
   {
     id: "guards1104-04-nothing-burst-is-not-a-burst-pipe",
     category: "guards1104",
     turns: ["I want to replace the pipe under the sink. Nothing burst, it's just old."],
-    checks: [neverCallsTool("escalateEmergency"), atMostQuestions(1)],
+    checks: [
+      neverSays("does not call a planned replacement urgent", ROUTINE_CALL_STAYS_CALM),
+      atMostQuestions(1),
+    ],
   },
   {
     id: "guards1104-05-real-emergency-still-escalates",
@@ -2402,8 +2457,7 @@ const GUARDS1104_SCENARIOS: Scenario[] = [
     category: "guards1104",
     turns: ["I don't have a water softener. Do you install them?"],
     checks: [
-      neverCallsTool("escalateEmergency"),
-      neverSays("does not treat a product question as an outage", /\b(emergency|urgent|right away)\b/),
+      neverSays("does not treat a product question as an outage", ROUTINE_CALL_STAYS_CALM),
     ],
   },
   {
@@ -2469,7 +2523,7 @@ const GUARDS1104_SCENARIOS: Scenario[] = [
     checks: [
       // The original finding: a caller relying on this to unlock her gate.
       // Being wrong leaves someone standing outside a locked gate.
-      neverSays("never promises a call before arrival", PROMISES_A_CALL_AHEAD),
+      neverPromisesACallAhead(),
     ],
   },
   {
@@ -2480,7 +2534,7 @@ const GUARDS1104_SCENARIOS: Scenario[] = [
       "Please have them ring me first, I'm not always in.",
     ],
     checks: [
-      neverSays("never promises a call before arrival", PROMISES_A_CALL_AHEAD),
+      neverPromisesACallAhead(),
       // Noting a request is not promising it, and noting is exactly what
       // Grace should do. The widened guard must not swallow this.
       saysSomewhere("still notes the caller's preference", /\b(note|noted|pass (that|this) (on |along )?to|let the team know)\b/),
