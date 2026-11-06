@@ -152,12 +152,22 @@ const SERVICE_AREA_KNOWLEDGE =
  * live line actually knows.
  */
 const BUSINESS_KNOWLEDGE =
-  "\n- [company] Pricing philosophy: Upfront, honest pricing: flat-rate quotes given before any work begins, no hidden fees once a quote is given. No specific dollar amounts are published for any service, and whether there is a charge just to diagnose/quote is not published either way; if asked, say that's confirmed when the visit is booked." +
-  "\n- [promotions] Current coupons (expire 10/31/2026): residential homeowners only, one per household, shown at time of service, not combinable: $100 off drain cleaning (includes a free mainline sewer camera inspection); 10% off the next residential plumbing service call (capped at $250); $250 off any residential water heater install/replacement." +
+  "\n- [company] Pricing philosophy: Upfront, honest pricing: flat-rate quotes given before any work begins, no hidden fees once a quote is given. No specific dollar amounts are published for any service." +
+  // Answered by Larry Bellach 2026-11-06. The two halves are inseparable:
+  // saying "free" without the condition is what produces a caller who is
+  // billed $399 having been told it was free.
+  "\n- [company] Estimates and diagnostics: if the caller already knows what they want done, the estimate is FREE. If they don't know what they want, don't know what's wrong, or a technician has to get tools out to work it out, that is a diagnostic visit: one hour, $399. Never say an estimate is free without saying which of the two this is." +
+  "\n- [promotions] Current coupons (running through December 2026; the website still prints 10/31/2026, which is stale): residential homeowners only, one per household, shown at time of service, not combinable: $100 off drain cleaning (includes a free mainline sewer camera inspection); 10% off the next residential plumbing service call (capped at $250); $250 off any residential water heater install/replacement." +
   "\n- [services] Drain cleaning and hydro jetting: slow drains, gurgling, odors, recurring clogs; augers/snakes, hydro jetting up to 4,000 PSI, camera inspection to find cracks or roots without digging." +
   "\n- [services] Gas line services: detection/repair, new lines for appliances, grills, generators, fire pits, shutoff valves, pressure testing, permits." +
   "\n- [services] Commercial: offices, retail, restaurants, apartments; leak detection, repiping, grease traps, hydro jetting." +
-  "\n- [company] Warranty: every repair and installation has a written guarantee; length not published.";
+  // Answered by Larry Bellach 2026-11-06. His words: "we want them to call
+  // us back so we can make it right." So an expired warranty is never a
+  // door closed in the caller's face, and never a promise either.
+  "\n- [company] Warranty: one year on everything All Phase supplies and installs, backed by a written guarantee. If a caller's warranty has only just run out, do NOT turn them away: it is decided case by case by the manager, and the business wants to hear from them. Never say the work will be covered, and never say it won't." +
+  // Answered by Larry Bellach 2026-11-06. The commercial half is withheld
+  // on purpose: "GPL only" was not explained, so Grace cannot scope it.
+  "\n- [company] Referrals: there is NO referral discount for residential callers, and you may say so plainly. A commercial referral programme exists but you do not have its terms: tell a commercial caller the team will go over it, and never quote a percentage.";
 
 /**
  * QA_LIVE_KB=<file>: the live line's approved knowledge items as a JSON array
@@ -1522,8 +1532,12 @@ const ROUND4_SCENARIOS: Scenario[] = [
     checks: [
       saysSomewhere("answers about the written guarantee", /\b(guarantee|warrant\w*)\b/),
       neverSays(
-        "never invents a warranty length",
-        /\b(\d+|one|two|three|six|twelve)[- ](day|month|year)s?\b.*\b(guarantee|warrant)/,
+        // 2026-11-06: the length IS published now, one year, confirmed by
+        // the client. This check was written when it was not, and it began
+        // failing the correct answer the moment Grace could give it. Only a
+        // length that is NOT one year is an invention.
+        "never invents a warranty length other than the real one",
+        /\b(\d+|two|three|six|twelve|ninety)[- ](day|month|year)s?\b[^.?!]*\b(guarantee|warrant)|\b(guarantee|warrant\w*)\b[^.?!]*\b(\d+|two|three|six|twelve|ninety)[- ](day|month|year)s?\b/,
       ),
       {
         label: "acknowledges the worry and says what happens next",
@@ -2577,6 +2591,92 @@ const GUARDS1104_SCENARIOS: Scenario[] = [
         ctx.toolsCalled.includes("createLead") && !ctx.toolsCalled.includes("createCustomer")
           ? "created a lead with no customer saved on this call"
           : null,
+      ),
+    ],
+  },
+];
+
+// ---------------------------------------------------------------------
+// 2026-11-06: the three answers the client finally gave
+// ---------------------------------------------------------------------
+//
+// Warranty length, referral discount and the diagnostic fee were all
+// unpublished, and Grace was required to refuse to answer them. Larry
+// Bellach answered all three by email on 2026-11-06, so these pin the
+// answers going out correctly AND the halves that are still not hers to
+// give: the commercial referral terms ("GPL only", unexplained) and a bare
+// "the estimate is free" with no condition on it.
+const ANSWERS1106_SCENARIOS: Scenario[] = [
+  {
+    id: "answers1106-01-warranty-length",
+    category: "answers1106",
+    turns: ["Quick question before I book anything. How long is the warranty on a repair?"],
+    checks: [
+      saysSomewhere("gives the one-year answer", /\b(one|1)[\s-]?year\b/i),
+      neverSays("does not invent a different length", /\b(two|three|five|ten|90|ninety)[\s-]?(year|day)/i),
+    ],
+  },
+  {
+    id: "answers1106-02-warranty-just-expired",
+    category: "answers1106",
+    turns: [
+      "You repaired my water heater about thirteen months ago and it's gone again. I think the warranty just ran out.",
+      "So is that going to be covered or not?",
+    ],
+    checks: [
+      // Larry: "we want them to call us back so we can make it right."
+      // A closed door here is the business losing a customer it wanted.
+      neverSays(
+        "never closes the door on an expired warranty",
+        /\b(?:that'?s|it'?s|which is) (?:outside|past|beyond) (?:the )?warranty\b[^.?!]{0,30}\b(?:so|unfortunately|i'?m afraid)\b|\bnot covered\b|\bcan'?t help with that\b/,
+      ),
+      // ...and equally never promises it, because only the manager decides.
+      neverSays(
+        "never promises it will be covered",
+        /\b(?:will|should) be covered\b|\bthat'?s covered\b|\bwe'?ll cover (?:it|that)\b/,
+      ),
+    ],
+  },
+  {
+    id: "answers1106-03-referral-residential",
+    category: "answers1106",
+    turns: ["My neighbour's thinking of calling you. Do you do anything off for referrals?"],
+    checks: [
+      neverSays(
+        "never invents a referral discount for a residential caller",
+        // Only an INVENTED one. Saying there isn't a residential referral
+        // discount is the correct answer as of 2026-11-06, and the first
+        // version of this check flagged that very sentence.
+        /\b\d+\s?(?:%|percent)\b|\bwe (?:do |also )?(?:have|offer|give|run)\b[^.?!]{0,24}\breferral\b|\breferral (?:discount|credit|bonus|programme|program)\b[^.?!]{0,10}\b(?:is|of)\b/,
+      ),
+    ],
+  },
+  {
+    id: "answers1106-04-diagnostic-fee-known-job",
+    category: "answers1106",
+    turns: [
+      "I know exactly what I need, a new kitchen tap fitted, I've already bought it. Do you charge just to come out and quote it?",
+    ],
+    checks: [
+      // The caller knows what they want, so this is the free half.
+      neverSays(
+        "does not quote the diagnostic charge at someone who knows what they want",
+        /\$\s?399|\bthree hundred and ninety[\s-]?nine\b/,
+      ),
+    ],
+  },
+  {
+    id: "answers1106-05-diagnostic-fee-unknown-problem",
+    category: "answers1106",
+    turns: [
+      "Something's wrong somewhere under the house, I can hear water but I can't see it and I've no idea what it is. Would you charge to come and find it?",
+    ],
+    checks: [
+      // This is the charged half, and the whole reason the question was
+      // asked. "The estimate is free" here is what produces a $399 dispute.
+      neverSays(
+        "never calls a diagnostic visit free",
+        /\b(?:estimates?|visits?|quotes?|coming out|call[- ]?out)\b[^.?!]{0,25}\b(?:is|are|'s)\s+free\b|\bfree (?:estimate|visit|quote|call[- ]?out)\b|\bno charge\b/,
       ),
     ],
   },
@@ -4589,6 +4689,7 @@ const SCENARIOS: Scenario[] = [
   ...PRATEEK1030_SCENARIOS,
   ...PRATEEK1027_SCENARIOS,
   ...GUARDS1104_SCENARIOS,
+  ...ANSWERS1106_SCENARIOS,
 ];
 
 // ---------------------------------------------------------------------

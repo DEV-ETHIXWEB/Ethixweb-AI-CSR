@@ -44,13 +44,35 @@ SOURCE URL: https://www.allphaseplumbing.com/
 VERIFIED: 2026-09-05
 STATUS: approved
 
-FACT: The site never states, anywhere, whether there's a charge just to have a technician come out and diagnose/quote a job (no "diagnostic fee," "trip charge," or "free estimate" language found on /contact or /services/plumbing). Grace must not claim there is or isn't one — found live: a real-model test asked "do you charge a diagnostic fee just to come out" and got a confident "Nope, no diagnostic fee," an inference from "no hidden fees" that isn't actually published anywhere. Corrected 2026-09-05 by making this explicit in the pricing knowledge item itself rather than leaving the gap for the model to fill in.
+FACT: ANSWERED BY THE CLIENT 2026-11-06, superseding the "never stated" note below. There are two cases and the difference is the whole answer. If the caller already knows what they want done, the estimate is FREE. If they do not know what they want, or do not know what is wrong, or a technician has to get tools out to work it out, that is a diagnostic visit and it is charged: one hour at $399. Grace may say both halves. She must NEVER say the estimate is free without the condition attached, because a caller who needs diagnosing would hear "free" and then be billed $399, which is exactly the dispute this knowledge exists to prevent.
+SOURCE: Larry Bellach (All Phase), email to Amar Singh, 2026-11-06
+VERIFIED: 2026-11-06
+STATUS: approved
+
+FACT: HISTORICAL, now superseded by the entry above. Until 2026-11-06 the site never stated anywhere whether there was a charge to come out and diagnose a job, and Grace was required to claim neither. Kept because it records WHY the guard exists: a real-model test asked "do you charge a diagnostic fee just to come out" and got a confident "Nope, no diagnostic fee", inferred from "no hidden fees" and published nowhere. That invented answer was the exact opposite of the truth, which turns out to be $399.
 SOURCE: checked /contact and /services/plumbing specifically for this — neither mentions it
 SOURCE URL: https://www.allphaseplumbing.com/contact, https://www.allphaseplumbing.com/services/plumbing
 VERIFIED: 2026-09-05
-STATUS: approved
+STATUS: superseded 2026-11-06
+
+## Referrals
+
+FACT: ANSWERED BY THE CLIENT 2026-11-06. There is NO referral discount for residential callers, and Grace may say so plainly when asked. A commercial referral programme does exist, 10% for commercial customers, but it is GPL only. "GPL" was not explained and Grace must not guess at it: a commercial caller asking about referrals is told the team will go over it, never quoted the 10%.
+SOURCE: Larry Bellach (All Phase), email to Amar Singh, 2026-11-06
+VERIFIED: 2026-11-06
+STATUS: approved — the 10% half is deliberately withheld from Grace until someone confirms what GPL covers.
 
 ## Warranty
+
+FACT: ANSWERED BY THE CLIENT 2026-11-06. One year on everything All Phase supplies and installs.
+SOURCE: Larry Bellach (All Phase), email to Amar Singh, 2026-11-06
+VERIFIED: 2026-11-06
+STATUS: approved
+
+FACT: ANSWERED BY THE CLIENT 2026-11-06. A caller whose warranty has just run out is NOT turned away. It is handled case by case and the manager decides. Larry's own words: "we want them to call us back so we can make it right." So Grace never says the warranty has expired and leaves it there; she takes the request and says the team will look at it. Exceptions do happen, so she must not say no on the business's behalf. She must equally not promise the work will be covered, because only the manager decides that.
+SOURCE: Larry Bellach (All Phase), email to Amar Singh, 2026-11-06
+VERIFIED: 2026-11-06
+STATUS: approved
 
 FACT: Every repair and installation is backed by a written guarantee.
 SOURCE: homepage, /about

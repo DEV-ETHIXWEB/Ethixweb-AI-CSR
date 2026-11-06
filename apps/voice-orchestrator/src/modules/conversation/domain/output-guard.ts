@@ -160,6 +160,29 @@ const PRICE_POLICY_CLAIM =
 const PRICE_POLICY_HEDGE =
   /\b(don'?t (?:have|know)|do not have|not sure|can'?t say|cannot say|couldn'?t say|i'?d have to check|the team (?:will|can|would)|they (?:can|will) (?:go over|tell|confirm)|note|noted|ask|asking|confirm\w*|check with)\b/i;
 
+/**
+ * 2026-11-06, answered by the client. These two were unpublished until
+ * Larry Bellach replied to Amar, and the rules above were built for the
+ * world where nobody knew the answer. They are known now, so the guard
+ * stops standing in front of them.
+ *
+ * The asymmetry from the surcharge rule applies again, and matters more
+ * here. The real answer has two halves: an estimate IS free if the caller
+ * already knows what they want, and a diagnostic visit IS charged, one
+ * hour at $399, when they do not know what they want or a technician has to
+ * get tools out. Naming the charge is the safe direction, so it goes
+ * through on its own. Saying "free" does NOT, unless the sentence carries
+ * the condition with it, because a caller who needs diagnosing would hear
+ * "the estimate is free" and then be billed $399. That is the exact dispute
+ * this family of rules exists to prevent, and it was nearly caused by the
+ * guard rather than prevented by it.
+ */
+const DIAGNOSTIC_CHARGE =
+  /\b(?:diagnostics?|diagnosing|troubleshoot\w*)\b[^.?!]{0,40}\b(?:charge|fee|cost|hour|\$)|\b(?:charge|fee|cost)\b[^.?!]{0,40}\b(?:diagnostics?|diagnosing|troubleshoot\w*)\b/i;
+/** "Free" is only allowed to leave with the condition that makes it true. */
+const FREE_WITH_ITS_CONDITION =
+  /\b(?:if|when|unless|as long as|provided|once)\b[^.?!]{0,70}\bfree\b|\bfree\b[^.?!]{0,70}\b(?:if|when|unless|as long as|but if|though if)\b/i;
+
 export const SAFE_CALL_AHEAD_LINE = "I'll note that you'd like a call before they arrive.";
 /**
  * 2026-11-04: six of the eight ways of making this promise went through.
@@ -1089,6 +1112,10 @@ export class OutputGuard {
       if (
         !isQuestion(sentence) &&
         ((VISIT_WORDS.test(plain) && FEE_WORDS.test(plain)) || IS_FREE.test(plain)) &&
+        // See DIAGNOSTIC_CHARGE and FREE_WITH_ITS_CONDITION: both halves of
+        // this are answered now, so the guard no longer blocks them.
+        !DIAGNOSTIC_CHARGE.test(plain) &&
+        !FREE_WITH_ITS_CONDITION.test(plain) &&
         !FEE_HEDGE.test(plain) &&
         !/\b(?:off|coupon|discount)\b/i.test(plain)
       ) {
@@ -1109,6 +1136,12 @@ export class OutputGuard {
         // and errs the safe way, so only a denial, or a promise of money
         // off, is replaced.
         (PRICE_POLICY_DENIAL.test(plain) || PRICE_POLICY_BENEFIT.test(plain)) &&
+        // 2026-11-06: there is NO residential referral discount, confirmed
+        // by the client, so saying so is now an answer rather than a guess.
+        // Only the denial is let through: a commercial programme does exist
+        // but it is "GPL only", which nobody has explained, so Grace must
+        // still never claim a referral discount EXISTS.
+        !(/\breferral\b/i.test(plain) && PRICE_POLICY_DENIAL.test(plain)) &&
         !PRICE_POLICY_HEDGE.test(plain)
       ) {
         this.actions.push("fee_claim");
