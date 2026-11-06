@@ -1151,3 +1151,36 @@ describe("whether they take new builds is not Grace's to answer (2026-11-06)", (
     expect(apply(said)).toBe(said);
   });
 });
+
+/**
+ * 2026-11-06, found by reading a transcript rather than a failing check. A
+ * caller whose leak was repaired a month ago asked whether it was under
+ * warranty, and Grace answered "this should be covered", then "a repair
+ * done a month ago should definitely be covered".
+ *
+ * Larry Bellach's answer was "one year on everything we supply and
+ * install". That caller had a REPAIR, and whether a repair with no parts
+ * supplied falls under "supply and install" is not something anyone has
+ * answered. It is a coverage promise nobody authorised, made to someone
+ * already unhappy about paying twice.
+ */
+describe("whether a job is covered is the manager's call (2026-11-06)", () => {
+  it.each([
+    "A repair done a month ago should definitely be covered.",
+    "That's covered under the warranty.",
+    "We'll cover that.",
+    "It's under warranty, so there's no charge.",
+  ])("%p is replaced with the safe line", (said) => {
+    expect(apply(said)).toContain("the team will confirm how it applies");
+  });
+
+  it.each([
+    // Saying the warranty EXISTS is fine; it is published and true.
+    "There's a one-year warranty on everything we install, and the team will confirm how it applies here.",
+    "We do have a one-year warranty; the manager looks at these case by case.",
+    "I'll get this to the team and they'll check the warranty on it.",
+    "Got it, what's the address?",
+  ])("leaves %p alone", (said) => {
+    expect(apply(said)).toBe(said);
+  });
+});

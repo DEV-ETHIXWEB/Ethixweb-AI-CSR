@@ -32,6 +32,7 @@ import {
   missedCallbackNote,
   reportsMissedCallback,
 } from "../domain/missed-callback";
+import { objectsToPayingTwice, PAYING_TWICE_NOTE } from "../domain/paying-twice";
 import {
   isNameGroundedInCaller,
   NAME_NOT_GIVEN_ERROR,
@@ -805,6 +806,9 @@ export class HandleTurnUseCase {
     // The follow-up the apology always earns. Only after a missed call has
     // actually been reported on this call, so an ordinary "how do I know"
     // about something else is not answered as though it were this.
+    // See paying-twice.ts. A grievance, not a question, so nothing in the
+    // answer-the-question path fires on it.
+    const paysTwice = !inDanger && !gasLeak && objectsToPayingTwice(command.transcript);
     const doubtsTheCallback =
       !inDanger &&
       !gasLeak &&
@@ -829,6 +833,7 @@ export class HandleTurnUseCase {
       gasLeak ||
       missedCallback ||
       doubtsTheCallback ||
+      paysTwice ||
       goodbye ||
       upsetWantsPerson ||
       nameDeclinedNow ||
@@ -854,6 +859,8 @@ export class HandleTurnUseCase {
       annotatedTranscript = `${missedCallbackNote(conversation.callId)} ${annotatedTranscript}`;
     } else if (doubtsTheCallback) {
       annotatedTranscript = `${MISSED_CALLBACK_DOUBT_NOTE} ${annotatedTranscript}`;
+    } else if (paysTwice) {
+      annotatedTranscript = `${PAYING_TWICE_NOTE} ${annotatedTranscript}`;
     } else if (isTrailingOff) {
       annotatedTranscript = `${TRAILING_FRAGMENT_NOTE} ${annotatedTranscript}`;
     } else if (goodbye) {

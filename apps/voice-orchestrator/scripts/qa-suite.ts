@@ -163,6 +163,9 @@ const BUSINESS_KNOWLEDGE =
   // missing from here, so fullmix-06 deflected a repipe materials question
   // Grace could actually have answered.
   "\n- [services] Repiping: primarily uses PEX (flexible, freeze-tolerant, 50+ year rating); uses Type L copper where code or the customer requires it. Most single-family homes take 2-5 days, phased so water is back on each evening where possible. Written estimate before work begins; permits and inspections coordinated by the company." +
+  // 2026-11-06: in docs/knowledge 03-services.md and never carried here, so
+  // round5-08 deflected a fixtures question Grace could have answered.
+  "\n- [services] Toilets and fixtures: installs water-saving toilets, including dual-flush and low-flow designs; handles running toilets, weak flushing, leaking seals, faulty flappers and refill valves, cracked tanks or bowls. Replacement is worth it after 2+ repairs in a year or on an old high-water-use model. No brands are published and no gallons-per-flush figures: never name a brand or quote a flush rate." +
   "\n- [services] Gas line services: detection/repair, new lines for appliances, grills, generators, fire pits, shutoff valves, pressure testing, permits." +
   "\n- [services] Commercial: offices, retail, restaurants, apartments; leak detection, repiping, grease traps, hydro jetting." +
   // Answered by Larry Bellach 2026-11-06. His words: "we want them to call
@@ -1546,8 +1549,13 @@ const ROUND4_SCENARIOS: Scenario[] = [
       {
         label: "acknowledges the worry and says what happens next",
         run: (ctx) =>
-          /\b(understand|makes sense|fair|sorry)\b/i.test(ctx.agentTurns[3] ?? "") &&
-          /\b(team|technician|review|look)\b/i.test(ctx.agentTurns[3] ?? "")
+          // 2026-11-06: "I hear you" is an acknowledgment and the original
+          // list did not have it, so the check failed a reply that was
+          // right. The second half below is what actually carries this
+          // check and is unchanged.
+          /\b(understand|makes sense|fair|sorry|hear you|get it|i know|frustrating|shouldn'?t have)\b/i.test(
+            ctx.agentTurns[3] ?? "",
+          ) && /\b(team|technician|review|look)\b/i.test(ctx.agentTurns[3] ?? "")
             ? null
             : `reply: ${ctx.agentTurns[3]}`,
       },
@@ -2332,7 +2340,6 @@ const VENDOR_SCENARIOS: Scenario[] = [
   },
 ];
 
-
 // ---------------------------------------------------------------------
 // 2026-11-04 guard audit
 // ---------------------------------------------------------------------
@@ -2493,9 +2500,7 @@ const GUARDS1104_SCENARIOS: Scenario[] = [
     id: "guards1104-06-softener-question-is-not-an-outage",
     category: "guards1104",
     turns: ["I don't have a water softener. Do you install them?"],
-    checks: [
-      neverSays("does not treat a product question as an outage", ROUTINE_CALL_STAYS_CALM),
-    ],
+    checks: [neverSays("does not treat a product question as an outage", ROUTINE_CALL_STAYS_CALM)],
   },
   {
     id: "guards1104-07-real-outage-still-urgent",
@@ -2514,7 +2519,10 @@ const GUARDS1104_SCENARIOS: Scenario[] = [
     ],
     checks: [
       neverSays("never promises a visit nobody agreed to", PROMISES_A_VISIT),
-      neverSays("never puts a time on an arrival", /\bwithin (about |around )?\d+\s*(minutes?|hours?)\b/),
+      neverSays(
+        "never puts a time on an arrival",
+        /\bwithin (about |around )?\d+\s*(minutes?|hours?)\b/,
+      ),
     ],
   },
   {
@@ -2524,7 +2532,10 @@ const GUARDS1104_SCENARIOS: Scenario[] = [
     checks: [
       neverSays("never promises a visit nobody agreed to", PROMISES_A_VISIT),
       // The widened guard must still leave the honest answer intact.
-      saysSomewhere("still says the team will be in touch", /\b(team|someone)\b[^.?!]{0,30}\bcall\b/),
+      saysSomewhere(
+        "still says the team will be in touch",
+        /\b(team|someone)\b[^.?!]{0,30}\bcall\b/,
+      ),
     ],
   },
 
@@ -2574,7 +2585,10 @@ const GUARDS1104_SCENARIOS: Scenario[] = [
       neverPromisesACallAhead(),
       // Noting a request is not promising it, and noting is exactly what
       // Grace should do. The widened guard must not swallow this.
-      saysSomewhere("still notes the caller's preference", /\b(note|noted|pass (that|this) (on |along )?to|let the team know)\b/),
+      saysSomewhere(
+        "still notes the caller's preference",
+        /\b(note|noted|pass (that|this) (on |along )?to|let the team know)\b/,
+      ),
     ],
   },
 
@@ -2617,7 +2631,10 @@ const ANSWERS1106_SCENARIOS: Scenario[] = [
     turns: ["Quick question before I book anything. How long is the warranty on a repair?"],
     checks: [
       saysSomewhere("gives the one-year answer", /\b(one|1)[\s-]?year\b/i),
-      neverSays("does not invent a different length", /\b(two|three|five|ten|90|ninety)[\s-]?(year|day)/i),
+      neverSays(
+        "does not invent a different length",
+        /\b(two|three|five|ten|90|ninety)[\s-]?(year|day)/i,
+      ),
     ],
   },
   {
@@ -4722,9 +4739,7 @@ async function main(): Promise<void> {
       }
     }
     console.log(`\n${selected.length} scenarios across ${byCategory.size} categories.`);
-    const duplicates = selected
-      .map((s) => s.id)
-      .filter((id, at, all) => all.indexOf(id) !== at);
+    const duplicates = selected.map((s) => s.id).filter((id, at, all) => all.indexOf(id) !== at);
     if (duplicates.length > 0) {
       console.error(`DUPLICATE SCENARIO IDS: ${duplicates.join(", ")}`);
       process.exit(1);

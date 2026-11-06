@@ -211,6 +211,30 @@ const NEW_BUILD_SCOPE_CLAIM =
 const NEW_BUILD_HEDGE =
   /\b(?:team will|team can|pass (?:this|that|it)|let the team|not sure|can'?t say|don'?t know|go over|they'?ll confirm|i'?ll note|check with)\b/i;
 
+/**
+ * 2026-11-06, found by reading a passing-looking transcript rather than a
+ * failing check. A caller whose leak was repaired a month ago asked if it
+ * was under warranty, and Grace answered "this should be covered", then
+ * "a repair done a month ago should definitely be covered".
+ *
+ * Larry Bellach's answer was "one year on everything we supply and
+ * install". That caller had a REPAIR. Whether a repair with no parts
+ * supplied falls under "supply and install" is not something anyone has
+ * answered, so this is a coverage promise nobody authorised, made to
+ * someone already unhappy about paying twice.
+ *
+ * Grace may say the warranty exists and that it runs a year. Deciding
+ * whether one particular job falls under it is the manager's, which is the
+ * same rule that already applies to an expired one.
+ */
+export const SAFE_COVERAGE_LINE =
+  "There's a one-year warranty on our work, and the team will confirm how it applies here.";
+const COVERAGE_CLAIM =
+  /\b(?:should|will|would|is|are|that'?s|this'?s|it'?s)\s+(?:definitely\s+|certainly\s+|absolutely\s+)?(?:be\s+)?covered\b|\bwe'?ll cover (?:it|that|this)\b|\bthat (?:falls|comes) under (?:the )?warranty\b|\bunder warranty,? so\b/i;
+/** Saying the warranty EXISTS, or that the team will check, is not a promise. */
+const COVERAGE_HEDGE =
+  /\b(?:team will|team can|manager|confirm\w*|check|look at|not sure|can'?t say|don'?t know|case by case|they'?ll (?:let you know|decide|work out))\b/i;
+
 export const SAFE_CALL_AHEAD_LINE = "I'll note that you'd like a call before they arrive.";
 /**
  * 2026-11-04: six of the eight ways of making this promise went through.
@@ -1151,6 +1175,16 @@ export class OutputGuard {
         if (!this.used.has(SAFE_FEE_LINE)) {
           this.used.add(SAFE_FEE_LINE);
           out.push(`${SAFE_FEE_LINE} `);
+        }
+        continue;
+      }
+      // See SAFE_COVERAGE_LINE: whether one job falls under the warranty is
+      // the manager's call, not Grace's.
+      if (!isQuestion(sentence) && COVERAGE_CLAIM.test(plain) && !COVERAGE_HEDGE.test(plain)) {
+        this.actions.push("change_claim");
+        if (!this.used.has(SAFE_COVERAGE_LINE)) {
+          this.used.add(SAFE_COVERAGE_LINE);
+          out.push(`${SAFE_COVERAGE_LINE} `);
         }
         continue;
       }
