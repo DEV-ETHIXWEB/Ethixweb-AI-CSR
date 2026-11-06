@@ -228,7 +228,7 @@ const NEW_BUILD_HEDGE =
  * same rule that already applies to an expired one.
  */
 export const SAFE_COVERAGE_LINE =
-  "There's a one-year warranty on our work, and the team will confirm how it applies here.";
+  "Our installs and repairs carry a one-year written warranty, and the team will confirm how it applies here.";
 const COVERAGE_CLAIM =
   /\b(?:should|will|would|is|are|that'?s|this'?s|it'?s)\s+(?:definitely\s+|certainly\s+|absolutely\s+)?(?:be\s+)?covered\b|\bwe'?ll cover (?:it|that|this)\b|\bthat (?:falls|comes) under (?:the )?warranty\b|\bunder warranty,? so\b/i;
 /** Saying the warranty EXISTS, or that the team will check, is not a promise. */

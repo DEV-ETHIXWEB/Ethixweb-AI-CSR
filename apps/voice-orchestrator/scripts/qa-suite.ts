@@ -171,7 +171,7 @@ const BUSINESS_KNOWLEDGE =
   // Answered by Larry Bellach 2026-11-06. His words: "we want them to call
   // us back so we can make it right." So an expired warranty is never a
   // door closed in the caller's face, and never a promise either.
-  "\n- [company] Warranty: one year on everything All Phase supplies and installs, backed by a written guarantee. If a caller's warranty has only just run out, do NOT turn them away: it is decided case by case by the manager, and the business wants to hear from them. Never say the work will be covered, and never say it won't." +
+  "\n- [company] Warranty: one year, covering repairs as well as installs (the site says \"written warranty on every install and repair\"). If a caller's warranty has only just run out, do NOT turn them away: it is decided case by case by the manager, and the business wants to hear from them. Never say the work will be covered, and never say it won't." +
   // Answered by Larry Bellach 2026-11-06. The commercial half is withheld
   // on purpose: "GPL only" was not explained, so Grace cannot scope it.
   "\n- [company] Referrals: there is NO referral discount for residential callers, and you may say so plainly. A commercial referral programme exists but you do not have its terms: tell a commercial caller the team will go over it, and never quote a percentage.";

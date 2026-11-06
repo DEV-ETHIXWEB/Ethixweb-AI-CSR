@@ -64,8 +64,13 @@ STATUS: approved — the 10% half is deliberately withheld from Grace until some
 
 ## Warranty
 
-FACT: ANSWERED BY THE CLIENT 2026-11-06. One year on everything All Phase supplies and installs.
-SOURCE: Larry Bellach (All Phase), email to Amar Singh, 2026-11-06
+FACT: ANSWERED BY THE CLIENT 2026-11-06. One year, and it covers REPAIRS as well as installs.
+
+Larry's own wording was "on our service calls we put a 1-year warranty on everything we supply and install", and read on its own that leaves a plain repair looking uncertain. It is not uncertain. Amar's question, which Larry was answering inline, was specifically about repairs ("the site mentions every repair comes with a written guarantee, but not how long it lasts"). The site says the same thing in two places independently: "Every repair backed by our written guarantee" on the homepage and /about, and "Written Warranty / On every install & repair" on the toilets, water-heater, emergency-plumber and services pages.
+
+So the length was the only thing missing, and it is one year. Grace may say repairs are covered for a year. Whether one PARTICULAR job qualifies is still the team's to confirm, which is a different question from whether repairs are covered at all.
+SOURCE: Larry Bellach (All Phase), email to Amar Singh, 2026-11-06; corroborated by the live site, crawled 2026-11-05
+SOURCE URL: https://www.allphaseplumbing.com/, https://www.allphaseplumbing.com/services/plumbing/toilets
 VERIFIED: 2026-11-06
 STATUS: approved
 
@@ -78,7 +83,7 @@ FACT: Every repair and installation is backed by a written guarantee.
 SOURCE: homepage, /about
 SOURCE URL: https://www.allphaseplumbing.com/
 VERIFIED: 2026-09-05
-STATUS: approved — the site does not publish specific warranty duration/terms; Grace should not invent a length (e.g. "2 years") that isn't published.
+STATUS: approved — the duration is published as of 2026-11-06 (one year, see above). This entry remains as the site-side corroboration that REPAIRS are in scope, not just installs.
 
 ## Contact
 
