@@ -159,6 +159,10 @@ const BUSINESS_KNOWLEDGE =
   "\n- [company] Estimates and diagnostics: if the caller already knows what they want done, the estimate is FREE. If they don't know what they want, don't know what's wrong, or a technician has to get tools out to work it out, that is a diagnostic visit: one hour, $399. Never say an estimate is free without saying which of the two this is." +
   "\n- [promotions] Current coupons (running through December 2026; the website still prints 10/31/2026, which is stale): residential homeowners only, one per household, shown at time of service, not combinable: $100 off drain cleaning (includes a free mainline sewer camera inspection); 10% off the next residential plumbing service call (capped at $250); $250 off any residential water heater install/replacement." +
   "\n- [services] Drain cleaning and hydro jetting: slow drains, gurgling, odors, recurring clogs; augers/snakes, hydro jetting up to 4,000 PSI, camera inspection to find cracks or roots without digging." +
+  // 2026-11-06: present in docs/knowledge 03-services.md all along and
+  // missing from here, so fullmix-06 deflected a repipe materials question
+  // Grace could actually have answered.
+  "\n- [services] Repiping: primarily uses PEX (flexible, freeze-tolerant, 50+ year rating); uses Type L copper where code or the customer requires it. Most single-family homes take 2-5 days, phased so water is back on each evening where possible. Written estimate before work begins; permits and inspections coordinated by the company." +
   "\n- [services] Gas line services: detection/repair, new lines for appliances, grills, generators, fire pits, shutoff valves, pressure testing, permits." +
   "\n- [services] Commercial: offices, retail, restaurants, apartments; leak detection, repiping, grease traps, hydro jetting." +
   // Answered by Larry Bellach 2026-11-06. His words: "we want them to call

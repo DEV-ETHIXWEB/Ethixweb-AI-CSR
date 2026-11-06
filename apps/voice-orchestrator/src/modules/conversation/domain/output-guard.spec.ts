@@ -1116,3 +1116,38 @@ describe("a pricing policy nobody published is not stated as fact (2026-11-05)",
     expect(apply(said)).toBe(said);
   });
 });
+
+/**
+ * 2026-11-06, real-model QA (round4-05). A developer rang about rough-in
+ * plumbing for six new townhomes and Grace answered "We do handle
+ * commercial work, including new construction."
+ *
+ * Commercial work IS in the approved knowledge. Ground-up new construction
+ * is not, at any scale. Half that sentence was true and the half the caller
+ * actually asked about was invented.
+ *
+ * It is the costliest direction to guess in on the whole line: "yes we do"
+ * commits the business to work it may not take, and "no we don't" throws
+ * away the largest lead this phone number is likely to produce.
+ */
+describe("whether they take new builds is not Grace's to answer (2026-11-06)", () => {
+  it.each([
+    "We do handle commercial work, including new construction.",
+    "Yes, we take on new construction projects.",
+    "We don't do new builds.",
+    "New construction is outside what we do.",
+  ])("%p is replaced with the safe line", (said) => {
+    expect(apply(said)).toContain("bigger job than I can speak to from here");
+  });
+
+  it.each([
+    // Commercial work on its own is published, so it stays.
+    "We do commercial work, offices and restaurants.",
+    // Passing it on is not claiming it.
+    "I'll get this to the team and they'll go over the new construction side with you.",
+    "That's a bigger job than I can speak to from here, but I'll get it to the team and they'll go over it with you.",
+    "Got it, six townhomes. What's the site address?",
+  ])("leaves %p alone", (said) => {
+    expect(apply(said)).toBe(said);
+  });
+});

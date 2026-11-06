@@ -183,6 +183,34 @@ const DIAGNOSTIC_CHARGE =
 const FREE_WITH_ITS_CONDITION =
   /\b(?:if|when|unless|as long as|provided|once)\b[^.?!]{0,70}\bfree\b|\bfree\b[^.?!]{0,70}\b(?:if|when|unless|as long as|but if|though if)\b/i;
 
+/**
+ * 2026-11-06, real-model QA (round4-05). A developer rang about rough-in
+ * plumbing for six new townhomes and Grace answered "We do handle
+ * commercial work, including new construction."
+ *
+ * Commercial work IS in the approved knowledge (offices, retail,
+ * restaurants, apartments). Ground-up new construction is NOT, at any
+ * scale, and neither is multi-unit rough-in. So half that sentence was
+ * true and the half the caller actually asked about was invented.
+ *
+ * This is the costliest direction to guess in on the whole line. A
+ * six-townhome contract is the largest lead the business is likely to get
+ * from this phone number, and either answer invented is bad: "yes we do"
+ * commits them to work they may not take, and "no we don't" throws the
+ * lead away on Grace's say-so. The caller is told the team will go over it,
+ * which is true, and the detail still reaches the team in the notes.
+ *
+ * Deliberately narrow to new builds. "We do commercial work" stays
+ * allowed, because that one is published.
+ */
+export const SAFE_NEW_BUILD_LINE =
+  "That's a bigger job than I can speak to from here, but I'll get it to the team and they'll go over it with you.";
+const NEW_BUILD_SCOPE_CLAIM =
+  /\b(?:we|they)\s+(?:do|don'?t|do not|handle|take on|cover|work on|take)\b[^.?!]{0,34}\b(?:new[-\s]construction|new builds?|ground[-\s]up)\b|\b(?:new[-\s]construction|new builds?)\b[^.?!]{0,26}\b(?:is|isn'?t|are|aren'?t|would be)\b[^.?!]{0,26}\b(?:something we|outside|within|what we|our)\b|\bincluding new[-\s]construction\b/i;
+/** Asking about it, or passing it on, is not claiming it. */
+const NEW_BUILD_HEDGE =
+  /\b(?:team will|team can|pass (?:this|that|it)|let the team|not sure|can'?t say|don'?t know|go over|they'?ll confirm|i'?ll note|check with)\b/i;
+
 export const SAFE_CALL_AHEAD_LINE = "I'll note that you'd like a call before they arrive.";
 /**
  * 2026-11-04: six of the eight ways of making this promise went through.
@@ -1123,6 +1151,20 @@ export class OutputGuard {
         if (!this.used.has(SAFE_FEE_LINE)) {
           this.used.add(SAFE_FEE_LINE);
           out.push(`${SAFE_FEE_LINE} `);
+        }
+        continue;
+      }
+      // See SAFE_NEW_BUILD_LINE: whether they take ground-up new builds is
+      // not in the knowledge, and a six-townhome lead is too big to guess at.
+      if (
+        !isQuestion(sentence) &&
+        NEW_BUILD_SCOPE_CLAIM.test(plain) &&
+        !NEW_BUILD_HEDGE.test(plain)
+      ) {
+        this.actions.push("fee_claim");
+        if (!this.used.has(SAFE_NEW_BUILD_LINE)) {
+          this.used.add(SAFE_NEW_BUILD_LINE);
+          out.push(`${SAFE_NEW_BUILD_LINE} `);
         }
         continue;
       }
