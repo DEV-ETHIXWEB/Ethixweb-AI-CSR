@@ -56,11 +56,29 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     // larger RDS instance class — a real, documented follow-up, not solved
     // by this one number.
     const poolMax = Number(process.env["DATABASE_POOL_MAX"] ?? 30);
+    /**
+     * Prisma's own defaults (2s to acquire, 5s to run) are right for a web
+     * request and wrong for an admin script reaching the database across
+     * the world. Seeding production knowledge from a laptop in India to the
+     * Sydney box over an SSH tunnel pays a round trip on every statement
+     * inside the transaction, and it died with P2028 well before finishing.
+     *
+     * The defaults here are Prisma's own, so nothing changes for the API.
+     * Only a script that deliberately sets these env vars gets more room,
+     * and holding a transaction open longer is a cost worth paying there
+     * and not worth paying on a caller-facing request.
+     */
+    const txTimeout = Number(process.env["DATABASE_TRANSACTION_TIMEOUT_MS"] ?? 5000);
+    const txMaxWait = Number(process.env["DATABASE_TRANSACTION_MAX_WAIT_MS"] ?? 2000);
     super({
       adapter: new PrismaPg({
         connectionString,
         max: Number.isFinite(poolMax) && poolMax > 0 ? poolMax : 30,
       }),
+      transactionOptions: {
+        timeout: Number.isFinite(txTimeout) && txTimeout > 0 ? txTimeout : 5000,
+        maxWait: Number.isFinite(txMaxWait) && txMaxWait > 0 ? txMaxWait : 2000,
+      },
     });
   }
 
