@@ -50,7 +50,7 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
   const lower = prompt.toLowerCase();
 
   it("is versioned and far shorter than the 11,000-word v52", () => {
-    expect(PLATFORM_BASE_PROMPT_VERSION).toBe("v61");
+    expect(PLATFORM_BASE_PROMPT_VERSION).toBe("v62");
     // 3700 -> 3850 on 2026-11-11. v61 replaced one transfer rule with three
     // (transfer when the reason is known, screen when it is not, decline a
     // pitch), which cannot be said in fewer words than the single rule it
@@ -375,7 +375,14 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
     });
 
     it("declines sales and marketing calls without taking details (vendor call: Mapcard)", () => {
-      expect(prompt).toContain('"Thanks, we\'re not interested. Have a good day."');
+      expect(lower).toContain("do not take details and do not save anything");
+    });
+
+    it("2026-11-11, Akash: declines a sales call warmly, not with a flat 'not interested'", () => {
+      expect(prompt).not.toContain("we're not interested");
+      expect(lower).toContain("thanks so much for thinking of us");
+      expect(lower).toContain("just for plumbing customers");
+      expect(lower).toContain("if they ask for a person, do not transfer");
     });
 
     it("never turns away a caller who may be covered", () => {

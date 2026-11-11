@@ -121,10 +121,11 @@ export const SCREEN_BEFORE_TRANSFER_NOTE =
  */
 export const SOLICITATION_NOTE =
   "[this is a sales or marketing call aimed at the business, not a customer " +
-  "with a plumbing problem. Do not transfer and do not save a request. Say " +
-  "in one short, polite line that the team does not take sales calls on this " +
-  "line, and close the call. Stay courteous, never rude, and do not argue or " +
-  "ask them questions.]";
+  "with a plumbing problem. Do not transfer and do not save a request. Be " +
+  "warm: thank them for thinking of the business, say kindly that this line " +
+  "is just for plumbing customers so you cannot pass offers along, and wish " +
+  "them a great day. Two short sentences at most. Stay courteous, never rude, " +
+  "and do not argue or ask them questions.]";
 
 /**
  * 2026-11-11: someone who asks insistently is not a cold call to be

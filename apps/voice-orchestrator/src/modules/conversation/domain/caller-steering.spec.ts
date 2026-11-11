@@ -164,6 +164,12 @@ describe("what Grace is told in each case", () => {
     expect(SOLICITATION_NOTE).toContain("Do not transfer and do not save a request");
     expect(SOLICITATION_NOTE).toContain("never rude");
   });
+
+  it("2026-11-11, Akash: the decline is warm, thanks them and wishes them well", () => {
+    expect(SOLICITATION_NOTE).toContain("warm");
+    expect(SOLICITATION_NOTE).toContain("thank them");
+    expect(SOLICITATION_NOTE).not.toContain("not interested");
+  });
 });
 
 /**

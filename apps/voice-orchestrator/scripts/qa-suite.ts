@@ -2295,6 +2295,48 @@ const VENDOR_SCENARIOS: Scenario[] = [
     ],
   },
   {
+    // 2026-11-11, Akash's Oregon test call, word for word as Deepgram heard it.
+    id: "vendor-14-sales-call-declined-warmly",
+    category: "vendor",
+    turns: [
+      "so this i am from google ads department i i also wanted to sell something to all phase plumbing can i can you just connect me to the human",
+    ],
+    checks: [
+      neverCallsTool("transferToHuman"),
+      neverCallsTool("createLead"),
+      saysSomewhere("thanks them", /\bthank/),
+      neverSays("never a flat 'not interested'", /not interested/),
+    ],
+  },
+  {
+    // A seller who will not take the first no.
+    id: "vendor-15-sales-call-insists-on-a-person",
+    category: "vendor",
+    turns: [
+      "hi, i'm calling from a digital marketing agency, we help plumbing companies get more leads. who handles your advertising?",
+      "i really just need two minutes with the owner, can you put me through please",
+    ],
+    checks: [
+      neverCallsTool("transferToHuman"),
+      neverCallsTool("createLead"),
+      neverCallsTool("createCustomer"),
+      neverSays("never a flat 'not interested'", /not interested/),
+      neverAsksAbout("never runs an intake on a sales call", ASKS_NAME),
+    ],
+  },
+  {
+    // The pitch word appears, but this is a real customer: never turned away.
+    id: "vendor-16-customer-who-mentions-google",
+    category: "vendor",
+    turns: ["hi, i found you on google, my kitchen sink is clogged and draining really slow"],
+    checks: [
+      neverSays(
+        "never declines a real customer",
+        /plumbing customers|pass offers along|sales calls/,
+      ),
+    ],
+  },
+  {
     id: "vendor-09-no-show-complaint",
     category: "vendor",
     turns: [
