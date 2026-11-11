@@ -49,9 +49,17 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
   const prompt = PLATFORM_BASE_PROMPT_V1;
   const lower = prompt.toLowerCase();
 
-  it("is versioned v58 and far shorter than the 11,000-word v52", () => {
-    expect(PLATFORM_BASE_PROMPT_VERSION).toBe("v60");
-    expect(prompt.split(/\s+/).length).toBeLessThan(3700);
+  it("is versioned and far shorter than the 11,000-word v52", () => {
+    expect(PLATFORM_BASE_PROMPT_VERSION).toBe("v61");
+    // 3700 -> 3850 on 2026-11-11. v61 replaced one transfer rule with three
+    // (transfer when the reason is known, screen when it is not, decline a
+    // pitch), which cannot be said in fewer words than the single rule it
+    // replaced. 96 words is roughly 130 tokens against a ~10k prompt that is
+    // cached between turns, so the latency cost is close to nothing, and
+    // compressing the rules further made them vaguer exactly where the model
+    // has to be precise. Still 65% shorter than the 11,000-word v52, which is
+    // what this limit is really guarding.
+    expect(prompt.split(/\s+/).length).toBeLessThan(3850);
   });
 
   describe("core boundaries", () => {
@@ -303,9 +311,30 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
 
   describe("people and AI (vendor calls Oct 10 and Oct 11: three ignored requests for a human)", () => {
     it("transfers on the first request, without questions first", () => {
-      expect(lower).toContain("the first time a caller asks for a human");
+      // The harm this test was written for (vendor calls 2026-10-10/11:
+      // three ignored requests for a human) is unchanged. v61 added
+      // screening for callers whose reason is NOT yet known, so the
+      // no-questions promise is now stated for the case it protects: a
+      // caller who has already said what is wrong, an emergency, an upset
+      // caller, or a customer on file.
+      expect(lower).toContain("when a caller asks for a human");
       expect(prompt).toContain("call transferToHuman in that same reply");
       expect(lower).toContain("do not ask anything first");
+      expect(lower).toContain("never try to talk them out of it");
+    });
+
+    it("screens only a request with no reason behind it, and only once", () => {
+      // v61, the client: the on-call phone was ringing for SEO pitches.
+      expect(lower).toContain("if they have given no reason at all for calling");
+      expect(lower).toContain("ask it once only");
+      // The v60 guarantee has to survive the new rule, or this becomes the
+      // interrogation the Oct 10/11 calls were about.
+      expect(lower).toContain("never say you cannot transfer them");
+    });
+
+    it("declines a pitch aimed at the business instead of transferring it", () => {
+      expect(lower).toContain("does not take sales calls on this line");
+      expect(lower).toContain("do not transfer it and do not save a request");
     });
 
     it("handles a failed transfer once and honestly, without looping", () => {

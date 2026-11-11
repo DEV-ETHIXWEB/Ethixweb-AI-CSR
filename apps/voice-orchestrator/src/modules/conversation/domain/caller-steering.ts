@@ -57,3 +57,89 @@ const UPSET =
 export function upsetAndWantsAPerson(text: string): boolean {
   return WANTS_A_PERSON.test(text) && UPSET.test(text);
 }
+
+/**
+ * 2026-11-11, the client: every caller who asked for a human was put
+ * straight through, and the on-call phone was ringing for marketing and SEO
+ * pitches. They want the ones with a real plumbing reason to go through
+ * exactly as before, and the rest screened out.
+ *
+ * The screen is ONE question and only when nothing is known yet. A caller
+ * who has already said what is wrong, an emergency, an upset caller and a
+ * customer already on file all keep the immediate transfer they have today:
+ * making someone with a burst pipe answer a qualifying question first would
+ * be a far worse bug than a salesperson getting through.
+ *
+ * Wider than WANTS_A_PERSON above, which only has to catch the upset case.
+ * This also has to catch "get me a human", "put me through to someone" and
+ * the sales opener "is the owner available", because those are the exact
+ * words this is about.
+ */
+const ASKS_FOR_A_PERSON =
+  /\b(?:talk|speak|chat) (?:to|with) (?:the |a |an |your |some ?one |some ?body )?(?:owner|manager|person|human|supervisor|boss|some ?one|some ?body|real person|rep|representative|agent)\b|\b(?:get|give|put) me (?:to |through to )?(?:a |an |the )?(?:human|real person|person|manager|owner|some ?one|some ?body)\b|\bput me through\b|\btransfer me\b|\b(?:is|are) (?:the |a )?(?:owner|manager|boss|decision[- ]maker)s? (?:available|around|in|there)\b|\b(?:who|whoever) (?:handles|looks after|is in charge of|takes care of|deals with)\b|\breal (?:person|human)\b/i;
+
+/** True when the caller has asked to be put through to a person. */
+export function asksForAPerson(text: string): boolean {
+  return ASKS_FOR_A_PERSON.test(text);
+}
+
+/**
+ * Someone selling TO the business rather than calling about plumbing. The
+ * giveaway is almost never the word "sales": it is a pitch aimed at the
+ * company itself (your listing, your ranking, businesses like yours) or an
+ * ask for whoever makes decisions, with no plumbing anywhere in it.
+ */
+const SOLICITATION =
+  /\b(?:seo|google (?:ads?|listings?|business(?: profile| listing)?|my business|ranking|visibility)|search ranking|digital marketing|web ?site redesign|lead gen\w*|more (?:calls|leads|customers|clients)|rank (?:you |your )?(?:higher|number one|#1)|businesses like yours|companies like yours|shops like yours|contractors like you|merchant (?:services|account)|card processing|payment processing|business loan|working capital|insurance quote|advertis\w+|promot\w+ your|list your business|directory|franchis\w+|wholesale|distributor|supplier|partnership opportunity|quick question about your (?:business|company|website))\b/i;
+
+/** True when this reads as somebody selling to the business. */
+export function looksLikeSolicitation(texts: readonly string[]): boolean {
+  return texts.some((text) => SOLICITATION.test(text));
+}
+
+/**
+ * Asked for a person with nothing known yet, so one question comes first.
+ *
+ * The question is genuinely one. Whatever they answer, if it is about
+ * plumbing at all the next turn transfers: the point is to find out why
+ * they are calling, not to talk them out of it. The client's words were
+ * that a real service concern "should smoothly proceed with the transfer
+ * according to the existing workflow".
+ */
+export const SCREEN_BEFORE_TRANSFER_NOTE =
+  "[they have asked for a person but have not said what the call is about. " +
+  "Ask ONE short, friendly question about what they need help with, and ask " +
+  "nothing else this turn. Do not transfer yet, do not say you cannot " +
+  "transfer, and do not say they must explain before you will. If their next " +
+  "answer is about plumbing at all, or a job, a bill or a visit, transfer " +
+  "immediately on that turn.]";
+
+/**
+ * Someone selling to the business. Declined politely and not put through,
+ * and no request is saved: a lead the team has to read and discard is the
+ * same interruption in a slower form.
+ */
+export const SOLICITATION_NOTE =
+  "[this is a sales or marketing call aimed at the business, not a customer " +
+  "with a plumbing problem. Do not transfer and do not save a request. Say " +
+  "in one short, polite line that the team does not take sales calls on this " +
+  "line, and close the call. Stay courteous, never rude, and do not argue or " +
+  "ask them questions.]";
+
+/**
+ * 2026-11-11: someone who asks insistently is not a cold call to be
+ * screened. "I need to talk to a person right now" is a caller at the end
+ * of their patience, and a qualifying question is precisely the wrong
+ * answer: the vendor calls of 2026-10-10 and 10-11 ignored three such
+ * requests and that is why the immediate-transfer rule exists.
+ *
+ * A salesperson opens politely ("is the owner available?"). They do not
+ * say "right now" or "just put me through".
+ */
+const INSISTENT =
+  /\b(?:right now|immediately|straight ?away|at once|this instant)\b|\bjust (?:give|get|put|transfer|connect)\b|\b(?:already|again) asked\b|\bi said\b|\bplease just\b/i;
+
+/** True when the request for a person is urgent or repeated, not a cold ask. */
+export function insistsOnAPerson(text: string): boolean {
+  return asksForAPerson(text) && INSISTENT.test(text);
+}

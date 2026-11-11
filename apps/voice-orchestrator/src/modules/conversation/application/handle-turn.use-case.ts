@@ -10,7 +10,12 @@ import { mentionsGasLeak } from "../domain/gas-leak";
 import {
   asksGracesName,
   declinedTheirName,
+  asksForAPerson,
+  insistsOnAPerson,
+  looksLikeSolicitation,
   offersAddress,
+  SCREEN_BEFORE_TRANSFER_NOTE,
+  SOLICITATION_NOTE,
   upsetAndWantsAPerson,
 } from "../domain/caller-steering";
 import { collapseSpokenDigits } from "../domain/service-area";
@@ -724,6 +729,7 @@ export class HandleTurnUseCase {
     const nameDeclinedNow = declinedTheirName(transcriptTurns.slice(-2));
     const gracesNameAsked = asksGracesName(command.transcript);
     const upsetWantsPerson = upsetAndWantsAPerson(command.transcript);
+
     const addressOffered = !notes.street && offersAddress(command.transcript);
     const needsName =
       !nameDeclined &&
@@ -753,6 +759,7 @@ export class HandleTurnUseCase {
       !addressDisputed &&
       !needsName &&
       !hasUsableCustomer(conversation) &&
+      conversation.knownCallerMatched !== true &&
       !conversation.leadEverAttempted &&
       !conversation.customerCaptureAttempted
         ? zipMissingNote({ callerTexts: callerTextsSoFar, agentTexts: agentTextsSoFar })
@@ -799,6 +806,36 @@ export class HandleTurnUseCase {
       !conversation.transcript.some(
         (entry) => entry.speaker === "agent" && /leave the building/i.test(entry.text),
       );
+    /**
+     * 2026-11-11, the client: the on-call phone was ringing for marketing
+     * and SEO pitches, because every caller who asked for a person went
+     * straight through.
+     *
+     * The exclusions are the whole design. A caller who has said what is
+     * wrong, an emergency, an upset caller and a customer already on file
+     * all keep today's immediate transfer. Making someone with a burst pipe
+     * answer a qualifying question first would be a far worse bug than a
+     * salesperson getting through, so the screen only applies when nothing
+     * at all is known yet.
+     */
+    const soliciting =
+      !inDanger && !gasLeak && looksLikeSolicitation([...callerTextsSoFar, command.transcript]);
+    const screenBeforeTransfer =
+      !inDanger &&
+      !gasLeak &&
+      !soliciting &&
+      !upsetWantsPerson &&
+      asksForAPerson(command.transcript) &&
+      // Insistence is its own reason: see insistsOnAPerson.
+      !insistsOnAPerson(command.transcript) &&
+      !problemDescribed([...callerTextsSoFar, command.transcript]) &&
+      !isHardEmergency([...callerTextsSoFar, command.transcript]) &&
+      !hasUsableCustomer(conversation) &&
+      // Asked once already: a second question would be the interrogation
+      // the "do not ask anything first" rule exists to prevent.
+      !agentTextsSoFar.some((text) =>
+        /what (?:do you need|can i help|is going on|it'?s about)/i.test(text),
+      );
     // See missed-callback.ts. Ranked under danger and gas only: a caller the
     // business already let down is the call most likely to become a bad
     // review, and the apology has to land before any question.
@@ -836,6 +873,8 @@ export class HandleTurnUseCase {
       paysTwice ||
       goodbye ||
       upsetWantsPerson ||
+      soliciting ||
+      screenBeforeTransfer ||
       nameDeclinedNow ||
       gracesNameAsked ||
       addressOffered ||
@@ -867,6 +906,10 @@ export class HandleTurnUseCase {
       annotatedTranscript = `${conversation.leadId ? SAVED_GOODBYE_NOTE : UNSAVED_GOODBYE_NOTE} ${annotatedTranscript}`;
     } else if (upsetWantsPerson) {
       annotatedTranscript = `${UPSET_TRANSFER_NOTE} ${annotatedTranscript}`;
+    } else if (soliciting) {
+      annotatedTranscript = `${SOLICITATION_NOTE} ${annotatedTranscript}`;
+    } else if (screenBeforeTransfer) {
+      annotatedTranscript = `${SCREEN_BEFORE_TRANSFER_NOTE} ${annotatedTranscript}`;
     } else if (nameDeclinedNow) {
       annotatedTranscript = `${NAME_DECLINED_NOTE} ${annotatedTranscript}`;
     } else if (gracesNameAsked) {
@@ -2455,6 +2498,14 @@ export class HandleTurnUseCase {
       }
     | undefined
   > {
+    // 2026-11-11: a searchCustomer match mid-call does NOT set customerId
+    // (only createCustomer does), so hasUsableCustomer stayed false for a
+    // caller the business already knows, and the new transfer screen fired
+    // on them. Someone on file who asks for a person is not a cold call.
+    if (toolName === "searchCustomer" && isRecord(output) && output["found"] === true) {
+      conversation.knownCallerMatched = true;
+      return undefined;
+    }
     if (
       toolName === "createCustomer" &&
       isRecord(output) &&

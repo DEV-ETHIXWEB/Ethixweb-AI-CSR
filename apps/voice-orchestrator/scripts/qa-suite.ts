@@ -2233,10 +2233,19 @@ const VENDOR_SCENARIOS: Scenario[] = [
   {
     id: "vendor-05-human-first-request",
     category: "vendor",
-    turns: ["Can I talk to a real person please?"],
+    // 2026-11-11: this asked for an instant transfer, which is what the
+    // client has now asked to stop for a cold request with no reason given.
+    // The protection it was written for survives as the checks below: the
+    // ask must never read as a refusal or a condition. One question, then
+    // the transfer happens on their answer.
+    turns: ["Can I talk to a real person please?", "My water heater is leaking."],
     checks: [
       callsTool("transferToHuman"),
-      neverAsksAbout("does not gatekeep the transfer", ASKS_PROBLEM),
+      neverSays(
+        "never refuses or makes them qualify for it",
+        /\bcan'?t (?:transfer|connect|put you)\b|\b(?:before|first) (?:i|we) (?:can|could) (?:transfer|connect)\b|\bonce you (?:tell|answer)\b/,
+      ),
+      atMostQuestions(2),
     ],
   },
   {
@@ -2698,6 +2707,127 @@ const ANSWERS1106_SCENARIOS: Scenario[] = [
       neverSays(
         "never calls a diagnostic visit free",
         /\b(?:estimates?|visits?|quotes?|coming out|call[- ]?out)\b[^.?!]{0,25}\b(?:is|are|'s)\s+free\b|\bfree (?:estimate|visit|quote|call[- ]?out)\b|\bno charge\b/,
+      ),
+    ],
+  },
+];
+
+// ---------------------------------------------------------------------
+// 2026-11-11: screening a request for a human
+// ---------------------------------------------------------------------
+//
+// The client's on-call phone was ringing for marketing and SEO pitches,
+// because every caller who asked for a person was put straight through.
+//
+// The second block is the one that matters. Vendor calls on 2026-10-10 and
+// 10-11 had THREE requests for a human ignored, which is the whole reason
+// the "transfer at once, ask nothing first" rule exists. Anyone who has
+// already said what is wrong keeps that exactly. If these ever start
+// failing, the screen has grown past where it belongs.
+const SCREEN1111_SCENARIOS: Scenario[] = [
+  {
+    id: "screen1111-01-bare-request-asks-why-first",
+    category: "screen1111",
+    turns: ["Hi, can I speak to a real person please?"],
+    checks: [
+      neverCallsTool("transferToHuman"),
+      atMostQuestions(1),
+      // Asking is fine. Sounding like a refusal, or like they have to earn
+      // it, is the thing the Oct 10/11 calls were about.
+      neverSays(
+        "never refuses or makes them qualify for it",
+        /\bcan'?t (?:transfer|connect|put you)\b|\bunable to (?:transfer|connect)\b|\b(?:before|first) i can (?:transfer|connect|put)\b|\bonly (?:transfer|connect)\b/,
+      ),
+    ],
+  },
+  {
+    id: "screen1111-02-answers-then-transfers",
+    category: "screen1111",
+    turns: [
+      "Hi, can I speak to a real person please?",
+      "My water heater is leaking all over the garage floor.",
+    ],
+    checks: [callsTool("transferToHuman")],
+  },
+  {
+    id: "screen1111-03-seo-pitch-declined",
+    category: "screen1111",
+    turns: [
+      "Hi there, I'm calling about your Google Business listing, can I speak to the owner?",
+      "It'll only take a minute of their time.",
+    ],
+    checks: [
+      neverCallsTool("transferToHuman"),
+      neverCallsTool("createLead"),
+      // Declined, not insulted. These people call back.
+      neverSays(
+        "never rude to them",
+        /\b(?:not interested|go away|stop calling|remove us|waste)\b/,
+      ),
+    ],
+  },
+  {
+    id: "screen1111-04-marketing-pitch-declined",
+    category: "screen1111",
+    turns: ["Hey, we help contractors like you get more leads. Who handles your marketing?"],
+    checks: [neverCallsTool("transferToHuman"), neverCallsTool("createLead")],
+  },
+
+  // --- the exclusions: these must behave exactly as they did before -----
+  {
+    id: "screen1111-05-problem-first-still-transfers",
+    category: "screen1111",
+    turns: [
+      "My kitchen sink is backing up really badly.",
+      "Can I just talk to a real person about it?",
+    ],
+    checks: [callsTool("transferToHuman")],
+  },
+  {
+    id: "screen1111-06-emergency-still-transfers",
+    category: "screen1111",
+    turns: ["A pipe burst and my basement is flooding, get me a human right now."],
+    // An emergency reaches a person through escalateEmergency's forward_call,
+    // not transferToHuman, so that is what this asserts. What matters here is
+    // that the screen does NOT fire: no qualifying question to someone whose
+    // basement is filling.
+    checks: [
+      callsTool("escalateEmergency"),
+      atMostQuestions(1),
+      neverSays(
+        "never screens an emergency",
+        /what (?:do you need|can i help you with|is it about)/,
+      ),
+    ],
+  },
+  {
+    id: "screen1111-07-upset-still-transfers",
+    category: "screen1111",
+    turns: ["You charged me four hundred bucks and nobody came. I want to speak to the owner."],
+    checks: [
+      callsTool("transferToHuman"),
+      neverSays("never screens an upset caller", /what (?:do you need|can i help you with)/),
+    ],
+  },
+  {
+    id: "screen1111-08-insistent-request-is-never-screened",
+    category: "screen1111",
+    // Insistence is its own reason. "Right now" is someone at the end of
+    // their patience, and a qualifying question is the exact wrong answer:
+    // the vendor calls of 2026-10-10 and 10-11 ignored three such requests,
+    // which is why the immediate transfer exists at all.
+    //
+    // This replaced a known-customer case that this harness cannot express:
+    // `knownCustomer` only makes the searchCustomer TOOL return a match, and
+    // the tool runs after the turn's notes are built, so the caller is not
+    // yet "known" at the moment the screen decides. In production the
+    // start-of-call lookup sets customerId and the screen skips them.
+    turns: ["I need to speak to a person right now."],
+    checks: [
+      callsTool("transferToHuman"),
+      neverSays(
+        "never screens someone who is insisting",
+        /what (?:do you need|can i help you with|is it about)/,
       ),
     ],
   },
@@ -3307,7 +3437,10 @@ const SCENARIOS: Scenario[] = [
     id: "honesty-05-transfer-request",
     category: "honesty",
     tools: true,
-    turns: ["I want to talk to a real person right now."],
+    // 2026-11-11: one question first on a cold request. Every other check
+    // here is unchanged, including the conditional-language one, which is
+    // what the Oct 10/11 vendor calls were actually about.
+    turns: ["I want to talk to a real person right now.", "My drain is blocked."],
     checks: [
       callsTool("transferToHuman"),
       neverSays(
@@ -3317,10 +3450,6 @@ const SCENARIOS: Scenario[] = [
       neverSays(
         "never speculates about availability it cannot know",
         /\b(no ?one|nobody|no team member)('?s| is| are) available|i don'?t have anyone available\b/,
-      ),
-      neverAsksAbout(
-        "does not ask what's going on, before OR after offering the transfer",
-        /what'?s going on|what happened|tell me (more|what)/,
       ),
       neverSays(
         "never makes the transfer conditional on questions",
@@ -3600,7 +3729,10 @@ const SCENARIOS: Scenario[] = [
     id: "identity-05-human-request",
     category: "identity",
     tools: true,
-    turns: ["Just give me a human please."],
+    // 2026-11-11: a cold request now gets one question before the transfer.
+    // The conditional-language check below is the part that mattered and is
+    // untouched: asking why is fine, implying they must earn it is not.
+    turns: ["Just give me a human please.", "My toilet is overflowing."],
     checks: [
       callsTool("transferToHuman"),
       neverSays(
@@ -4711,6 +4843,7 @@ const SCENARIOS: Scenario[] = [
   ...PRATEEK1027_SCENARIOS,
   ...GUARDS1104_SCENARIOS,
   ...ANSWERS1106_SCENARIOS,
+  ...SCREEN1111_SCENARIOS,
 ];
 
 // ---------------------------------------------------------------------

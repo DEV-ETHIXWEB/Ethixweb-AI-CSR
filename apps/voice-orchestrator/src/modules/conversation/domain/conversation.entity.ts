@@ -168,6 +168,12 @@ export interface Conversation {
    */
   customerDetailsOnFile?: boolean;
   /**
+   * A mid-call searchCustomer returned a match. Distinct from customerId,
+   * which only createCustomer sets: a caller already on file is not a cold
+   * call, so the 2026-11-11 transfer screen does not apply to them.
+   */
+  knownCallerMatched?: boolean;
+  /**
    * True once a `createCustomer` OR `createLead` attempt has failed for
    * a PERMANENT, infrastructure-level reason this call cannot talk its
    * way around — currently, specifically, core-api reporting
