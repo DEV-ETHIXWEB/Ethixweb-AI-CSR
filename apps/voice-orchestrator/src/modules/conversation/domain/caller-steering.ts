@@ -230,6 +230,21 @@ export function businessWithNoCustomerReason(
   return !problemDescribed(stripped) && !stripped.some((text) => OTHER_CUSTOMER_REASON.test(text));
 }
 
+/**
+ * 2026-11-11 spam QA (realcaller-04, -14): Larry's parts supplier calling
+ * about his order, and an electrician on the same job, were both turned
+ * away as sales, on the live code too. They are not customers, but they are
+ * exactly the "legitimate reason" the client said goes through. A detected
+ * pitch still outranks this (soliciting is checked first).
+ */
+const WORK_REASON =
+  /\b(?:(?:his|her|larry'?s|your|the|an?) (?:parts? )?order|deliver(?:y|ing|ed)|parts order|same job|job ?site|on the job|permit|(?:insurance |water damage )?claim|adjuster|returning (?:a |his |her |your |the )?call|(?:he|she|larry|someone) called me|left (?:me )?a (?:message|voicemail)|voicemail)\b/i;
+
+/** True when a non-customer has a real working reason to reach the team. */
+export function hasWorkReason(callerTexts: readonly string[]): boolean {
+  return callerTexts.some((text) => WORK_REASON.test(text));
+}
+
 /** True when Grace has already turned this caller down as a sales call. */
 export function declinedAsSales(agentTexts: readonly string[]): boolean {
   return agentTexts.some((text) => SALES_DECLINE.test(text));

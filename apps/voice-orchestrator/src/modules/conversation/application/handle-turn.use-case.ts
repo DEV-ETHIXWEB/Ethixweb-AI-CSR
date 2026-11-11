@@ -20,6 +20,7 @@ import {
   SOLICITATION_NOTE,
   declinedAsSales,
   businessWithNoCustomerReason,
+  hasWorkReason,
   TRANSFER_AFTER_SCREEN_NOTE,
   TRANSFER_NOW_NOTE,
   answerEarnsTransfer,
@@ -856,6 +857,7 @@ export class HandleTurnUseCase {
       !insistsOnAPerson(command.transcript) &&
       !problemDescribed([...callerTextsSoFar, command.transcript]) &&
       !isHardEmergency([...callerTextsSoFar, command.transcript]) &&
+      !hasWorkReason([...callerTextsSoFar, command.transcript]) &&
       // 2026-11-11, Akash's call: a name and an address, no reason, then
       // "connect me to the human" went straight through, because the
       // customer record created a minute earlier counted as "known". What
@@ -889,7 +891,8 @@ export class HandleTurnUseCase {
       asksForAPerson(command.transcript) &&
       (insistsOnAPerson(command.transcript) ||
         problemDescribed([...callerTextsSoFar, command.transcript]) ||
-        isHardEmergency([...callerTextsSoFar, command.transcript]));
+        isHardEmergency([...callerTextsSoFar, command.transcript]) ||
+        hasWorkReason([...callerTextsSoFar, command.transcript]));
     // See coupon-question.ts. Fires on the turn the caller asks about money
     // off, and only until a figure has actually been named.
     const couponAsked =

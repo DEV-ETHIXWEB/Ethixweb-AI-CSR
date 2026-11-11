@@ -13,6 +13,7 @@ import {
   declinedTheirName,
   declinedAsSales,
   businessWithNoCustomerReason,
+  hasWorkReason,
   looksLikeSolicitation,
   offersAddress,
   SCREEN_BEFORE_TRANSFER_NOTE,
@@ -407,4 +408,22 @@ describe("2026-11-11 spam corpus: every pitch is caught, no real caller is", () 
   ])("an ordinary caller is not a business pitch: %p", (said) => {
     expect(isSpam([said])).toBe(false);
   });
+});
+
+describe("a non-customer with a working reason to reach the team", () => {
+  it.each([
+    "hi, this is mike from ferguson supply about larry's parts order, can i speak to him",
+    "this is mike from abc electric, we're on the same job at fifty five elm with larry, i need to talk to him",
+    "i'm returning a call from larry, he left me a voicemail",
+    "i'm calling about the permit at twelve oak street",
+  ])("is recognised in %p", (said) => {
+    expect(hasWorkReason([said])).toBe(true);
+  });
+
+  it.each(SPAM_CALLS.map((call) => [call.id, call.turns]))(
+    "%s has no working reason",
+    (_id, turns) => {
+      expect(hasWorkReason(turns)).toBe(false);
+    },
+  );
 });
