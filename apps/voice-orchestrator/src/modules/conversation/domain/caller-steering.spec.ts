@@ -46,6 +46,31 @@ describe("cannotHearGrace", () => {
   });
 });
 
+// QA steer-02: "hi chris how are you" got "Chris isn't who you've reached,
+// though, this is Grace."
+describe("nameCallerGreetedHerWith", () => {
+  it.each([
+    ["hi chris how are you", "chris"],
+    ["hey mike, how's it going", "mike"],
+    ["hello sarah", "sarah"],
+  ])("%p", (said, name) => {
+    expect(nameCallerGreetedHerWith(said)).toBe(name);
+  });
+  it.each([
+    "hi grace how are you",
+    "hi there",
+    "hi i need a plumber",
+    "hello my sink is leaking",
+    "hey how are you",
+    "hi good morning",
+    "hello yes",
+    "hi this is mike calling about my sink",
+    "my sink is leaking",
+  ])("not %p", (said) => {
+    expect(nameCallerGreetedHerWith(said)).toBeNull();
+  });
+});
+
 // 2026-10-26, Yash's test calls.
 describe("declinedTheirName", () => {
   it.each([

@@ -10,6 +10,7 @@ import { mentionsGasLeak } from "../domain/gas-leak";
 import {
   asksGracesName,
   cannotHearGrace,
+  nameCallerGreetedHerWith,
   declinedTheirName,
   asksForAPerson,
   insistsOnAPerson,
@@ -740,6 +741,11 @@ export class HandleTurnUseCase {
     const gracesNameAsked = asksGracesName(command.transcript);
     // A problem said in the same breath ("you're breaking up, my basement is
     // flooding") is answered as the problem.
+    // QA steer-02: only on the caller's first words, before Grace has a name for them.
+    const greetedAsSomeoneElse =
+      // The transcript already holds these words, so "first" means only one.
+      conversation.transcript.filter((entry) => entry.speaker === "caller").length <= 1 &&
+      nameCallerGreetedHerWith(command.transcript) !== null;
     const badLine = cannotHearGrace(command.transcript) && !problemDescribed([command.transcript]);
     const upsetWantsPerson = upsetAndWantsAPerson(command.transcript);
 
@@ -928,6 +934,7 @@ export class HandleTurnUseCase {
       transferNow ||
       couponAsked ||
       badLine ||
+      greetedAsSomeoneElse ||
       nameDeclinedNow ||
       gracesNameAsked ||
       addressOffered ||
@@ -967,6 +974,8 @@ export class HandleTurnUseCase {
       annotatedTranscript = `${TRANSFER_NOW_NOTE} ${annotatedTranscript}`;
     } else if (transferAfterScreen) {
       annotatedTranscript = `${TRANSFER_AFTER_SCREEN_NOTE} ${annotatedTranscript}`;
+    } else if (greetedAsSomeoneElse) {
+      annotatedTranscript = `${GREETED_AS_SOMEONE_ELSE_NOTE} ${annotatedTranscript}`;
     } else if (badLine) {
       annotatedTranscript = `${BAD_LINE_NOTE} ${annotatedTranscript}`;
     } else if (couponAsked) {
@@ -3261,6 +3270,11 @@ const UPSET_TRANSFER_NOTE =
   `[The caller is upset and asked for a person. You have ALREADY said: "${UPSET_APOLOGY_LINE}" ` +
   "Do not apologize again. Call transferToHuman now, with what went wrong in their words as the " +
   "summary, and say only that you are connecting them now. Ask nothing.]";
+/** See nameCallerGreetedHerWith. */
+const GREETED_AS_SOMEONE_ELSE_NOTE =
+  "[The caller greeted you as someone else; that name is not yours and not theirs. Do not say " +
+  'that name or correct them. Answer warmly, mention "this is Grace" in passing, and ask how ' +
+  "you can help.]";
 /** See cannotHearGrace: the line broke up, the caller is not confused. */
 const BAD_LINE_NOTE =
   "[The caller could not hear you clearly: the line may have cut out. Say sorry in a few words " +

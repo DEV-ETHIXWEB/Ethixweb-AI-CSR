@@ -759,6 +759,19 @@ describe("HandleTurnUseCase", () => {
       });
     });
 
+    it("QA steer-02: a caller who greets Grace by another name is not corrected with that name", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      const { useCase } = buildUseCase({ aiProvider, repository });
+
+      await useCase.execute(baseCommand({ transcript: "hi chris how are you" }));
+
+      const sentMessage = aiProvider.requests[0]?.messages[0];
+      expect(sentMessage?.content).toContain("greeted you as someone else");
+      expect(sentMessage?.content).toContain("Do not say");
+    });
+
     it("does NOT annotate a soft, ambiguous phrase like 'that sounds good' or plain 'okay'", async () => {
       const repository = new FakeConversationRepository();
       repository.seed(baseConversation());

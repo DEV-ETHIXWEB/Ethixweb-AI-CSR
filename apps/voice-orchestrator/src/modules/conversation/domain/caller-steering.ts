@@ -52,6 +52,57 @@ export function cannotHearGrace(text: string): boolean {
   return CANNOT_HEAR.test(text);
 }
 
+/**
+ * QA steer-02: "hi chris how are you" got "Chris isn't who you've reached,
+ * though, this is Grace." A caller who greets Grace by another name (they
+ * expected someone else, or misheard) gets a light "this is Grace" without
+ * the name repeated back, and the name is never taken as theirs.
+ */
+const GREETED_BY_NAME =
+  /^\W*(?:hi|hey|hello|hiya)\W+([a-z]{2,})\b(?:\W*$|\W+(?:how|how's|hows|good|what's|whats)\b)/i;
+const NOT_A_NAME = new Set([
+  "grace",
+  "there",
+  "yes",
+  "yeah",
+  "yep",
+  "no",
+  "ok",
+  "okay",
+  "good",
+  "um",
+  "uh",
+  "again",
+  "everyone",
+  "all",
+  "guys",
+  "folks",
+  "team",
+  "sir",
+  "maam",
+  "madam",
+  "mam",
+  "how",
+  "i",
+  "my",
+  "this",
+  "is",
+  "it",
+  "we",
+  "so",
+  "and",
+  "um",
+  "morning",
+  "afternoon",
+  "evening",
+]);
+
+export function nameCallerGreetedHerWith(text: string): string | null {
+  const match = GREETED_BY_NAME.exec(text.trim());
+  const name = match?.[1]?.toLowerCase() ?? null;
+  return name && !NOT_A_NAME.has(name) ? name : null;
+}
+
 /** The caller is starting to give the service address now. */
 export function offersAddress(text: string): boolean {
   return /\b(?:my|the) address is\b|\bi live (?:at|on)\b|\bthe house is at\b/i.test(text);
