@@ -1068,6 +1068,49 @@ describe("the same acknowledgment does not open a third reply (2026-11-05)", () 
     expect(out).toMatch(/perfect/i);
   });
 
+  /**
+   * 2026-11-11, round4-01 on the real model: "Yeah, I got it, kitchen leak",
+   * then "Got it, Corbin, sink's leaking", then "Got it, 6-6-1-0 Northeast".
+   * Three uses, and the guard stopped none of them: the filler in front of
+   * the first hid it from the count, and the other two were fused to real
+   * content so the PURE_ACK drop did not apply.
+   */
+  it("counts an ack behind a filler", () => {
+    const out = after(
+      ["Yeah, I got it, kitchen leak. Is it dripping?", "Got it, Corbin. Is water pooling?"],
+      "Got it. And what's the ZIP code?",
+    );
+    expect(out).not.toMatch(/got it/i);
+    expect(out).toContain("ZIP code");
+  });
+
+  it("keeps the content of a fused third use and drops only the ack", () => {
+    const out = after(
+      ["Got it. Is it dripping now?", "Got it, Corbin. Is water pooling?"],
+      "Got it, 6, 6, 1, 0, Northeast in Seattle. What's the street name?",
+    );
+    expect(out).not.toMatch(/got it/i);
+    expect(out).toContain("Northeast in Seattle");
+    expect(out).toContain("street name");
+  });
+
+  it("leaves a fused ack alone while it is still the second use", () => {
+    const out = after(
+      ["Got it. Is it dripping now?"],
+      "Got it, Corbin. What's the ZIP code?",
+    );
+    expect(out).toMatch(/got it/i);
+    expect(out).toContain("Corbin");
+  });
+
+  it("does not strip an ack word used mid-sentence", () => {
+    const out = after(
+      ["Got it. One.", "Got it. Two."],
+      "That sounds like a perfect excuse for a plumber to look at it.",
+    );
+    expect(out).toContain("perfect excuse");
+  });
+
   it("leaves a fused opener alone, so the caller's name is not lost", () => {
     const said = "Got it, Harold. What's the ZIP code?";
     expect(after(["Got it. One.", "Got it. Two."], said)).toContain("Harold");

@@ -298,8 +298,37 @@ const META_LEAK =
 const REASONING_LEAK =
   /\b(the|in the|request|call|my) notes\b|\b(refused|rejected)\b|\b(complaint|new|the|a|this) lead\b|\bcreate (the|a) (lead|record|request)\b|\b(i'?ll|i will|let me|i need to) save\b|\b(couldn'?t|could not|can'?t|cannot) (update|save|add|submit|create)\b|\b(on file|in (the|our) system|the record)\b|\b(escalateEmergency|createCustomer|createLead|updateLead|searchCustomer|transferToHuman|getServiceAreas|getBusinessHours|lookupPreviousCalls)\b|\bcaller\b|^\s*(i )?need to (call|ask|check|use|run|respond|reply|confirm|get)\b|^\s*(speak|respond|reply) (in|with)\b/i;
 
-/** The acknowledgment a reply opens with, fused or standing alone ("Got it, Harold."). */
-const ACK_OPENER = /^(got it|gotcha|okay|ok|alright|all right|perfect|great|sure|understood)\b/i;
+/**
+ * The acknowledgment a reply opens with, fused or standing alone ("Got it,
+ * Harold.").
+ *
+ * 2026-11-11, round4-01: the limit below counted only an ack at the very
+ * start of the reply, so "Yeah, I got it, kitchen leak" was invisible to it
+ * and "got it" went on to open two more replies. The caller heard it three
+ * turns running. A filler in front of the ack does not make it a different
+ * ack, so a short one is allowed for before the word is read.
+ */
+const ACK_OPENER =
+  /^(?:(?:yeah|yep|yes|oh|well|ah|um|so)\b[\s,.:;\u2013\u2014-]*)?(?:i\s+)?(got it|gotcha|okay|ok|alright|all right|perfect|great|sure|understood)\b/i;
+
+/**
+ * The same acknowledgment has already carried two recent replies, and this
+ * sentence fuses it to something worth keeping ("Got it, 6-6-1-0 Northeast
+ * in Seattle."). The acknowledgment goes and the rest stays: dropping the
+ * whole sentence would lose the only content in it, and keeping it is what
+ * made Grace say "Got it" three turns in a row.
+ */
+function withoutSpentAck(sentence: string): string {
+  const stripped = sentence
+    .replace(ACK_OPENER, "")
+    .replace(/^[\s,.:;!?\u2013\u2014-]*(?:and\s+)?/i, "");
+  // Same guard as withoutStockOpener: if nothing of substance is left, the
+  // sentence stays as it was rather than becoming a fragment.
+  if (!/[a-z0-9]/i.test(stripped)) {
+    return sentence;
+  }
+  return `${stripped[0]!.toUpperCase()}${stripped.slice(1)}`;
+}
 /** How many of the recent replies may open with the same acknowledgment before it is dropped. */
 const ACK_OPENER_LIMIT = 2;
 
@@ -443,6 +472,7 @@ export type GuardAction =
   | "scope_claim"
   | "slow_readback"
   | "repeated_statement"
+  | "repeated_ack"
   | "word_limit"
   | "wrong_name"
   | "wrong_spelling"
@@ -761,7 +791,8 @@ export class OutputGuard {
   private readonly recentStatements: string[][];
   /**
    * Acknowledgment words that have already opened two of the last three
-   * replies. See the PURE_ACK drop below.
+   * replies. An acknowledgment-only sentence is dropped; one fused to real
+   * content keeps the content and loses the ack (see withoutSpentAck).
    */
   private readonly spentAcks: ReadonlySet<string>;
   /** The digits each of recentStatements carries, in the same order; see repeatsRecentStatement. */
@@ -1119,6 +1150,15 @@ export class OutputGuard {
       ) {
         this.actions.push("repeated_statement");
         continue;
+      }
+      // See withoutSpentAck: the sentence is not an acknowledgment on its
+      // own, so it keeps its content and loses only the spent ack in front.
+      if (this.spentAcks.has((ACK_OPENER.exec(plain)?.[1] ?? "").toLowerCase())) {
+        const unacked = withoutSpentAck(sentence);
+        if (unacked !== sentence) {
+          this.actions.push("repeated_ack");
+          sentence = unacked;
+        }
       }
       if (this.repeatsRecentStatement(sentence)) {
         this.actions.push("repeated_statement");
