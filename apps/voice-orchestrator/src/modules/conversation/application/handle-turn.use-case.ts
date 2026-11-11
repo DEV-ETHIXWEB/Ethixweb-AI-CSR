@@ -17,6 +17,7 @@ import {
   SCREEN_BEFORE_TRANSFER_NOTE,
   SOLICITATION_NOTE,
   TRANSFER_AFTER_SCREEN_NOTE,
+  TRANSFER_NOW_NOTE,
   answerEarnsTransfer,
   screeningQuestionAsked,
   upsetAndWantsAPerson,
@@ -854,6 +855,20 @@ export class HandleTurnUseCase {
       callerTextsSoFar.some((text) => asksForAPerson(text)) &&
       screeningQuestionAsked(agentTextsSoFar) &&
       answerEarnsTransfer(command.transcript, problemDescribed);
+    // See TRANSFER_NOW_NOTE: the other half of the screen. A request for a
+    // person that the screen deliberately does not apply to is transferred
+    // at once, and that is now stated rather than left to the prompt.
+    // upsetWantsPerson has its own note and keeps it.
+    const transferNow =
+      !inDanger &&
+      !gasLeak &&
+      !soliciting &&
+      !upsetWantsPerson &&
+      !screenBeforeTransfer &&
+      asksForAPerson(command.transcript) &&
+      (insistsOnAPerson(command.transcript) ||
+        problemDescribed([...callerTextsSoFar, command.transcript]) ||
+        isHardEmergency([...callerTextsSoFar, command.transcript]));
     // See coupon-question.ts. Fires on the turn the caller asks about money
     // off, and only until a figure has actually been named.
     const couponAsked =
@@ -902,6 +917,7 @@ export class HandleTurnUseCase {
       soliciting ||
       screenBeforeTransfer ||
       transferAfterScreen ||
+      transferNow ||
       couponAsked ||
       nameDeclinedNow ||
       gracesNameAsked ||
@@ -938,6 +954,8 @@ export class HandleTurnUseCase {
       annotatedTranscript = `${SOLICITATION_NOTE} ${annotatedTranscript}`;
     } else if (screenBeforeTransfer) {
       annotatedTranscript = `${SCREEN_BEFORE_TRANSFER_NOTE} ${annotatedTranscript}`;
+    } else if (transferNow) {
+      annotatedTranscript = `${TRANSFER_NOW_NOTE} ${annotatedTranscript}`;
     } else if (transferAfterScreen) {
       annotatedTranscript = `${TRANSFER_AFTER_SCREEN_NOTE} ${annotatedTranscript}`;
     } else if (couponAsked) {

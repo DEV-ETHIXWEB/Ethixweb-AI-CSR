@@ -188,3 +188,24 @@ export const TRANSFER_AFTER_SCREEN_NOTE =
   "transferToHuman in THIS reply, with one short line like \"Sure, connecting " +
   "you now.\" Do not ask anything else, do not take their name or address, " +
   "and never say you cannot transfer them.]";
+
+/**
+ * 2026-11-11, screen1111-08 and vendor-06 on the real model: the screen got
+ * a deterministic note and "transfer at once" never did, so the commonest
+ * case of all rested on the prompt alone.
+ *
+ * "I need to speak to a person right now." The code correctly refused to
+ * screen it (see insistsOnAPerson), but nothing then TOLD Grace to
+ * transfer, and the screening exception added to the prompt the same day
+ * reads as applying to anyone who has given no reason yet. So she asked
+ * "Before I connect you, can you tell me what's going on?" and the caller
+ * was screened by the prompt after the code had decided not to.
+ *
+ * This is the other half of SCREEN_BEFORE_TRANSFER_NOTE: when a request for
+ * a person is explicitly NOT to be screened, that is now said out loud.
+ */
+export const TRANSFER_NOW_NOTE =
+  "[this caller has asked for a person and must NOT be screened or asked " +
+  "anything first. Call transferToHuman in THIS reply, with one short line " +
+  'like "Sure, connecting you now." Do not ask what it is about, do not take ' +
+  "their name, address or number, and never say you cannot transfer them.]";

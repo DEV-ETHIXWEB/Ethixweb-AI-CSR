@@ -1,6 +1,8 @@
 import { problemDescribed } from "./save-readiness";
 import {
   answerEarnsTransfer,
+  insistsOnAPerson,
+  TRANSFER_NOW_NOTE,
   asksForAPerson,
   screeningQuestionAsked,
   TRANSFER_AFTER_SCREEN_NOTE,
@@ -200,5 +202,36 @@ describe("the turn the caller answers the screen", () => {
     expect(TRANSFER_AFTER_SCREEN_NOTE).toContain("transferToHuman in THIS reply");
     expect(TRANSFER_AFTER_SCREEN_NOTE).toContain("do not take their name");
     expect(TRANSFER_AFTER_SCREEN_NOTE).toContain("never say you cannot transfer");
+  });
+});
+
+/**
+ * 2026-11-11, screen1111-08: "I need to speak to a person right now." The
+ * code correctly refused to screen it, but nothing told Grace to transfer,
+ * and the prompt's screening exception reads as applying to anyone who has
+ * given no reason yet. She asked what it was about anyway.
+ */
+describe("a request for a person that must not be screened", () => {
+  it.each([
+    "I need to speak to a person right now.",
+    "Just put me through, please.",
+    "I already asked to talk to someone.",
+    "I said I want to speak to a human.",
+  ])("is read as insistent: %p", (said) => {
+    expect(insistsOnAPerson(said)).toBe(true);
+  });
+
+  it.each(["Can I talk to a person please?", "is the owner available?"])(
+    "is not read as insistent: %p",
+    (said) => {
+      expect(insistsOnAPerson(said)).toBe(false);
+    },
+  );
+
+  it("tells Grace to transfer at once and ask nothing", () => {
+    expect(TRANSFER_NOW_NOTE).toContain("must NOT be screened");
+    expect(TRANSFER_NOW_NOTE).toContain("transferToHuman in THIS reply");
+    expect(TRANSFER_NOW_NOTE).toContain("do not take");
+    expect(TRANSFER_NOW_NOTE).toContain("never say you cannot transfer");
   });
 });
