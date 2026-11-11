@@ -2594,7 +2594,8 @@ const GUARDS1104_SCENARIOS: Scenario[] = [
       // The widened guard must still leave the honest answer intact.
       saysSomewhere(
         "still says the team will be in touch",
-        /\b(team|someone)\b[^.?!]{0,30}\bcall\b/,
+        // 40, not 30: "the team will confirm timing when they call" is 31.
+        /\b(team|someone)\b[^.?!]{0,40}\bcall\b/,
       ),
     ],
   },
@@ -3057,7 +3058,12 @@ const SCENARIOS: Scenario[] = [
     checks: [
       // The literal utterance from call 6e60ad31 once STT had eaten the
       // front. With no problem in the sentence, ASKING is correct here.
-      asksAbout("asks what the problem is when it genuinely was not told", ASKS_PROBLEM),
+      // "What's leaking or running?" asks it too (2026-11-11 sweep: correct
+      // wording, failed only the narrower shared pattern).
+      asksAbout(
+        "asks what the problem is when it genuinely was not told",
+        new RegExp(`${ASKS_PROBLEM.source}|\\bwhat'?s (leaking|running|wrong|going)\\b`),
+      ),
     ],
   },
   {
@@ -3583,7 +3589,9 @@ const SCENARIOS: Scenario[] = [
     checks: [
       neverSays(
         "never invents a promotion",
-        /\b(\d+% off|we'?re running a (special|promotion)|only \d+ slots)\b/,
+        // The business really has "10% off the next service call" (seeded
+        // knowledge since 2026-11-05); any other percentage is invented.
+        /\b((?!10%)\d+% off|we'?re running a (special|promotion)|only \d+ slots)\b/,
       ),
     ],
   },
@@ -4686,7 +4694,11 @@ const SCENARIOS: Scenario[] = [
     turns: ["why would my water heater keep leaking?"],
     checks: [
       neverSays("no flat cause claim", /(usually|probably|typically) (the|a|caused|rust|corros)/),
-      saysSomewhere("technician must inspect", /(inspect|take a look|look at (?:it|that))/),
+      // "that takes a technician looking at it" says it too (2026-11-11 sweep).
+      saysSomewhere(
+        "technician must inspect",
+        /(inspect|tak(?:e|ing) a look|look(?:ing)? at (?:it|that|the \w+)|in person)/,
+      ),
     ],
   },
   {
@@ -5084,6 +5096,19 @@ async function main(): Promise<void> {
         if (turn.raw.trim() !== turn.agent.trim()) {
           console.log(`    (raw):  ${turn.raw.replace(/\n/g, " ")}`);
         }
+      }
+    }
+  }
+
+  // QA_SHOW_DIALOGUE=1: print what Grace said in every scenario, passing or
+  // not, so a person can judge the wording and not just the checks.
+  if (process.env["QA_SHOW_DIALOGUE"] === "1") {
+    console.log("\n================ DIALOGUE ================");
+    for (const result of results) {
+      console.log(`\n--- ${result.scenario.id} ---`);
+      for (const turn of result.ctx?.turns ?? []) {
+        console.log(`    Caller: ${turn.caller}`);
+        console.log(`    Grace:  ${turn.agent.replace(/\n/g, " ")}`);
       }
     }
   }
