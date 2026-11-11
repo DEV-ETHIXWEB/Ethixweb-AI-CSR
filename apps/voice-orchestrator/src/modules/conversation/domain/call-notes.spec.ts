@@ -1194,6 +1194,41 @@ describe("names from the Round 4 scripts", () => {
   });
 });
 
+/**
+ * QA round5-02 (failing before this fix): the caller volunteered the full
+ * name, each part spelled, with the phone and address, while Grace was
+ * asking something else. No name was found, so the model was told it still
+ * had none and asked again ("Sorry, I didn't catch your name earlier").
+ */
+describe("a full name volunteered with each part spelled, unasked", () => {
+  const unasked = (said: string) =>
+    buildCallNotes(
+      ["i need a water line repaired", said],
+      [
+        { speaker: "caller", text: "i need a water line repaired" },
+        { speaker: "agent", text: "Is the water line leaking right now?" },
+        { speaker: "caller", text: said },
+      ],
+    );
+
+  it.each([
+    [
+      "Leopold Nakamura-Fitch. Nakamura, N A K A M U R A, dash, Fitch, F I T C H. 206-220-3391. 4471 Interlake Avenue North, Seattle, Washington, 98103.",
+      ["leopold", "nakamura-fitch"],
+    ],
+    [
+      "Rosamund Delacroix-Adeyemi. Delacroix, D E L A C R O I X, dash, Adeyemi, A D E Y E M I.",
+      ["rosamund", "delacroix-adeyemi"],
+    ],
+  ])("%p", (said, expected) => {
+    expect(unasked(said).spelledName).toEqual(expected);
+  });
+
+  it("letters that spell nothing the caller said are still not taken as a name", () => {
+    expect(unasked("it's the u r n a i u r n one in the basement").spelledName).toBeNull();
+  });
+});
+
 /** 2026-10-29, Prateek's call: the street's spelling was saved as his last name. */
 describe("letters spelled for the street are not the name", () => {
   it.each([

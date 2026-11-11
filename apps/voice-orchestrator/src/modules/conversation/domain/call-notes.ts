@@ -204,7 +204,9 @@ export function buildCallNotes(
     nameTexts,
     utterances.map((utterance) => utterance.askedForName),
   );
-  const leadName = statedFound ? null : nameBeforeItsSpelling(nameTexts);
+  const leadName = statedFound
+    ? null
+    : (nameBeforeItsSpelling(nameTexts) ?? nameThenSpelledParts(nameTexts));
   let stated =
     statedFound?.value ??
     answeredName(turns) ??
@@ -1930,6 +1932,41 @@ const OWN_SPELLING =
 
 const NAME_THEN_SPELLING =
   /(?:^|[.!?,:;]\s*)([a-z][a-z'-]+)\s+([a-z][a-z'-]+)\s*,?\s+((?:[a-z][\s,]+)+[a-z])(?![a-z])/g;
+
+/**
+ * QA round5-02: "Leopold Nakamura-Fitch. Nakamura, N A K A M U R A, dash,
+ * Fitch, F I T C H." volunteered while Grace asked something else. A full
+ * name said first, then letter runs that each spell a part of it exactly, is
+ * the name: nobody spells out a name that is not theirs. Every run must
+ * match, so stray letters elsewhere in the breath keep this from firing.
+ */
+const STATED_FULL_NAME = /(?:^|[.!?]\s+)([a-z][a-z'-]+)\s+([a-z][a-z'-]+)\s*[.,]/g;
+const LETTER_RUN = /(?:^|[^a-z])((?:[a-z][\s,]+){2,}[a-z])(?![a-z])/g;
+
+function nameThenSpelledParts(texts: readonly string[]): string | null {
+  for (let i = texts.length - 1; i >= 0; i -= 1) {
+    const text = (texts[i] ?? "").toLowerCase();
+    const runs = [...text.matchAll(LETTER_RUN)].map((m) => m[1]!.replace(/[^a-z]/g, ""));
+    if (runs.length === 0) {
+      continue;
+    }
+    for (const match of text.matchAll(STATED_FULL_NAME)) {
+      const [first, last] = [match[1]!, match[2]!];
+      const parts = [first, ...last.split("-")].filter(Boolean);
+      if (
+        canBeName(first) &&
+        canBeName(last.replace(/-/g, "")) &&
+        !PLACE_WORDS.has(first) &&
+        !PLACE_WORDS.has(last) &&
+        runs.every((run) => parts.includes(run)) &&
+        runs.some((run) => last.split("-").includes(run))
+      ) {
+        return `${capitalize(first)} ${last.split("-").map(capitalize).join("-")}`;
+      }
+    }
+  }
+  return null;
+}
 
 function nameBeforeItsSpelling(texts: readonly string[]): string | null {
   for (let i = texts.length - 1; i >= 0; i -= 1) {
