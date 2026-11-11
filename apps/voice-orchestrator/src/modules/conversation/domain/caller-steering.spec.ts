@@ -11,6 +11,7 @@ import {
   cannotHearGrace,
   nameCallerGreetedHerWith,
   declinedTheirName,
+  declinedAsSales,
   looksLikeSolicitation,
   offersAddress,
   SCREEN_BEFORE_TRANSFER_NOTE,
@@ -247,6 +248,11 @@ describe("a pitch aimed at the business", () => {
     "I wanted to talk about your SEO",
     "quick question about your business",
     "we do payment processing for plumbers",
+    // 2026-11-11, Akash's call, as transcribed.
+    "i'm just from the software company and i just wanted to introduce or like make",
+    "we built a software platform for plumbing businesses",
+    "I'm with a marketing agency in Seattle",
+    "can I book a quick demo with the owner",
   ])("is recognised in %p", (said) => {
     expect(looksLikeSolicitation([said])).toBe(true);
   });
@@ -256,8 +262,28 @@ describe("a pitch aimed at the business", () => {
     "I need a quote for a repipe",
     "can someone look at my drain",
     "I'd like to book someone to look at the boiler",
+    "I'd like to set up an appointment for my water heater",
+    "I'm from the property management company, unit 4 has a leak",
   ])("is not read into %p", (said) => {
     expect(looksLikeSolicitation([said])).toBe(false);
+  });
+});
+
+describe("a call Grace has already declined as sales", () => {
+  it.each([
+    "Thanks for reaching out! This line is just for plumbing customers, so I can't pass offers along. Have a great day!",
+    "Thanks so much for thinking of us! This line is only for plumbing customers.",
+    "I'm sorry, I cannot pass that along.",
+  ])("is recognised from %p", (said) => {
+    expect(declinedAsSales([said])).toBe(true);
+  });
+
+  it.each([
+    "Sure, can you tell me what you need help with?",
+    "I'll pass that along to the team.",
+    "Got it, I'll make sure the plumber gets your message.",
+  ])("is not read into %p", (said) => {
+    expect(declinedAsSales([said])).toBe(false);
   });
 });
 

@@ -18,6 +18,7 @@ import {
   offersAddress,
   SCREEN_BEFORE_TRANSFER_NOTE,
   SOLICITATION_NOTE,
+  declinedAsSales,
   TRANSFER_AFTER_SCREEN_NOTE,
   TRANSFER_NOW_NOTE,
   answerEarnsTransfer,
@@ -838,7 +839,10 @@ export class HandleTurnUseCase {
      * at all is known yet.
      */
     const soliciting =
-      !inDanger && !gasLeak && looksLikeSolicitation([...callerTextsSoFar, command.transcript]);
+      !inDanger &&
+      !gasLeak &&
+      (looksLikeSolicitation([...callerTextsSoFar, command.transcript]) ||
+        declinedAsSales(agentTextsSoFar));
     const screenBeforeTransfer =
       !inDanger &&
       !gasLeak &&
@@ -1215,9 +1219,14 @@ export class HandleTurnUseCase {
       }
       emergencyPreChecked = true;
     }
-    const toolsThisTurn = emergencyPreChecked
-      ? tools.filter((tool) => tool.name !== "escalateEmergency")
-      : tools;
+    // A sales call is never put through, enforced here and not only asked
+    // of the model: 2026-11-11 it transferred one after "it's very
+    // important". Real danger still goes out through escalateEmergency.
+    const toolsThisTurn = tools.filter(
+      (tool) =>
+        !(emergencyPreChecked && tool.name === "escalateEmergency") &&
+        !(soliciting && tool.name === "transferToHuman"),
+    );
 
     // See IN_DANGER. Not left to the model: 2026-10-25, live test, it said
     // the line and then asked "Can you let me know your name?".
@@ -1404,6 +1413,7 @@ export class HandleTurnUseCase {
       // said, not what the caller said.
       if (
         command.allowedTools.includes("transferToHuman") &&
+        !soliciting &&
         looksLikeUnbackedTransferPromise(turn.text) &&
         !toolCalls.some((call) => call.name === "transferToHuman")
       ) {
@@ -1462,6 +1472,19 @@ export class HandleTurnUseCase {
             role: "tool",
             toolCallId: toolCall.id,
             content: JSON.stringify(emergencyPreCheckOutput),
+          });
+          continue;
+        }
+        // Not offered on a sales call (see toolsThisTurn); refused if asked
+        // for anyway.
+        if (toolCall.name === "transferToHuman" && soliciting) {
+          pushMessage({
+            role: "tool",
+            toolCallId: toolCall.id,
+            content: JSON.stringify({
+              status: "not_transferred",
+              note: "This is a sales call. Do not transfer. Kindly say this line is just for plumbing customers.",
+            }),
           });
           continue;
         }

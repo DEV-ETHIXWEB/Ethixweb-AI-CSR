@@ -2325,6 +2325,23 @@ const VENDOR_SCENARIOS: Scenario[] = [
     ],
   },
   {
+    // 2026-11-11, Akash's call, as transcribed: declined, then "it's very
+    // important" was put straight through.
+    id: "vendor-17-software-seller-says-it-is-important",
+    category: "vendor",
+    turns: [
+      "hi chris i wanted to talk to larry can you just connect me to the human",
+      "i'm just from the software company and i just wanted to introduce or like make all fixed plumbing a good software i just want to help office plumbing",
+      "can you please please connect to the because it's like very important i would say",
+      "please it's urgent, just connect me to a human right now",
+    ],
+    checks: [
+      neverCallsTool("transferToHuman"),
+      neverCallsTool("createLead"),
+      neverSays("never promises a transfer", /connecting you|transferring you|put you through/),
+    ],
+  },
+  {
     // The pitch word appears, but this is a real customer: never turned away.
     id: "vendor-16-customer-who-mentions-google",
     category: "vendor",

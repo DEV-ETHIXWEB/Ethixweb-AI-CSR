@@ -171,11 +171,25 @@ export function asksForAPerson(text: string): boolean {
  * ask for whoever makes decisions, with no plumbing anywhere in it.
  */
 const SOLICITATION =
-  /\b(?:seo|google (?:ads?|listings?|business(?: profile| listing)?|my business|ranking|visibility)|search ranking|digital marketing|web ?site redesign|lead gen\w*|more (?:calls|leads|customers|clients)|rank (?:you |your )?(?:higher|number one|#1)|businesses like yours|companies like yours|shops like yours|contractors like you|merchant (?:services|account)|card processing|payment processing|business loan|working capital|insurance quote|advertis\w+|promot\w+ your|list your business|directory|franchis\w+|wholesale|distributor|supplier|partnership opportunity|quick question about your (?:business|company|website))\b/i;
+  /\b(?:seo|google (?:ads?|listings?|business(?: profile| listing)?|my business|ranking|visibility)|search ranking|digital marketing|web ?site redesign|lead gen\w*|more (?:calls|leads|customers|clients)|rank (?:you |your )?(?:higher|number one|#1)|businesses like yours|companies like yours|shops like yours|contractors like you|merchant (?:services|account)|card processing|payment processing|business loan|working capital|insurance quote|advertis\w+|promot\w+ your|list your business|directory|franchis\w+|wholesale|distributor|supplier|partnership opportunity|quick question about your (?:business|company|website)|software (?:company|companies|solutions?|products?|platform|tool)|marketing (?:agency|company|firm)|(?:wanted|want|like) to introduce|(?:book|schedule|set up) (?:a |an )?(?:quick |short |free )?demo|free trial|crm)\b/i;
 
 /** True when this reads as somebody selling to the business. */
 export function looksLikeSolicitation(texts: readonly string[]): boolean {
   return texts.some((text) => SOLICITATION.test(text));
+}
+
+/**
+ * 2026-11-11, Akash's call: "I'm from the software company, I wanted to
+ * introduce..." matched no sales phrase, Grace declined it on her own, and
+ * then "please connect me, it's very important" was put straight through
+ * as an insistent caller. Once Grace has said the sales decline, the call
+ * IS a sales call for the rest of it, whatever the caller says next.
+ */
+const SALES_DECLINE = /\b(?:can(?:'|no)?t pass (?:offers?|that|it|anything) along|(?:just|only) for (?:our )?plumbing customers)\b/i;
+
+/** True when Grace has already turned this caller down as a sales call. */
+export function declinedAsSales(agentTexts: readonly string[]): boolean {
+  return agentTexts.some((text) => SALES_DECLINE.test(text));
 }
 
 /**
@@ -206,7 +220,9 @@ export const SOLICITATION_NOTE =
   "warm: thank them for thinking of the business, say kindly that this line " +
   "is just for plumbing customers so you cannot pass offers along, and wish " +
   "them a great day. Two short sentences at most. Stay courteous, never rude, " +
-  "and do not argue or ask them questions.]";
+  "and do not argue or ask them questions. If they insist, say it is urgent " +
+  "or important, or ask again for a person, still do not transfer: kindly " +
+  "say again that this line is just for plumbing customers.]";
 
 /**
  * 2026-11-11: someone who asks insistently is not a cold call to be

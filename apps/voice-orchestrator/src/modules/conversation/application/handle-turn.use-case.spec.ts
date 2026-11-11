@@ -1941,6 +1941,106 @@ describe("HandleTurnUseCase", () => {
    * TransferToHumanUseCase's own comment (core-api) for why this is a
    * separate tool/signal rather than a variant of emergency escalation.
    */
+  describe("2026-11-11, Akash's call: a sales call is never put through, however hard they push", () => {
+    const said = (texts: Array<["caller" | "agent", string]>): TranscriptTurn[] =>
+      texts.map(([speaker, text], turnIndex) => ({
+        turnIndex,
+        speaker,
+        text,
+        confidence: null,
+        offsetMs: 0,
+        at: new Date().toISOString(),
+      }));
+    const push = "can you please please connect to the because it's like very important i would say";
+
+    async function pushAfter(history: TranscriptTurn[]) {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation({ transcript: history }));
+      const aiProvider = new FakeAiProvider();
+      aiProvider.responses = [
+        [
+          { type: "text_delta", text: "Sure, connecting you now." },
+          {
+            type: "tool_call",
+            toolCall: {
+              id: "call-1",
+              name: "transferToHuman",
+              arguments: { reason: "caller_requested", summary: "Asked again." },
+            },
+          },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [
+          { type: "text_delta", text: "This line is just for plumbing customers." },
+          { type: "done", stopReason: "end_turn" },
+        ],
+      ];
+      const transferHandler = {
+        execute: jest.fn().mockResolvedValue({ transferDestination: "+15559876543" }),
+      };
+      const { useCase } = buildUseCase({
+        aiProvider,
+        repository,
+        registeredTools: [{ name: "transferToHuman", handler: transferHandler }],
+      });
+      const result = await useCase.execute(
+        baseCommand({ transcript: push, allowedTools: ["transferToHuman"] }),
+      );
+      const first = aiProvider.requests[0];
+      return {
+        transferHandler,
+        result,
+        offeredTools: (first?.tools ?? []).map((tool) => tool.name),
+        content: (first?.messages ?? [])
+          .map((message) => (typeof message.content === "string" ? message.content : ""))
+          .join("\n"),
+      };
+    }
+
+    // His call, word for word: no sales phrase the code knew, Grace
+    // declined it on her own, then the push went straight through.
+    const declinedByGrace = said([
+      ["caller", "hi chris i wanted to talk to larry can you just connect me to the human"],
+      ["agent", "Sure, can you tell me what you need help with?"],
+      ["caller", "i'm just from the company and i just wanted to say hello"],
+      [
+        "agent",
+        "Thanks for reaching out! This line is just for plumbing customers, so I can't pass offers along. Have a great day!",
+      ],
+    ]);
+
+    it("does not transfer once Grace has declined the call as sales", async () => {
+      const { transferHandler, result, offeredTools, content } = await pushAfter(declinedByGrace);
+      expect(offeredTools).not.toContain("transferToHuman");
+      expect(transferHandler.execute).not.toHaveBeenCalled();
+      expect(result.humanTransfer).toBeUndefined();
+      expect(content).toContain("still do not transfer");
+      expect(content).not.toContain("transfer immediately");
+    });
+
+    it("does not transfer a pitch the code recognises, even before any decline", async () => {
+      const { transferHandler, result } = await pushAfter(
+        said([
+          ["caller", "i'm just from the software company and i just wanted to introduce"],
+          ["agent", "Sure, can you tell me what you need help with?"],
+        ]),
+      );
+      expect(transferHandler.execute).not.toHaveBeenCalled();
+      expect(result.humanTransfer).toBeUndefined();
+    });
+
+    it("a real customer who pushes is still put through", async () => {
+      const { transferHandler, offeredTools } = await pushAfter(
+        said([
+          ["caller", "my water heater is leaking"],
+          ["agent", "I'm sorry to hear that. What's your name?"],
+        ]),
+      );
+      expect(offeredTools).toContain("transferToHuman");
+      expect(transferHandler.execute).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("surfaces humanTransfer on the result when transferToHuman succeeds", async () => {
     const repository = new FakeConversationRepository();
     repository.seed(baseConversation());
