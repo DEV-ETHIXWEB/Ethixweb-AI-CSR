@@ -298,29 +298,62 @@ const META_LEAK =
 const REASONING_LEAK =
   /\b(the|in the|request|call|my) notes\b|\b(refused|rejected)\b|\b(complaint|new|the|a|this) lead\b|\bcreate (the|a) (lead|record|request)\b|\b(i'?ll|i will|let me|i need to) save\b|\b(couldn'?t|could not|can'?t|cannot) (update|save|add|submit|create)\b|\b(on file|in (the|our) system|the record)\b|\b(escalateEmergency|createCustomer|createLead|updateLead|searchCustomer|transferToHuman|getServiceAreas|getBusinessHours|lookupPreviousCalls)\b|\bcaller\b|^\s*(i )?need to (call|ask|check|use|run|respond|reply|confirm|get)\b|^\s*(speak|respond|reply) (in|with)\b/i;
 
+const ACK_WORDS = "(?:got it|gotcha|okay|ok|alright|all right|perfect|great|sure|understood)";
+/** A filler a model puts in front of an acknowledgment ("Yeah, I got it"). */
+const ACK_FILLER = "(?:(?:yeah|yep|yes|oh|well|ah|um|so)\\b[\\s,]*)?(?:i\\s+)?";
+
 /**
- * The acknowledgment a reply opens with, fused or standing alone ("Got it,
- * Harold.").
- *
- * 2026-11-11, round4-01: the limit below counted only an ack at the very
- * start of the reply, so "Yeah, I got it, kitchen leak" was invisible to it
- * and "got it" went on to open two more replies. The caller heard it three
- * turns running. A filler in front of the ack does not make it a different
- * ack, so a short one is allowed for before the word is read.
+ * The acknowledgment a reply opens with, even when what follows it is real
+ * content ("Okay so the toilet...", "Got it, Harold.").
  */
-const ACK_OPENER =
-  /^(?:(?:yeah|yep|yes|oh|well|ah|um|so)\b[\s,.:;\u2013\u2014-]*)?(?:i\s+)?(got it|gotcha|okay|ok|alright|all right|perfect|great|sure|understood)\b/i;
+const ACK_OPENER = new RegExp(`^${ACK_FILLER}(${ACK_WORDS})\\b`, "i");
+
+/**
+ * An acknowledgment standing as its own clause, wherever it sits: at the
+ * head of the reply ("Got it, Priya.") or after the content it acknowledges
+ * ("Walter, got it.", "A running toilet, got it.").
+ *
+ * 2026-11-11, the full sweep: the cross-turn limit counted only an opener,
+ * so "Walter, got it." and "A running toilet, got it." were invisible to it
+ * and "got it" went on to carry a third reply in prateek1030-03 and
+ * feedback-07. The leading separator is part of the match so that removing
+ * the acknowledgment does not leave a dangling comma behind.
+ *
+ * Only ever used with matchAll and replace, never exec: it is a global
+ * regex and exec would carry lastIndex between calls.
+ */
+const ACK_CLAUSE = new RegExp(
+  `(?:^|[,;:\\u2013\\u2014-]\\s*)${ACK_FILLER}(${ACK_WORDS})(?=\\s*(?:[,.;:!?\\u2013\\u2014-]|$))`,
+  "gi",
+);
+
+/**
+ * Every acknowledgment a reply uses as an acknowledgment, each counted once.
+ * An ack word inside a sentence of its own work ("a perfect excuse", "is it
+ * okay?") is not one of them.
+ */
+function acksIn(reply: string): string[] {
+  const found = new Set<string>();
+  const opener = ACK_OPENER.exec(reply.trim())?.[1]?.toLowerCase();
+  if (opener) {
+    found.add(opener);
+  }
+  for (const match of reply.matchAll(ACK_CLAUSE)) {
+    found.add(match[1]!.toLowerCase());
+  }
+  return [...found];
+}
 
 /**
  * The same acknowledgment has already carried two recent replies, and this
  * sentence fuses it to something worth keeping ("Got it, 6-6-1-0 Northeast
- * in Seattle."). The acknowledgment goes and the rest stays: dropping the
- * whole sentence would lose the only content in it, and keeping it is what
- * made Grace say "Got it" three turns in a row.
+ * in Seattle.", "Walter, got it."). The acknowledgment goes and the rest
+ * stays: dropping the whole sentence would lose the only content in it, and
+ * keeping it is what made Grace say "Got it" three turns in a row.
  */
-function withoutSpentAck(sentence: string): string {
+function withoutSpentAcks(sentence: string, spent: ReadonlySet<string>): string {
   const stripped = sentence
-    .replace(ACK_OPENER, "")
+    .replace(ACK_CLAUSE, (match, word: string) => (spent.has(word.toLowerCase()) ? "" : match))
     .replace(/^[\s,.:;!?\u2013\u2014-]*(?:and\s+)?/i, "");
   // Same guard as withoutStockOpener: if nothing of substance is left, the
   // sentence stays as it was rather than becoming a fragment.
@@ -329,6 +362,7 @@ function withoutSpentAck(sentence: string): string {
   }
   return `${stripped[0]!.toUpperCase()}${stripped.slice(1)}`;
 }
+
 /** How many of the recent replies may open with the same acknowledgment before it is dropped. */
 const ACK_OPENER_LIMIT = 2;
 
@@ -876,9 +910,8 @@ export class OutputGuard {
      */
     const ackCounts = new Map<string, number>();
     for (const reply of recentAgentReplies) {
-      const opener = ACK_OPENER.exec(reply.trim())?.[1]?.toLowerCase();
-      if (opener) {
-        ackCounts.set(opener, (ackCounts.get(opener) ?? 0) + 1);
+      for (const ack of acksIn(reply)) {
+        ackCounts.set(ack, (ackCounts.get(ack) ?? 0) + 1);
       }
     }
     this.spentAcks = new Set(
@@ -1144,17 +1177,15 @@ export class OutputGuard {
       // three replies. Only an acknowledgment-ONLY sentence is dropped, so
       // a fused "Got it, Harold." keeps the caller's name rather than being
       // rewritten into something Grace was never asked to say.
-      if (
-        PURE_ACK.test(plain) &&
-        this.spentAcks.has((ACK_OPENER.exec(plain)?.[1] ?? "").toLowerCase())
-      ) {
+      const spentHere = acksIn(plain).filter((ack) => this.spentAcks.has(ack));
+      if (PURE_ACK.test(plain) && spentHere.length > 0) {
         this.actions.push("repeated_statement");
         continue;
       }
-      // See withoutSpentAck: the sentence is not an acknowledgment on its
-      // own, so it keeps its content and loses only the spent ack in front.
-      if (this.spentAcks.has((ACK_OPENER.exec(plain)?.[1] ?? "").toLowerCase())) {
-        const unacked = withoutSpentAck(sentence);
+      // See withoutSpentAcks: the sentence is not an acknowledgment on its
+      // own, so it keeps its content and loses only the spent ack.
+      if (spentHere.length > 0) {
+        const unacked = withoutSpentAcks(sentence, this.spentAcks);
         if (unacked !== sentence) {
           this.actions.push("repeated_ack");
           sentence = unacked;

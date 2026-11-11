@@ -1103,6 +1103,42 @@ describe("the same acknowledgment does not open a third reply (2026-11-05)", () 
     expect(out).toContain("Corbin");
   });
 
+  /**
+   * 2026-11-11, the full sweep (prateek1030-03 and feedback-07): the ack came
+   * AFTER the content it acknowledged, so an opener-only count never saw it.
+   * "Got it", "Walter, got it.", "Got it, Finney Avenue" is three uses.
+   */
+  it("counts an ack that trails the content", () => {
+    const out = after(
+      ["Got it, we can fix that. What's your name?", "Walter, got it. Where is it?"],
+      "Got it, Finney Avenue North. And the ZIP?",
+    );
+    expect(out).not.toMatch(/got it/i);
+    expect(out).toContain("Finney Avenue North");
+  });
+
+  it("strips a trailing ack and keeps the content", () => {
+    const out = after(
+      ["Got it. One.", "Got it. Two."],
+      "A running toilet, got it. Is it constant?",
+    );
+    expect(out).not.toMatch(/got it/i);
+    expect(out).toContain("A running toilet");
+    expect(out).toContain("Is it constant?");
+  });
+
+  it("leaves no dangling comma behind a stripped trailing ack", () => {
+    const out = after(["Got it. One.", "Got it. Two."], "Walter, got it. Where is it?");
+    expect(out).not.toMatch(/got it/i);
+    expect(out).not.toMatch(/,\s*\./);
+    expect(out).toContain("Walter");
+  });
+
+  it("does not treat an ack word inside its own clause as an ack", () => {
+    const out = after(["Got it. One.", "Got it. Two."], "Is it okay to come Tuesday?");
+    expect(out).toContain("okay to come Tuesday");
+  });
+
   it("does not strip an ack word used mid-sentence", () => {
     const out = after(
       ["Got it. One.", "Got it. Two."],
