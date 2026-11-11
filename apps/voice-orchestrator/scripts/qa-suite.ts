@@ -4519,6 +4519,49 @@ const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    // 2026-11-11, Akash's Oregon test call: "It sounds like you're feeling
+    // confused about communication. Can I get your name, please?"
+    id: "feel-11-cannot-hear-grace",
+    category: "feel",
+    turns: ["hello grace i'm not able to hear your voice"],
+    checks: [
+      saysSomewhere("apologizes", /\bsorry\b/),
+      saysSomewhere("checks they can hear her now", /\bhear me\b/),
+      neverSays("never describes their feelings", /\b(feel|feeling)\b.*\bconfus/),
+      neverAsksAbout("does not ask for a name yet", ASKS_NAME),
+    ],
+  },
+  {
+    // Mid-intake: the bad line is handled, and the call carries on.
+    id: "feel-12-cannot-hear-mid-call",
+    category: "feel",
+    turns: [
+      "my water heater is leaking a little from the bottom",
+      "sorry, you're breaking up, i didn't hear anything",
+    ],
+    checks: [
+      saysSomewhere("apologizes", /\bsorry\b/),
+      custom("repeats the question they missed", (ctx) => {
+        const last = ctx.agentTurns[ctx.agentTurns.length - 1] ?? "";
+        return /\b(pool|puddle|drip|floor|leak)/i.test(last)
+          ? null
+          : `did not repeat it: "${last}"`;
+      }),
+      neverSays("never blames their phone", /\byour (phone|connection|line|signal)\b|on your end/),
+      neverSays("never describes their feelings", /\b(feel|feeling)\b.*\bconfus/),
+    ],
+  },
+  {
+    // Bad line and an emergency together: the emergency comes first.
+    id: "feel-13-cannot-hear-plus-emergency",
+    category: "feel",
+    turns: ["hello? you're breaking up, my basement is flooding right now"],
+    checks: [
+      callsTool("escalateEmergency"),
+      neverSays("does not just ask if they can hear", /^[^.?!]*can you hear me[^.?!]*\?\s*$/),
+    ],
+  },
+  {
     id: "feel-08-long-signoff-no-question",
     category: "feel",
     turns: ["my sink is dripping", "okay i will like call you after some time see you bye"],

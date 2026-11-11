@@ -7,6 +7,7 @@ import {
   screeningQuestionAsked,
   TRANSFER_AFTER_SCREEN_NOTE,
   asksGracesName,
+  cannotHearGrace,
   declinedTheirName,
   looksLikeSolicitation,
   offersAddress,
@@ -16,6 +17,32 @@ import {
 } from "./caller-steering";
 
 const askedName = { speaker: "agent", text: "I understand. Can you please share your name?" };
+
+// 2026-11-11, Akash's Oregon test calls: the line broke up and Grace said
+// "It sounds like you're feeling confused about communication."
+describe("cannotHearGrace", () => {
+  it.each([
+    "hello grace i'm not able to hear your voice",
+    "i don't know grace but i have found that sometimes when you speak something so it just don't come properly to me something like it hallucination is there",
+    "i can't hear you",
+    "you're breaking up",
+    "your voice is cutting out",
+    "sorry the line is really bad",
+    "hello are you there",
+    "i didn't hear anything",
+  ])("%p", (said) => {
+    expect(cannotHearGrace(said)).toBe(true);
+  });
+  it.each([
+    "i can hear water dripping in the wall",
+    "my name is michael",
+    "the toilet is making a noise",
+    "can you hear me now, my sink is leaking",
+    "i heard you have a coupon",
+  ])("not %p", (said) => {
+    expect(cannotHearGrace(said)).toBe(false);
+  });
+});
 
 // 2026-10-26, Yash's test calls.
 describe("declinedTheirName", () => {

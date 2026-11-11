@@ -645,6 +645,35 @@ describe("HandleTurnUseCase", () => {
       expect(sentMessage?.content).toContain("yeah go ahead and submit it");
     });
 
+    it("2026-11-11, Akash's test call: 'I'm not able to hear your voice' is treated as a bad line, not a feeling", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      const { useCase } = buildUseCase({ aiProvider, repository });
+
+      await useCase.execute(
+        baseCommand({ transcript: "hello grace i'm not able to hear your voice" }),
+      );
+
+      const sentMessage = aiProvider.requests[0]?.messages[0];
+      expect(sentMessage?.content).toContain("could not hear you clearly");
+      expect(sentMessage?.content).toContain("never describe how they feel");
+    });
+
+    it("a bad line reported together with a problem is answered as the problem, not as a bad line", async () => {
+      const repository = new FakeConversationRepository();
+      repository.seed(baseConversation());
+      const aiProvider = new FakeAiProvider();
+      const { useCase } = buildUseCase({ aiProvider, repository });
+
+      await useCase.execute(
+        baseCommand({ transcript: "you're breaking up, my basement is flooding right now" }),
+      );
+
+      const sentMessage = aiProvider.requests[0]?.messages[0];
+      expect(sentMessage?.content).not.toContain("could not hear you clearly");
+    });
+
     it("does NOT annotate a soft, ambiguous phrase like 'that sounds good' or plain 'okay'", async () => {
       const repository = new FakeConversationRepository();
       repository.seed(baseConversation());

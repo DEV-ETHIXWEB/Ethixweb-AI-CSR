@@ -38,6 +38,20 @@ export function asksGracesName(text: string): boolean {
   );
 }
 
+/**
+ * The caller is telling Grace her audio is not reaching them: "I'm not able
+ * to hear your voice", "you're breaking up", "it doesn't come through
+ * properly". 2026-11-11, Akash's test calls: the model read this as the
+ * caller's state of mind ("It sounds like you're feeling confused about
+ * communication") instead of a bad line.
+ */
+const CANNOT_HEAR =
+  /\b(?:can(?:'?t|not)|could(?:n'?t| not)|not able to|unable to|didn'?t|did not|don'?t|do not)\s+(?:really\s+)?hear\s+(?:you|your voice|anything|what you|a thing)\b|\b(?:you(?:'re| are)|your voice(?: is)?|the (?:line|call|audio|sound|voice|connection)(?: is)?)\s+(?:really\s+|so\s+|kind of\s+|very\s+)?(?:breaking up|cutting (?:out|off)|choppy|garbled|robotic|bad|not clear|unclear|not coming through)\b|\bhallucinat\w*|\b(?:doesn'?t|don'?t|does not|do not|isn'?t|is not)\s+come\w*\s+(?:through|properly|clearly)\b|^\s*(?:hello\W*)+(?:grace\W*)?(?:are\s+)?you\s+there\W*$/i;
+
+export function cannotHearGrace(text: string): boolean {
+  return CANNOT_HEAR.test(text);
+}
+
 /** The caller is starting to give the service address now. */
 export function offersAddress(text: string): boolean {
   return /\b(?:my|the) address is\b|\bi live (?:at|on)\b|\bthe house is at\b/i.test(text);

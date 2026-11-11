@@ -9,6 +9,7 @@ import { detailsForTheTeam } from "../domain/details-for-the-team";
 import { mentionsGasLeak } from "../domain/gas-leak";
 import {
   asksGracesName,
+  cannotHearGrace,
   declinedTheirName,
   asksForAPerson,
   insistsOnAPerson,
@@ -737,6 +738,9 @@ export class HandleTurnUseCase {
     const nameDeclined = declinedTheirName(transcriptTurns);
     const nameDeclinedNow = declinedTheirName(transcriptTurns.slice(-2));
     const gracesNameAsked = asksGracesName(command.transcript);
+    // A problem said in the same breath ("you're breaking up, my basement is
+    // flooding") is answered as the problem.
+    const badLine = cannotHearGrace(command.transcript) && !problemDescribed([command.transcript]);
     const upsetWantsPerson = upsetAndWantsAPerson(command.transcript);
 
     const addressOffered = !notes.street && offersAddress(command.transcript);
@@ -919,6 +923,7 @@ export class HandleTurnUseCase {
       transferAfterScreen ||
       transferNow ||
       couponAsked ||
+      badLine ||
       nameDeclinedNow ||
       gracesNameAsked ||
       addressOffered ||
@@ -958,6 +963,8 @@ export class HandleTurnUseCase {
       annotatedTranscript = `${TRANSFER_NOW_NOTE} ${annotatedTranscript}`;
     } else if (transferAfterScreen) {
       annotatedTranscript = `${TRANSFER_AFTER_SCREEN_NOTE} ${annotatedTranscript}`;
+    } else if (badLine) {
+      annotatedTranscript = `${BAD_LINE_NOTE} ${annotatedTranscript}`;
     } else if (couponAsked) {
       annotatedTranscript = `${COUPON_QUESTION_NOTE} ${annotatedTranscript}`;
     } else if (nameDeclinedNow) {
@@ -3250,6 +3257,13 @@ const UPSET_TRANSFER_NOTE =
   `[The caller is upset and asked for a person. You have ALREADY said: "${UPSET_APOLOGY_LINE}" ` +
   "Do not apologize again. Call transferToHuman now, with what went wrong in their words as the " +
   "summary, and say only that you are connecting them now. Ask nothing.]";
+/** See cannotHearGrace: the line broke up, the caller is not confused. */
+const BAD_LINE_NOTE =
+  "[The caller could not hear you clearly: the line may have cut out. Say sorry in a few words " +
+  "and that you may have cut out for a second. If you had just asked them something, ask it " +
+  "again in a few words; if not, ask if they can hear you okay now. Never blame " +
+  "their phone or connection, never describe how they feel, and do not ask for their name in " +
+  "this reply.]";
 const GRACES_NAME_NOTE =
   '[The caller asked who they are speaking with. Start your reply with: "I\'m Grace." Then ' +
   "carry on with what they were saying.]";
