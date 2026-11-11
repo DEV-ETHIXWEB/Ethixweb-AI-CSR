@@ -620,9 +620,6 @@ export function shouldNudgeForCallbackNumber(args: {
   if (extractStreet(args.callerTexts.join(" . ")) === null) {
     return false;
   }
-  if (spokenPhoneDigits(args.callerTexts) !== null) {
-    return false;
-  }
   // QA 2026-10-13: a caller who opened with their address got this note on
   // their very first turn, before Grace even knew the problem or the name, and
   // she spoke the note's own logic aloud. The order is problem, name, address,
@@ -652,6 +649,18 @@ export function shouldNudgeForCallbackNumber(args: {
     { spelled: notes.spelledName, stated: notes.statedName },
     { street: notes.street, zip: notes.zip },
   );
+  // 2026-11-11, round5-09: a caller who read out their own number used to
+  // switch this note off completely, because there is no number left to ask
+  // for. But the note's FIRST branch is the name-and-address readback, which
+  // is still owed, so nothing deterministic drove the close: Grace asked
+  // which fixture it was on three turns running and the call ended with
+  // nothing saved. A caller who gave their number still gets the readback;
+  // only the question asking for a number is dropped, which is why the ask
+  // is not required here. The phone itself is read back by the save gate
+  // (newNumberNotReadBackError) on the turn after.
+  if (spokenPhoneDigits(args.callerTexts) !== null) {
+    return !readBack;
+  }
   return !(numberAsked && readBack);
 }
 
