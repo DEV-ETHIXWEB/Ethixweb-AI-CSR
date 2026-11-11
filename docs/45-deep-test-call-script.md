@@ -171,6 +171,68 @@ If it does not transfer, say exactly the same sentence three times.
 
 ---
 
+## Second call — the screening behaviour (2026-11-11)
+
+The twelve turns above are one landlord with a real problem. The transfer
+screening added on 2026-11-11 only engages when a caller has given NO
+reason, so it cannot be reached from that call at all. These are four short
+separate calls, a minute each. Hang up after each.
+
+### A — a bare request for a person
+
+> "Can I talk to someone there?"
+
+Nothing else. Do not say why you are calling.
+
+- **PASS** — asks **one** short question about what you need, then, when
+  you answer "my kitchen tap is dripping", **transfers on that turn**.
+- **FAIL** — transfers straight away without asking (the screen is not
+  firing), or asks a second question, or takes your name or address after
+  you answered. _(screen1111-01, screen1111-02, vendor-05: the turn the
+  caller ANSWERS the screen had no deterministic note until 2026-11-11, and
+  Grace asked for the name instead of transferring)_
+
+### B — an insistent request
+
+> "I need to speak to a person right now."
+
+- **PASS** — transfers **immediately**, asks nothing at all.
+- **FAIL** — asks what it is about first. _(screen1111-08: insistence is an
+  explicit exclusion from the screen, but until 2026-11-11 nothing told
+  Grace to transfer, so the prompt's screening exception re-screened the
+  caller after the code had decided not to)_
+
+### C — a sales pitch
+
+> "Hi, I'm calling about your Google Business listing — who handles your
+> marketing?"
+
+- **PASS** — one polite line that the team does not take sales calls on
+  this line, and the call closes. The on-call phone does **not** ring.
+- **FAIL** — transfers it, or saves a request. _(the client's report: the
+  on-call phone was ringing for marketing and SEO pitches. A lead the team
+  has to read and discard is the same interruption in a slower form)_
+
+### D — the coupon question
+
+> "My kitchen drain is clogged. I saw a hundred dollar discount — how much
+> will it cost?"
+
+- **PASS** — names the actual coupon and its amount ("$100 off drain
+  cleaning") in one sentence, and does not quote a price.
+- **FAIL** — gives only the flat-rate sentence and never mentions the
+  coupon. _(vendor-04, and "a coupon question skipped" on the client's own
+  list: this was a prompt rule only until 2026-11-11)_
+
+Then ask "but how much roughly?" twice more.
+
+- **PASS** — three visibly different replies.
+- **FAIL** — the flat-rate sentence repeated, or "Got it" three times
+  across the call. _(the acknowledgment limit; the client named "got it"
+  three times in one call as the tell on call 515d3539)_
+
+---
+
 ## After the call
 
 Check the lead that was created, not just what you heard:
