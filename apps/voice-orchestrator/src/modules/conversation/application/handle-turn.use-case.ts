@@ -42,6 +42,11 @@ import {
 } from "../domain/missed-callback";
 import { objectsToPayingTwice, PAYING_TWICE_NOTE } from "../domain/paying-twice";
 import {
+  alreadyNamedACoupon,
+  asksAboutADiscount,
+  COUPON_QUESTION_NOTE,
+} from "../domain/coupon-question";
+import {
   isNameGroundedInCaller,
   NAME_NOT_GIVEN_ERROR,
   DUPLICATE_NAME_ERROR,
@@ -849,6 +854,14 @@ export class HandleTurnUseCase {
       callerTextsSoFar.some((text) => asksForAPerson(text)) &&
       screeningQuestionAsked(agentTextsSoFar) &&
       answerEarnsTransfer(command.transcript, problemDescribed);
+    // See coupon-question.ts. Fires on the turn the caller asks about money
+    // off, and only until a figure has actually been named.
+    const couponAsked =
+      !inDanger &&
+      !gasLeak &&
+      !soliciting &&
+      asksAboutADiscount(command.transcript) &&
+      !alreadyNamedACoupon(agentTextsSoFar);
     // See missed-callback.ts. Ranked under danger and gas only: a caller the
     // business already let down is the call most likely to become a bad
     // review, and the apology has to land before any question.
@@ -889,6 +902,7 @@ export class HandleTurnUseCase {
       soliciting ||
       screenBeforeTransfer ||
       transferAfterScreen ||
+      couponAsked ||
       nameDeclinedNow ||
       gracesNameAsked ||
       addressOffered ||
@@ -926,6 +940,8 @@ export class HandleTurnUseCase {
       annotatedTranscript = `${SCREEN_BEFORE_TRANSFER_NOTE} ${annotatedTranscript}`;
     } else if (transferAfterScreen) {
       annotatedTranscript = `${TRANSFER_AFTER_SCREEN_NOTE} ${annotatedTranscript}`;
+    } else if (couponAsked) {
+      annotatedTranscript = `${COUPON_QUESTION_NOTE} ${annotatedTranscript}`;
     } else if (nameDeclinedNow) {
       annotatedTranscript = `${NAME_DECLINED_NOTE} ${annotatedTranscript}`;
     } else if (gracesNameAsked) {
