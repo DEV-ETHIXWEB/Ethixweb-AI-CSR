@@ -171,7 +171,7 @@ export function asksForAPerson(text: string): boolean {
  * ask for whoever makes decisions, with no plumbing anywhere in it.
  */
 const SOLICITATION =
-  /\b(?:seo|google (?:ads?|listings?|business(?: profile| listing)?|my business|ranking|visibility)|search ranking|digital marketing|web ?site redesign|lead gen\w*|more (?:calls|leads|customers|clients)|rank (?:you |your )?(?:higher|number one|#1)|businesses like yours|companies like yours|shops like yours|contractors like you|merchant (?:services|account)|card processing|payment processing|business loan|working capital|insurance quote|advertis\w+|promot\w+ your|list your business|directory|franchis\w+|wholesale|distributor|supplier|partnership opportunity|quick question about your (?:business|company|website)|software (?:company|companies|solutions?|products?|platform|tool)|marketing (?:agency|company|firm)|(?:wanted|want|like) to introduce|(?:book|schedule|set up) (?:a |an )?(?:quick |short |free )?demo|free trial|crm)\b/i;
+  /\b(?:seo|google (?:ads?|listings?|business(?: profile| listing)?|my business|ranking|visibility)|search ranking|digital marketing|web ?site redesign|lead gen\w*|more (?:calls|leads|customers|clients)|rank (?:you |your )?(?:higher|number one|#1)|businesses like yours|companies like yours|shops like yours|contractors like you|merchant (?:services|account)|card processing|payment processing|business loan|working capital|insurance quote|advertis\w+|promot\w+ your|list your business|directory|franchis\w+|wholesale|distributor|supplier|partnership opportunity|quick question about your (?:business|company|website)|software (?:company|companies|solutions?|products?|platform|tool)|marketing (?:agency|company|firm)|(?:wanted|want|like) to introduce|(?:book|schedule|set up) (?:a |an )?(?:quick |short |free )?demo|free trial|crm|broker\w*|subcontract\w*|housecall ?pro|service ?titan|jobber|answering service|virtual receptionist|staffing|recruit\w*|(?:business |merchant )?funding|merchant cash|line of credit|fleet (?:management|tracking|insurance|vehicles|fuel|cards?)|fuel cards?|gps tracking|(?:reviews?|reputation) (?:management|platform|software)|(?:five|5)[- ]star reviews|yelp|thumbtack|home ?advisor|angi\b(?: leads)?|extended warranty|(?:car|auto|vehicle) warranty|press (?:1|one)|decision[- ]?maker|who handles (?:your|the) (?:marketing|advertising|software|website|it|hiring|purchasing|payroll|insurance|accounts|phones?)|(?:buy|acquire|acquisition of|purchase) your (?:business|company)|private equity|investors?|podcast|nominat\w+|(?:quick|short|brief) survey|donation|charit\w+|vehicle wraps?|signage|video production|social media (?:management|marketing|posts?|ads?)|chat ?bots?|call tracking|dispatch(?:ing)? (?:software|app|system)|payroll|bookkeeping|employee retention|tax credits?|cyber ?security|cloud backup|(?:energy|electricity|utility) (?:rates|supplier|broker|savings)|business (?:insurance|internet|phone (?:system|service)|credit card)|workers'? comp\w*|liability insurance|equipment (?:leasing|financing)|(?:consumer|customer) financing|uniforms?|(?:sell|selling|offer|offering) (?:you|your (?:company|business|team))|(?:grow|scale) your (?:business|company)|save your (?:business|company)|google maps|direct mail|door hangers?|business cards|print shop|domain name|trade show|training courses?|our (?:platform|software|app|product|solution)s?|send you (?:our )?(?:customers|leads|jobs|referrals)|partner with you)\b/i;
 
 /** True when this reads as somebody selling to the business. */
 export function looksLikeSolicitation(texts: readonly string[]): boolean {
@@ -186,6 +186,49 @@ export function looksLikeSolicitation(texts: readonly string[]): boolean {
  * IS a sales call for the rest of it, whatever the caller says next.
  */
 const SALES_DECLINE = /\b(?:can(?:'|no)?t pass (?:offers?|that|it|anything) along|(?:just|only) for (?:our )?plumbing customers)\b/i;
+
+/**
+ * 2026-11-11, Akash's broker call: "I'm calling from Chad's Associates ...
+ * we act as a broker between you and subcontractors ... can I talk to your
+ * phone" used no sales word at all and was put through. No word list can
+ * name every pitch, so the second check runs the other way: a caller who
+ * introduces themselves as a business and has given no customer reason at
+ * all is not put through. A customer reason is liberal on purpose (anything
+ * about plumbing, a job, a bill, a visit, an order, a returned call, a
+ * claim, a permit), so a real caller who also says "I'm with ..." is never
+ * caught by this.
+ */
+const SELLER_INTRO =
+  /\b(?:(?:(?:i'?m|i am|we'?re|we are|this is \w+(?: \w+)?) (?:just )?(?:calling )?|calling (?:you )?)(?:from|with|on behalf of) (?!my\b|our (?:home|house|apartment)\b)(?:[\w'-]+ ){0,4}?(?:company|companies|associates?|group|agency|solutions?|services|media|digital|marketing|software|llc|inc|corp\w*|partners|consulting|tech\w*|systems|network|firm|platform|app|business|online|dealership|commerce|pages|bureau|association|department of (?:sales|marketing))\b|our (?:company|firm|agency|platform|software|product|app|services?)\b|we (?:help|work with|partner with|provide|offer|specialize|connect|sell|run|build|make|handle|host|supply|are an?|'re an?|are doing|'re doing)\b|(?:you guys|your (?:business|company|shop|team)) (?:use|are using|have|need|could|can|might)\b|noticed (?:that )?(?:you|your)\b)/i;
+
+/**
+ * What a business pitch says ABOUT plumbing ("plumbing companies like
+ * yours", "we help plumbers") is not a plumbing reason. Removed before the
+ * customer-reason check, together with words a pitch shares with a customer
+ * ("service", "help with", "problem").
+ */
+const PITCH_SHARED_WORDS =
+  /\b(?:plumb\w* (?:companies|company|businesses|business|contractors|industry|shops?|owners?|software|crm|offices?|technicians|techs|crews?|teams?|staff|employees|websites?)|plumbers|show up (?:first|higher|on|in)|(?:\w+ )?services?|help(?:ing)? (?:with|you|your)\b|need (?:some )?help|problems?|issues?|trouble|install\w*|fix\w*|repair\w*|replace\w*|estimates?|quotes?|maintenance)\b/gi;
+
+const OTHER_CUSTOMER_REASON =
+  /\b(?:bill|billing|invoice|payment|charged?|account|owe|refund|plumber|remodel\w*|job|bid|order(?:ed)?|deliver\w*|parts?|pick ?up|permit|inspect\w*|claim|adjuster|tenants?|units?|returning (?:a |his |her |your |the )?call|called me|left (?:me )?a (?:message|voicemail)|voicemail|personal|family|wife|husband|son|daughter|mom|mother|dad|father|brother|sister|hiring|apply|application|position|resume|employee|works? (?:for|there)|my (?:house|home|property|apartment|building|kitchen|bathroom|basement|yard)|property (?:management|manager)|landlord|hoa|realt\w+)\b/i;
+
+/**
+ * True when the caller introduced themselves as a business and nothing they
+ * said is a reason a customer, a supplier on an order, an inspector or
+ * family would call. `problemDescribed` is passed in, as for
+ * answerEarnsTransfer.
+ */
+export function businessWithNoCustomerReason(
+  callerTexts: readonly string[],
+  problemDescribed: (texts: readonly string[]) => boolean,
+): boolean {
+  if (!callerTexts.some((text) => SELLER_INTRO.test(text))) {
+    return false;
+  }
+  const stripped = callerTexts.map((text) => text.replace(PITCH_SHARED_WORDS, " "));
+  return !problemDescribed(stripped) && !stripped.some((text) => OTHER_CUSTOMER_REASON.test(text));
+}
 
 /** True when Grace has already turned this caller down as a sales call. */
 export function declinedAsSales(agentTexts: readonly string[]): boolean {

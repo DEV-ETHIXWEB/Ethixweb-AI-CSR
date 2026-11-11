@@ -49,6 +49,10 @@ import {
 } from "../src/modules/prompt/domain/runtime-context";
 import { DEFAULT_BRAND_VOICE_PROMPT } from "../src/modules/prompt/infrastructure/static-agent-profile.provider";
 import type { Conversation } from "../src/modules/conversation/domain/conversation.entity";
+import {
+  REAL_CALLERS_WHO_WANT_A_PERSON,
+  SPAM_CALLS,
+} from "../src/modules/conversation/domain/spam-calls.corpus";
 // Deliberately reaching across into voice-runtime rather than
 // reimplementing it: what a caller HEARS is the model's text after
 // parseDelivery has stripped delivery cues, parenthetical meta-asides and
@@ -99,7 +103,7 @@ if (process.env["QA_PROVIDER"] === "openai") {
  * not surface until credits are already being spent. The key guards below
  * are skipped for this one path, never for a run.
  */
-const LIST_ONLY = process.argv.includes("--list");
+const LIST_ONLY = process.argv.includes("--list") || process.argv.includes("--dump");
 const apiKey = SMALL_RUN_ON_PRODUCTION_KEY
   ? process.env["ANTHROPIC_API_KEY"]
   : process.env["QA_ANTHROPIC_API_KEY"];
@@ -2947,6 +2951,44 @@ const SCREEN1111_SCENARIOS: Scenario[] = [
   },
 ];
 
+/**
+ * 2026-11-11, Akash: 80 spam calls (pitch, ask for a person, push) in four
+ * runnable groups of 20, and 25 real callers who ask for a person and must
+ * never be taken for a sales call. See spam-calls.corpus.ts.
+ */
+const SALES_DECLINE_LINE = /plumbing customers|pass (?:offers|that|it) along|sales calls/;
+const SPAM_SCENARIOS: Scenario[] = [
+  ...SPAM_CALLS.map((call, index) => ({
+    id: call.id,
+    category: `spam${Math.floor(index / 20) + 1}`,
+    turns: [...call.turns],
+    checks: [
+      neverCallsTool("transferToHuman"),
+      neverCallsTool("createLead"),
+      // "I can't put you through" is the decline itself, not a promise.
+      custom("never promises a transfer", (ctx) => {
+        for (const turn of ctx.agentTurns) {
+          for (const sentence of turn.split(/(?<=[?.!])\s+/)) {
+            if (
+              /\b(?:connecting you|transferring you|put(?:ting)? you through|get you (?:over|through) to)\b/i.test(sentence) &&
+              !/\b(?:can'?t|cannot|can not|won'?t|unable|not able|not)\b/i.test(sentence)
+            ) {
+              return `said: "${sentence.trim()}"`;
+            }
+          }
+        }
+        return null;
+      }),
+    ],
+  })),
+  ...REAL_CALLERS_WHO_WANT_A_PERSON.map((call) => ({
+    id: call.id,
+    category: "realcaller",
+    turns: [...call.turns],
+    checks: [neverSays("never turned away as a sales call", SALES_DECLINE_LINE)],
+  })),
+];
+
 const SCENARIOS: Scenario[] = [
   // -------------------------------------------------------------------
   // CLIENT 2026-10-25: the seven test calls (an old, slow, angry caller;
@@ -5019,6 +5061,7 @@ const SCENARIOS: Scenario[] = [
   ...GUARDS1104_SCENARIOS,
   ...ANSWERS1106_SCENARIOS,
   ...SCREEN1111_SCENARIOS,
+  ...SPAM_SCENARIOS,
 ];
 
 // ---------------------------------------------------------------------
@@ -5031,6 +5074,12 @@ async function main(): Promise<void> {
     ? SCENARIOS.filter((s) => s.category === filter || s.id.includes(filter))
     : SCENARIOS;
 
+  // Every scenario's caller turns as JSON, for offline detector checks. No
+  // key needed and no completion made.
+  if (process.argv.includes("--dump")) {
+    console.log(JSON.stringify(selected.map((s) => ({ id: s.id, category: s.category, turns: s.turns }))));
+    return;
+  }
   // See LIST_ONLY: inventory only, no key needed and no completion made.
   if (LIST_ONLY) {
     const byCategory = new Map<string, string[]>();

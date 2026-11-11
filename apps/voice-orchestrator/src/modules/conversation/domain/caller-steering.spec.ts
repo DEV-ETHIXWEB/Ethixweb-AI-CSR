@@ -12,12 +12,14 @@ import {
   nameCallerGreetedHerWith,
   declinedTheirName,
   declinedAsSales,
+  businessWithNoCustomerReason,
   looksLikeSolicitation,
   offersAddress,
   SCREEN_BEFORE_TRANSFER_NOTE,
   SOLICITATION_NOTE,
   upsetAndWantsAPerson,
 } from "./caller-steering";
+import { REAL_CALLERS_WHO_WANT_A_PERSON, SPAM_CALLS } from "./spam-calls.corpus";
 
 const askedName = { speaker: "agent", text: "I understand. Can you please share your name?" };
 
@@ -372,5 +374,37 @@ describe("a request for a person that must not be screened", () => {
     expect(TRANSFER_NOW_NOTE).toContain("transferToHuman in THIS reply");
     expect(TRANSFER_NOW_NOTE).toContain("do not take");
     expect(TRANSFER_NOW_NOTE).toContain("never say you cannot transfer");
+  });
+});
+
+describe("2026-11-11 spam corpus: every pitch is caught, no real caller is", () => {
+  const isSpam = (texts: readonly string[]) =>
+    looksLikeSolicitation(texts) || businessWithNoCustomerReason(texts, problemDescribed);
+
+  it.each(SPAM_CALLS.map((call) => [call.id, call.turns[0] as string]))(
+    "%s is recognised from its opening line",
+    (_id, opener) => {
+      expect(isSpam([opener])).toBe(true);
+    },
+  );
+
+  it.each(REAL_CALLERS_WHO_WANT_A_PERSON.map((call) => [call.id, call.turns]))(
+    "%s is never taken for a sales call",
+    (_id, turns) => {
+      expect(isSpam(turns)).toBe(false);
+    },
+  );
+
+  it.each([
+    "hi i'm from tacoma, can i speak to the owner",
+    "i'm with my tenant right now, can i talk to someone",
+    "this is sarah from the front desk at the marriott, can i talk to the owner",
+    "i'm calling from work, can i talk to a person",
+    "we do need someone out here, can i talk to the owner",
+    "calling from the property management company, can i talk to the owner",
+    "this is mike from the shop, i need to talk to larry",
+    "hey it's jose, one of the techs, put me through to larry",
+  ])("an ordinary caller is not a business pitch: %p", (said) => {
+    expect(isSpam([said])).toBe(false);
   });
 });

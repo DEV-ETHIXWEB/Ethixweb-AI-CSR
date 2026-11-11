@@ -2029,6 +2029,29 @@ describe("HandleTurnUseCase", () => {
       expect(result.humanTransfer).toBeUndefined();
     });
 
+    it("2026-11-11 broker call: a business pitch with no sales word is not put through", async () => {
+      const { transferHandler, result, offeredTools } = await pushAfter(
+        said([
+          [
+            "caller",
+            "hi i'm calling from chad's associate and i was thinking that you guys have subcontractors or contractors",
+          ],
+          [
+            "caller",
+            "we act basically as a go between you guys and those contractors, can i talk to you for a moment",
+          ],
+          [
+            "agent",
+            "We only use licensed, bonded, background-checked direct employees. What are you looking for?",
+          ],
+          ["caller", "can i talk to your phone"],
+        ]),
+      );
+      expect(offeredTools).not.toContain("transferToHuman");
+      expect(transferHandler.execute).not.toHaveBeenCalled();
+      expect(result.humanTransfer).toBeUndefined();
+    });
+
     it("a real customer who pushes is still put through", async () => {
       const { transferHandler, offeredTools } = await pushAfter(
         said([

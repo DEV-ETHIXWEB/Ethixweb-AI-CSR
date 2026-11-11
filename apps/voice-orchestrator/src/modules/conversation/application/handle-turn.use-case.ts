@@ -19,6 +19,7 @@ import {
   SCREEN_BEFORE_TRANSFER_NOTE,
   SOLICITATION_NOTE,
   declinedAsSales,
+  businessWithNoCustomerReason,
   TRANSFER_AFTER_SCREEN_NOTE,
   TRANSFER_NOW_NOTE,
   answerEarnsTransfer,
@@ -842,7 +843,9 @@ export class HandleTurnUseCase {
       !inDanger &&
       !gasLeak &&
       (looksLikeSolicitation([...callerTextsSoFar, command.transcript]) ||
-        declinedAsSales(agentTextsSoFar));
+        declinedAsSales(agentTextsSoFar) ||
+        // See businessWithNoCustomerReason: the pitches no word list names.
+        businessWithNoCustomerReason([...callerTextsSoFar, command.transcript], problemDescribed));
     const screenBeforeTransfer =
       !inDanger &&
       !gasLeak &&
