@@ -871,6 +871,19 @@ export class OutputGuard {
      * call, he still heard "The team will call you to set up a time".
      */
     private readonly prefersText = false,
+    /**
+     * Every reply Grace has made on this call, not just the recent ones the
+     * repeat checks use.
+     *
+     * 2026-11-11, vendor-02: "Got it" opened reply 1, trailed reply 4 and
+     * opened reply 5. The caller heard it three times, which is the client's
+     * own tell, and nothing stopped it because only the last three replies
+     * are handed to this guard, so by reply 5 the first two uses were out of
+     * sight. The acknowledgment limit is a whole-call rule and now counts
+     * over the whole call; everything else keeps its three-reply window,
+     * because widening that would change repeat-statement detection too.
+     */
+    allAgentReplies: readonly string[] = [],
   ) {
     this.spokeAlready = alreadySpokeThisTurn;
     /**
@@ -909,7 +922,7 @@ export class OutputGuard {
      * never asked to say.
      */
     const ackCounts = new Map<string, number>();
-    for (const reply of recentAgentReplies) {
+    for (const reply of allAgentReplies.length > 0 ? allAgentReplies : recentAgentReplies) {
       for (const ack of acksIn(reply)) {
         ackCounts.set(ack, (ackCounts.get(ack) ?? 0) + 1);
       }

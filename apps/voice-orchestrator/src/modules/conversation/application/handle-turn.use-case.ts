@@ -1910,6 +1910,15 @@ export class HandleTurnUseCase {
       guardFacts.knownPhones,
       guardFacts.noQuestions ?? false,
       guardFacts.prefersText ?? false,
+      // The whole call, for the acknowledgment limit only: see the guard's
+      // allAgentReplies. The three-reply window above still drives the
+      // repeat checks.
+      [
+        ...conversation.transcript
+          .filter((entry) => entry.speaker === "agent")
+          .map((entry) => entry.text),
+        ...(alreadySaidThisTurn.trim() ? [alreadySaidThisTurn] : []),
+      ],
     );
     const emit = (segment: string): void => {
       const guarded = guard.apply(segment);

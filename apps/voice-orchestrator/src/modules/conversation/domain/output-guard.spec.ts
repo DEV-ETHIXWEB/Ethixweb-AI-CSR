@@ -1108,6 +1108,42 @@ describe("the same acknowledgment does not open a third reply (2026-11-05)", () 
    * AFTER the content it acknowledged, so an opener-only count never saw it.
    * "Got it", "Walter, got it.", "Got it, Finney Avenue" is three uses.
    */
+  /**
+   * 2026-11-11, vendor-02: "Got it" opened reply 1, trailed reply 4 and
+   * opened reply 5, and the caller heard all three. Only the last three
+   * replies reach this guard, so by reply 5 the first two uses were out of
+   * sight. The limit is a whole-call rule, so it counts over the whole call.
+   */
+  it("counts uses older than the three-reply repeat window", () => {
+    const all = [
+      "Got it, a completely clogged kitchen drain. Is water backing up?",
+      "Thanks, Maria. What's your street address?",
+      "Perfect, we cover that area. What's your last name?",
+      "Lopez, got it. And what's the best number to reach you?",
+    ];
+    const guard = new OutputGuard(
+      all.slice(-3),
+      false,
+      "",
+      null,
+      null,
+      false,
+      [],
+      [],
+      false,
+      false,
+      all,
+    );
+    const out = guard.apply("Got it. So let me make sure I have it right: Maria Lopez.");
+    expect(out).not.toMatch(/got it/i);
+    expect(out).toContain("Maria Lopez");
+  });
+
+  it("falls back to the recent window when no whole-call list is given", () => {
+    const out = after(["Got it. One.", "Got it. Two."], "Got it. And the ZIP?");
+    expect(out).not.toMatch(/got it/i);
+  });
+
   it("counts an ack that trails the content", () => {
     const out = after(
       ["Got it, we can fix that. What's your name?", "Walter, got it. Where is it?"],
