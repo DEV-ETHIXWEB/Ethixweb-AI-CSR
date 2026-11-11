@@ -62,3 +62,58 @@ export function isPureBackchannel(transcript: string): boolean {
   }
   return words.every((word) => BACKCHANNEL_WORDS.has(word));
 }
+
+/**
+ * 2026-11-11, Akash's two test calls on the Oregon server (and four Sydney
+ * calls from 2026-11-06 onward): the greeting was cut off about 1.5 seconds
+ * in, every time. What stopped it was a 2-10 character interim result, a
+ * "hi"/"hello" said on pickup or the line echoing Grace's own "Hi, this is
+ * Grace", that then vanished from the transcript. Any recognized word was
+ * enough to stop the opening line, so the caller heard half of it and then
+ * silence ("I'm not able to hear your voice").
+ *
+ * Words a caller says over an opening line without meaning to take the
+ * floor. During the greeting only: Grace is already answering a "hello".
+ */
+const OPENING_SMALL_TALK_WORDS = new Set([
+  ...BACKCHANNEL_WORDS,
+  "hello",
+  "hi",
+  "hey",
+  "hallo",
+  "hullo",
+  "grace",
+  "yes",
+  "um",
+  "uhm",
+  "er",
+]);
+
+/** Fewer real words than this, said over the greeting, never stops it. */
+export const GREETING_BARGE_IN_MIN_WORDS = 4;
+
+function words(transcript: string): string[] {
+  return transcript
+    .trim()
+    .split(/\s+/)
+    .map(normalizeToken)
+    .filter((word) => word.length > 0);
+}
+
+/** True when the whole transcript is only "hello"/"hi grace"/"yeah"-type words. */
+export function isOpeningSmallTalk(transcript: string): boolean {
+  const all = words(transcript);
+  return all.length > 0 && all.every((word) => OPENING_SMALL_TALK_WORDS.has(word));
+}
+
+/**
+ * Whether words heard while the greeting is playing should stop it: only a
+ * real sentence does (at least GREETING_BARGE_IN_MIN_WORDS words, not all
+ * small talk), e.g. "my water heater is leaking everywhere".
+ */
+export function interruptsGreeting(transcript: string): boolean {
+  if (isOpeningSmallTalk(transcript)) {
+    return false;
+  }
+  return words(transcript).length >= GREETING_BARGE_IN_MIN_WORDS;
+}

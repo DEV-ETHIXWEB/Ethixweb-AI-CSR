@@ -905,6 +905,105 @@ describe("CallSessionOrchestrator", () => {
     });
   });
 
+  describe("the greeting is not cut off by a hello (2026-11-11, Akash's Oregon test calls)", () => {
+    async function startWithGreetingPlaying() {
+      const built = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      built.tts.chunkDelayMs = 30;
+      const started = built.orchestrator.onCallStart(baseParams(), sink);
+      for (let i = 0; i < 50 && built.stt.sessions.length === 0; i++) {
+        await new Promise((r) => setTimeout(r, 2));
+      }
+      await new Promise((r) => setTimeout(r, 5));
+      return { ...built, sink, started, session: built.stt.sessions[0]! };
+    }
+
+    it("a 'hello' heard while the greeting plays does not stop it", async () => {
+      const { orchestratorClient, sink, started, session } = await startWithGreetingPlaying();
+      session.emitSpeechStarted();
+      session.emitInterimSpeech("hello");
+      await flushMicrotasks();
+      expect(sink.clearCount).toBe(0);
+      expect(orchestratorClient.interruptCalls).toHaveLength(0);
+      await started;
+    });
+
+    it("a short echo-like fragment ('hi this is') does not stop the greeting", async () => {
+      const { orchestratorClient, sink, started, session } = await startWithGreetingPlaying();
+      session.emitSpeechStarted();
+      session.emitInterimSpeech("hi this is");
+      await flushMicrotasks();
+      expect(sink.clearCount).toBe(0);
+      expect(orchestratorClient.interruptCalls).toHaveLength(0);
+      await started;
+    });
+
+    it("a finalized 'hello grace' during the greeting neither stops it nor gets its own answer", async () => {
+      const { orchestratorClient, sink, started, session } = await startWithGreetingPlaying();
+      session.emitFinalTranscript("hello grace", 0.95);
+      await flushMicrotasks();
+      expect(sink.clearCount).toBe(0);
+      await started;
+      await new Promise((r) => setTimeout(r, 30));
+      expect(orchestratorClient.turnCalls).toHaveLength(0);
+    });
+
+    it("a real sentence over the greeting still interrupts it", async () => {
+      const { orchestratorClient, sink, started, session } = await startWithGreetingPlaying();
+      session.emitSpeechStarted();
+      session.emitInterimSpeech("my water heater is leaking everywhere");
+      await flushMicrotasks();
+      expect(sink.clearCount).toBeGreaterThanOrEqual(1);
+      expect(orchestratorClient.interruptCalls).toHaveLength(1);
+      await started;
+    });
+
+    it("is still protected while Twilio is playing the greeting it already received", async () => {
+      // ElevenLabs renders faster than real time: the whole greeting can be
+      // sent before the caller has heard a second of it.
+      const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      tts.chunkBytes = 8000; // 1 second of audio per chunk, 3 chunks
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+      session.emitSpeechStarted();
+      session.emitInterimSpeech("hello");
+      await flushMicrotasks();
+      expect(sink.clearCount).toBe(0);
+      expect(orchestratorClient.interruptCalls).toHaveLength(0);
+    });
+
+    it("a real sentence while the greeting is still playing interrupts it", async () => {
+      const { orchestrator, orchestratorClient, stt, tts } = buildOrchestratorUnderTest();
+      const sink = new FakeMediaStreamSink();
+      tts.chunkBytes = 8000;
+      await orchestrator.onCallStart(baseParams(), sink);
+      const session = stt.sessions[0]!;
+      session.emitSpeechStarted();
+      session.emitInterimSpeech("there is water pouring from my ceiling");
+      await flushMicrotasks();
+      expect(sink.clearCount).toBeGreaterThanOrEqual(1);
+      expect(orchestratorClient.interruptCalls).toHaveLength(1);
+    });
+
+    it("after the greeting, a 'hello' is answered as normal", async () => {
+      const { orchestrator, orchestratorClient, stt } = buildOrchestratorUnderTest();
+      orchestratorClient.turnResponses = [
+        {
+          conversationId: "conv-1",
+          responseText: "Yes, I'm here. How can I help?",
+          toolCallsExecuted: [],
+          interrupted: false,
+          state: "qualifying",
+        },
+      ];
+      await orchestrator.onCallStart(baseParams(), new FakeMediaStreamSink());
+      stt.sessions[0]!.emitFinalTranscript("hello", 0.95);
+      await new Promise((r) => setTimeout(r, 30));
+      expect(orchestratorClient.turnCalls).toHaveLength(1);
+    });
+  });
+
   describe("backchannel filtering (mission: backchannels must not trigger barge-in)", () => {
     it("MISSION EXAMPLE: a pure backchannel ('uh huh') while a turn is in flight (mechanism 1) does NOT abort it", async () => {
       const { orchestrator, orchestratorClient, stt } = buildOrchestratorUnderTest();

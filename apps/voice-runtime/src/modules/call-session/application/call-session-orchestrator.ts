@@ -30,7 +30,7 @@ import {
   TWILIO_MEDIA_ENCODING,
   TWILIO_MEDIA_SAMPLE_RATE_HZ,
 } from "../../telephony/domain/twilio-media-stream.types";
-import { isPureBackchannel } from "./backchannel-detector";
+import { interruptsGreeting, isOpeningSmallTalk, isPureBackchannel } from "./backchannel-detector";
 import {
   MULAW_BYTES_PER_MS,
   parseDelivery,
@@ -444,6 +444,13 @@ export class CallSessionOrchestrator {
   private activeTurnAbort: AbortController | null = null;
   private ttsAbort: AbortController | null = null;
   private ttsPlaying = false;
+  /** True only while the opening line is being sent. See interruptsGreeting. */
+  private greetingPlaying = false;
+  /**
+   * When Twilio finishes PLAYING the greeting. Sending ends well before that:
+   * the voice renders faster than real time and Twilio buffers it.
+   */
+  private greetingPlaybackEndsAt = 0;
   /**
    * Wall-clock time at which the audio already handed to Twilio will have
    * finished PLAYING on the caller's phone.
@@ -740,7 +747,13 @@ export class CallSessionOrchestrator {
       // 2026-10-25, the client, after asking for it again "a bit slower":
       // "please use that slower tone always ... hi this is grace at all
       // phase plumbing what can i help you".
-      await this.speak(`[slowly] ${greeting}`, sink);
+      this.greetingPlaying = true;
+      try {
+        await this.speak(`[slowly] ${greeting}`, sink);
+      } finally {
+        this.greetingPlaying = false;
+        this.greetingPlaybackEndsAt = Date.now() + this.millisUntilPlaybackEnds();
+      }
       this.armSilenceCheckIn(sink);
     } else {
       // Only reachable against an older voice-orchestrator deployment
@@ -786,6 +799,12 @@ export class CallSessionOrchestrator {
   ): void {
     this.lastFinalTranscriptAt = Date.now();
     this.finalTranscriptCount += 1;
+    if (this.greetingAudible() && isOpeningSmallTalk(result.transcript)) {
+      // A "hello" said over the greeting: the greeting is the answer to it.
+      // See interruptsGreeting (backchannel-detector.ts) for the live calls.
+      log.info("small talk heard during the greeting, letting it finish");
+      return;
+    }
     // The caller's finished words prove they are talking: Grace stops now,
     // not when a hold below runs out. 2026-10-25: with a two-second patience
     // hold, her stale reply would otherwise have kept playing over them.
@@ -1447,6 +1466,14 @@ export class CallSessionOrchestrator {
       }
       return;
     }
+    if (this.greetingAudible() && !interruptsGreeting(transcript)) {
+      // Leaves the confirmation window running, like a backchannel: if the
+      // caller keeps talking, a fuller interim result interrupts after all.
+      this.logger.info("short speech during the greeting, letting it finish", {
+        conversationId: this.conversationId,
+      });
+      return;
+    }
     if (isPureBackchannel(transcript) && (this.isAudible() || this.activeTurnAbort)) {
       this.logger.info("backchannel detected mid-speech — not treating it as a barge-in", {
         conversationId: this.conversationId,
@@ -2003,6 +2030,11 @@ export class CallSessionOrchestrator {
       Math.max(Date.now(), this.playbackEndsAt) + chunk.length / MULAW_BYTES_PER_MS;
   }
 
+  /** The caller can still hear the opening line (being sent, or still playing). */
+  private greetingAudible(): boolean {
+    return this.isAudible() && (this.greetingPlaying || Date.now() < this.greetingPlaybackEndsAt);
+  }
+
   /** True while the caller can still HEAR Grace, not merely while audio is still being sent. */
   private isAudible(): boolean {
     return this.ttsPlaying || this.millisUntilPlaybackEnds() > 0;
@@ -2025,6 +2057,7 @@ export class CallSessionOrchestrator {
     sink.clearQueuedAudio();
     this.ttsPlaying = false;
     this.playbackEndsAt = 0;
+    this.greetingPlaybackEndsAt = 0;
   }
 
   /**
@@ -2036,6 +2069,10 @@ export class CallSessionOrchestrator {
    * talked over callers who were still speaking.
    */
   private async speak(text: string, sink: MediaStreamSink, silentOk = false): Promise<void> {
+    if (!this.greetingPlaying) {
+      // Anything said after the greeting ends the greeting's protection.
+      this.greetingPlaybackEndsAt = 0;
+    }
     this.lastSpokenText = text;
     const { voiceSettings, segments: parsedSegments } = parseDelivery(text);
     // C1, found live on a real call, source-confirmed: a turn's ENTIRE
