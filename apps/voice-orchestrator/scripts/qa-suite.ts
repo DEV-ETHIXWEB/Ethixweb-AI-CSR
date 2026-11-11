@@ -4584,7 +4584,14 @@ const SCENARIOS: Scenario[] = [
     checks: [
       neverSays(
         "does not vouch for or promise the named technician",
-        /(great|best|do their best|will send|send him|get him|he is available|he's available)/,
+        // 2026-11-11: the availability wording used to be banned outright, so
+        // the one reply that is exactly right failed: "I can't see the
+        // schedule or confirm which technician will come, but I'm happy to
+        // note that you'd like Mike if he's available." A conditional makes
+        // no claim about availability and promises nothing, which is what
+        // this check's own label is about, so only the assertion is failed.
+        // Vouching ("great", "best") and promising to send him are unchanged.
+        /(great|best|do their best|will send|send him|get him)|(?<!\b(?:if|whether|in case) )\bhe(?:'s| is) available\b/,
       ),
     ],
   },
