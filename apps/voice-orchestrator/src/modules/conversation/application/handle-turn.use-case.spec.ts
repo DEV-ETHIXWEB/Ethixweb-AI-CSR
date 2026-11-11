@@ -674,6 +674,70 @@ describe("HandleTurnUseCase", () => {
       expect(sentMessage?.content).not.toContain("could not hear you clearly");
     });
 
+    describe("2026-11-11, Akash's call: a request for a person with no reason given is screened", () => {
+      const said = (texts: Array<["caller" | "agent", string]>): TranscriptTurn[] =>
+        texts.map(([speaker, text], turnIndex) => ({
+          turnIndex,
+          speaker,
+          text,
+          confidence: null,
+          offsetMs: 0,
+          at: new Date().toISOString(),
+        }));
+      // His call, word for word: a name and an address, but no reason.
+      const nameAndAddressOnly = said([
+        ["caller", "can you just tell me your name"],
+        ["agent", "I'm Grace, the AI receptionist here. What's your name?"],
+        ["caller", "my name is michael"],
+        ["agent", "Could you spell that for me, please?"],
+        ["caller", "m i c h e l"],
+        ["agent", "Got it, Michel. What's the street address?"],
+        [
+          "caller",
+          "so my street address is c tech near office london i'm just next to your company",
+        ],
+        ["agent", "Can you please provide the house number and ZIP code for that address?"],
+      ]);
+      const ask = "can i can can you just connect me to the human please";
+
+      async function annotationFor(overrides: Partial<Conversation>, transcript = ask) {
+        const repository = new FakeConversationRepository();
+        repository.seed(baseConversation({ transcript: nameAndAddressOnly, ...overrides }));
+        const aiProvider = new FakeAiProvider();
+        const { useCase } = buildUseCase({ aiProvider, repository });
+        await useCase.execute(baseCommand({ transcript }));
+        return (aiProvider.requests[0]?.messages ?? [])
+          .map((message) => (typeof message.content === "string" ? message.content : ""))
+          .join("\n");
+      }
+
+      it("asks the reason even after a customer record was created this call", async () => {
+        const content = await annotationFor({ customerId: "cust-1", customerDetailsOnFile: true });
+        expect(content).toContain("Ask ONE short");
+      });
+
+      it("asks the reason of a caller already on file, too", async () => {
+        const content = await annotationFor({ customerId: "cust-1", knownCallerMatched: true });
+        expect(content).toContain("Ask ONE short");
+      });
+
+      it("still transfers at once when they insist", async () => {
+        const content = await annotationFor(
+          { customerId: "cust-1", customerDetailsOnFile: true },
+          "just put me through to a person right now",
+        );
+        expect(content).not.toContain("Ask ONE short");
+      });
+
+      it("still transfers at once when they have said what is wrong", async () => {
+        const content = await annotationFor(
+          { customerId: "cust-1", customerDetailsOnFile: true },
+          "my water heater is leaking, can you connect me to a human",
+        );
+        expect(content).not.toContain("Ask ONE short");
+      });
+    });
+
     it("does NOT annotate a soft, ambiguous phrase like 'that sounds good' or plain 'okay'", async () => {
       const repository = new FakeConversationRepository();
       repository.seed(baseConversation());

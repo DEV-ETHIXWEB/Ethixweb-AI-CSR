@@ -843,7 +843,11 @@ export class HandleTurnUseCase {
       !insistsOnAPerson(command.transcript) &&
       !problemDescribed([...callerTextsSoFar, command.transcript]) &&
       !isHardEmergency([...callerTextsSoFar, command.transcript]) &&
-      !hasUsableCustomer(conversation) &&
+      // 2026-11-11, Akash's call: a name and an address, no reason, then
+      // "connect me to the human" went straight through, because the
+      // customer record created a minute earlier counted as "known". What
+      // decides the screen is whether they said why they are calling, not
+      // whether a record exists: on file or not, one question comes first.
       // Asked once already: a second question would be the interrogation
       // the "do not ask anything first" rule exists to prevent.
       !screeningQuestionAsked(agentTextsSoFar);

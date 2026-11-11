@@ -130,6 +130,19 @@ describe("upsetAndWantsAPerson", () => {
  * what is wrong keeps that. Only a request with nothing behind it is
  * screened, and only once.
  */
+// 2026-11-11, Akash's call: a polite question with "just" in it is not
+// impatience; it gets the one screening question.
+describe("a polite request with 'just' in it", () => {
+  it.each([
+    "can i can can you just connect me to the human please",
+    "could you just put me through to someone",
+    "can you just transfer me",
+  ])("is screened, not read as insistent: %p", (said) => {
+    expect(asksForAPerson(said)).toBe(true);
+    expect(insistsOnAPerson(said)).toBe(false);
+  });
+});
+
 describe("asking for a person", () => {
   it.each([
     "Just give me a human please.",
@@ -142,6 +155,16 @@ describe("asking for a person", () => {
     "is the owner available?",
     "who handles your marketing?",
     "can I speak to whoever is in charge of advertising",
+    // 2026-11-11, Akash's call, word for word: not recognised, so neither
+    // the screen nor the transfer rule ran.
+    "can i can can you just connect me to the human please",
+    "connect me to a person",
+    "can you connect me with someone",
+    "please connect me",
+    "i want a human",
+    "i need to speak with an operator",
+    "can i get a live agent",
+    "i'd like a representative please",
   ])("is recognised in %p", (said) => {
     expect(asksForAPerson(said)).toBe(true);
   });
@@ -153,6 +176,11 @@ describe("asking for a person", () => {
     "is someone coming out today?",
     "what time does someone arrive",
     "my kitchen sink is leaking",
+    // Asking whether Grace is a person is the "are you AI" question.
+    "is this a human?",
+    "am i talking to a human or a robot",
+    "are you a real person",
+    "can you connect the new faucet to the line",
   ])("is not read into %p", (said) => {
     expect(asksForAPerson(said)).toBe(false);
   });
@@ -247,6 +275,7 @@ describe("a request for a person that must not be screened", () => {
     "Just put me through, please.",
     "I already asked to talk to someone.",
     "I said I want to speak to a human.",
+    "please just connect me to someone",
   ])("is read as insistent: %p", (said) => {
     expect(insistsOnAPerson(said)).toBe(true);
   });

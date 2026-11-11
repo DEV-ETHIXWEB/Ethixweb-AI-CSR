@@ -50,7 +50,7 @@ describe("PLATFORM_BASE_PROMPT v53", () => {
   const lower = prompt.toLowerCase();
 
   it("is versioned and far shorter than the 11,000-word v52", () => {
-    expect(PLATFORM_BASE_PROMPT_VERSION).toBe("v62");
+    expect(PLATFORM_BASE_PROMPT_VERSION).toBe("v63");
     // 3700 -> 3850 on 2026-11-11. v61 replaced one transfer rule with three
     // (transfer when the reason is known, screen when it is not, decline a
     // pitch), which cannot be said in fewer words than the single rule it

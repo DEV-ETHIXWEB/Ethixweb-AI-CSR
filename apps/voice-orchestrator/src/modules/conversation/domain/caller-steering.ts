@@ -92,9 +92,25 @@ export function upsetAndWantsAPerson(text: string): boolean {
 const ASKS_FOR_A_PERSON =
   /\b(?:talk|speak|chat) (?:to|with) (?:the |a |an |your |some ?one |some ?body )?(?:owner|manager|person|human|supervisor|boss|some ?one|some ?body|real person|rep|representative|agent)\b|\b(?:get|give|put) me (?:to |through to )?(?:a |an |the )?(?:human|real person|person|manager|owner|some ?one|some ?body)\b|\bput me through\b|\btransfer me\b|\b(?:is|are) (?:the |a )?(?:owner|manager|boss|decision[- ]maker)s? (?:available|around|in|there)\b|\b(?:who|whoever) (?:handles|looks after|is in charge of|takes care of|deals with)\b|\breal (?:person|human)\b/i;
 
+/**
+ * 2026-11-11, Akash's call: "can you just connect me to the human please"
+ * matched nothing above, so neither the screen nor the transfer rule ran and
+ * the model put a caller with no reason straight through.
+ */
+const ALSO_ASKS_FOR_A_PERSON =
+  /\bconnect (?:me|us)\b|\b(?:i|we)(?:'d| would)? (?:want|need|like) (?:to (?:talk|speak) (?:to|with) )?(?:a |an |the )?(?:human|real person|person|manager|owner|operator|representative|rep|live (?:agent|person))\b|\b(?:speak|talk) (?:to|with) (?:a |an |the )?operator\b|\blive (?:agent|person|operator)\b/i;
+
+/**
+ * "Is this a human?" or "are you a real person?" asks what Grace is (the
+ * prompt's "are you AI" answer), not to be put through to someone.
+ */
+const ASKS_WHAT_GRACE_IS =
+  /\b(?:are you|is this|is that|am i (?:talking|speaking) (?:to|with))\s+(?:a |an )?(?:real |actual )?(?:person|human|robot|bot|ai|machine)\b(?:\s+or\s+(?:a |an )?(?:real |actual )?(?:person|human|robot|bot|ai|machine)\b)?/gi;
+
 /** True when the caller has asked to be put through to a person. */
 export function asksForAPerson(text: string): boolean {
-  return ASKS_FOR_A_PERSON.test(text);
+  const request = text.replace(ASKS_WHAT_GRACE_IS, " ");
+  return ASKS_FOR_A_PERSON.test(request) || ALSO_ASKS_FOR_A_PERSON.test(request);
 }
 
 /**
@@ -151,8 +167,14 @@ export const SOLICITATION_NOTE =
  * A salesperson opens politely ("is the owner available?"). They do not
  * say "right now" or "just put me through".
  */
+// 2026-11-11, Akash's call: "can you just connect me to the human please",
+// with no reason given, went straight through. In a question, "just" is a
+// polite softener (and the one a salesperson uses too), so it is screened
+// once. Said as a command opening the sentence ("Just put me through,
+// please."), it is still impatience and goes through at once. A caller who
+// asks a second time is put through either way: the screen is asked once.
 const INSISTENT =
-  /\b(?:right now|immediately|straight ?away|at once|this instant)\b|\bjust (?:give|get|put|transfer|connect)\b|\b(?:already|again) asked\b|\bi said\b|\bplease just\b/i;
+  /\b(?:right now|immediately|straight ?away|at once|this instant)\b|(?:^|[.!?]\s*)(?:please,?\s+)?just (?:give|get|put|transfer|connect)\b|\b(?:already|again) asked\b|\bi said\b/i;
 
 /** True when the request for a person is urgent or repeated, not a cold ask. */
 export function insistsOnAPerson(text: string): boolean {
