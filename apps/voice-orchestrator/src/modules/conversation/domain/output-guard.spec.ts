@@ -1095,10 +1095,7 @@ describe("the same acknowledgment does not open a third reply (2026-11-05)", () 
   });
 
   it("leaves a fused ack alone while it is still the second use", () => {
-    const out = after(
-      ["Got it. Is it dripping now?"],
-      "Got it, Corbin. What's the ZIP code?",
-    );
+    const out = after(["Got it. Is it dripping now?"], "Got it, Corbin. What's the ZIP code?");
     expect(out).toMatch(/got it/i);
     expect(out).toContain("Corbin");
   });

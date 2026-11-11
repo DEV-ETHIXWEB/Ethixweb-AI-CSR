@@ -33,7 +33,8 @@ export function asksAboutADiscount(text: string): boolean {
  * one of her own replies is the coupon being answered; without this the
  * note would fire again on every later turn of the same call.
  */
-const NAMED_A_FIGURE = /\$\s?\d+|\b\d+\s*(?:dollars?|%|percent)\b|\b(?:hundred|fifty|ten|twenty)\b/i;
+const NAMED_A_FIGURE =
+  /\$\s?\d+|\b\d+\s*(?:dollars?|%|percent)\b|\b(?:hundred|fifty|ten|twenty)\b/i;
 
 export function alreadyNamedACoupon(agentTexts: readonly string[]): boolean {
   return agentTexts.some((text) => NAMED_A_FIGURE.test(text));

@@ -185,10 +185,7 @@ describe("the turn the caller answers the screen", () => {
     expect(earns(said)).toBe(true);
   });
 
-  it.each([
-    "I'd rather not say.",
-    "It's a personal matter.",
-  ])("does not earn it: %p", (said) => {
+  it.each(["I'd rather not say.", "It's a personal matter."])("does not earn it: %p", (said) => {
     expect(earns(said)).toBe(false);
   });
 

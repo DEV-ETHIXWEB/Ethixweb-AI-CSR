@@ -185,8 +185,8 @@ export function answerEarnsTransfer(
 export const TRANSFER_AFTER_SCREEN_NOTE =
   "[you already asked this caller what they needed and they have just " +
   "answered. They asked for a person and they have now given a reason. Call " +
-  "transferToHuman in THIS reply, with one short line like \"Sure, connecting " +
-  "you now.\" Do not ask anything else, do not take their name or address, " +
+  'transferToHuman in THIS reply, with one short line like "Sure, connecting ' +
+  'you now." Do not ask anything else, do not take their name or address, ' +
   "and never say you cannot transfer them.]";
 
 /**
