@@ -2395,8 +2395,17 @@ const PROMISES_A_CALL_AHEAD =
  * Applied per sentence, because a reply can note the preference in one
  * sentence and would not be excused by a hedge sitting in another.
  */
+// 2026-11-11: "make sure" was missing here while output-guard's
+// CALL_AHEAD_HEDGE has carried it since 2026-11-04, so this did not mirror
+// it after all and guards1104-13 failed on a reply the guard deliberately
+// allows. Two unit tests pin that decision ("I'll make sure the technician
+// knows to call before arriving" and "I'll make sure they call before
+// arriving" are both left alone): Grace undertaking to pass the request on
+// is not a claim about what the technician will do, which is the thing the
+// client actually complained about. Anything the guard lets through must
+// not be failed here, so this list stays a superset of the hedge.
 const NOTING_IS_NOT_PROMISING =
-  /\b(note|noted|noting|ask|asking|request|pass (that|this|it) (on |along )?to|let (them|the team) know|can'?t|cannot|not sure|don'?t know)\b/i;
+  /\b(note|noted|noting|ask|asking|request|make(s)? sure|pass (that|this|it) (on |along )?to|let (them|the team) know|can'?t|cannot|not sure|don'?t know)\b/i;
 
 function neverPromisesACallAhead(): Check {
   return {
@@ -2596,7 +2605,9 @@ const GUARDS1104_SCENARIOS: Scenario[] = [
       // Grace should do. The widened guard must not swallow this.
       saysSomewhere(
         "still notes the caller's preference",
-        /\b(note|noted|pass (that|this) (on |along )?to|let the team know)\b/,
+        // "make sure the team knows" is the same undertaking as "note", and
+        // the guard allows it by design; see NOTING_IS_NOT_PROMISING.
+        /\b(note|noted|pass (that|this) (on |along )?to|let the team know|make sure [a-z ]{0,20}knows?)\b/,
       ),
     ],
   },
