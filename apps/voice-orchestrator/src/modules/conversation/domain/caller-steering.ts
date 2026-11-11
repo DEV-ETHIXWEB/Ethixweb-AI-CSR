@@ -143,3 +143,48 @@ const INSISTENT =
 export function insistsOnAPerson(text: string): boolean {
   return asksForAPerson(text) && INSISTENT.test(text);
 }
+
+/**
+ * The screening question, in the forms Grace actually asks it. The same
+ * pattern decides "has the screen already happened", so the screen can only
+ * ever run once.
+ */
+const SCREENING_QUESTION =
+  /\bwhat(?:'?s| is)? going on\b|\bgoing on with\b|\bwhat do you need\b|\bwhat (?:can|may) i (?:help|do)\b|\bhow can i help\b|\bwhat(?:'?s| is) (?:it|this|that|the call) about\b|\bwhat brings you\b|\bwhat (?:are|is) you (?:calling|needing)\b/i;
+
+/** True when Grace has already put the one screening question to this caller. */
+export function screeningQuestionAsked(agentTexts: readonly string[]): boolean {
+  return agentTexts.some((text) => SCREENING_QUESTION.test(text));
+}
+
+/**
+ * Money owed, which is a reason to reach a person and is not a plumbing
+ * problem, so PROBLEM_WORDS does not carry it.
+ */
+const ABOUT_A_BILL = /\b(?:bill|billing|invoice|payment|charge|charged|account|owe|refund)\b/i;
+
+/**
+ * 2026-11-11, the full sweep (vendor-05): the screen asked its question, the
+ * caller answered "My water heater is leaking", and Grace asked for their
+ * name instead of transferring. The screen fires on the turn the caller asks
+ * for a person; on the turn they ANSWER, nothing fired at all, so only the
+ * prompt's own rule carried the transfer, and a prompt rule on its own does
+ * not hold on this model. That is the whole reason this module exists.
+ *
+ * `problemDescribed` is the same reading of "gave a reason" the screen
+ * itself uses, so a caller cannot be screened and then found to have no
+ * reason by a different standard.
+ */
+export function answerEarnsTransfer(
+  text: string,
+  problemDescribed: (texts: readonly string[]) => boolean,
+): boolean {
+  return problemDescribed([text]) || ABOUT_A_BILL.test(text);
+}
+
+export const TRANSFER_AFTER_SCREEN_NOTE =
+  "[you already asked this caller what they needed and they have just " +
+  "answered. They asked for a person and they have now given a reason. Call " +
+  "transferToHuman in THIS reply, with one short line like \"Sure, connecting " +
+  "you now.\" Do not ask anything else, do not take their name or address, " +
+  "and never say you cannot transfer them.]";

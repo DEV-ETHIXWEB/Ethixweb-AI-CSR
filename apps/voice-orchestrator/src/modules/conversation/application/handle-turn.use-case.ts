@@ -16,6 +16,9 @@ import {
   offersAddress,
   SCREEN_BEFORE_TRANSFER_NOTE,
   SOLICITATION_NOTE,
+  TRANSFER_AFTER_SCREEN_NOTE,
+  answerEarnsTransfer,
+  screeningQuestionAsked,
   upsetAndWantsAPerson,
 } from "../domain/caller-steering";
 import { collapseSpokenDigits } from "../domain/service-area";
@@ -833,9 +836,19 @@ export class HandleTurnUseCase {
       !hasUsableCustomer(conversation) &&
       // Asked once already: a second question would be the interrogation
       // the "do not ask anything first" rule exists to prevent.
-      !agentTextsSoFar.some((text) =>
-        /what (?:do you need|can i help|is going on|it'?s about)/i.test(text),
-      );
+      !screeningQuestionAsked(agentTextsSoFar);
+    // See TRANSFER_AFTER_SCREEN_NOTE: the turn the caller ANSWERS the screen.
+    // Everything above still outranks it, and a sales pitch answering the
+    // screen is still declined rather than put through.
+    const transferAfterScreen =
+      !inDanger &&
+      !gasLeak &&
+      !soliciting &&
+      !upsetWantsPerson &&
+      !screenBeforeTransfer &&
+      callerTextsSoFar.some((text) => asksForAPerson(text)) &&
+      screeningQuestionAsked(agentTextsSoFar) &&
+      answerEarnsTransfer(command.transcript, problemDescribed);
     // See missed-callback.ts. Ranked under danger and gas only: a caller the
     // business already let down is the call most likely to become a bad
     // review, and the apology has to land before any question.
@@ -875,6 +888,7 @@ export class HandleTurnUseCase {
       upsetWantsPerson ||
       soliciting ||
       screenBeforeTransfer ||
+      transferAfterScreen ||
       nameDeclinedNow ||
       gracesNameAsked ||
       addressOffered ||
@@ -910,6 +924,8 @@ export class HandleTurnUseCase {
       annotatedTranscript = `${SOLICITATION_NOTE} ${annotatedTranscript}`;
     } else if (screenBeforeTransfer) {
       annotatedTranscript = `${SCREEN_BEFORE_TRANSFER_NOTE} ${annotatedTranscript}`;
+    } else if (transferAfterScreen) {
+      annotatedTranscript = `${TRANSFER_AFTER_SCREEN_NOTE} ${annotatedTranscript}`;
     } else if (nameDeclinedNow) {
       annotatedTranscript = `${NAME_DECLINED_NOTE} ${annotatedTranscript}`;
     } else if (gracesNameAsked) {

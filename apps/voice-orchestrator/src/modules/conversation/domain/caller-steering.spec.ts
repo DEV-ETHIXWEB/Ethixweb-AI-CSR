@@ -1,5 +1,9 @@
+import { problemDescribed } from "./save-readiness";
 import {
+  answerEarnsTransfer,
   asksForAPerson,
+  screeningQuestionAsked,
+  TRANSFER_AFTER_SCREEN_NOTE,
   asksGracesName,
   declinedTheirName,
   looksLikeSolicitation,
@@ -157,5 +161,44 @@ describe("what Grace is told in each case", () => {
   it("declines a pitch without transferring it or filing it", () => {
     expect(SOLICITATION_NOTE).toContain("Do not transfer and do not save a request");
     expect(SOLICITATION_NOTE).toContain("never rude");
+  });
+});
+
+/**
+ * 2026-11-11, the full sweep (vendor-05): the screen asked its question, the
+ * caller said "My water heater is leaking", and Grace asked for their name
+ * instead of transferring. The screen only ever fired on the turn the caller
+ * ASKED for a person; the turn they answered had no note at all.
+ */
+describe("the turn the caller answers the screen", () => {
+  const earns = (said: string) => answerEarnsTransfer(said, problemDescribed);
+
+  it.each([
+    "My water heater is leaking.",
+    "I need someone to look at a blocked drain.",
+    "It's about an appointment I had on Tuesday.",
+    "I want to query a bill I was charged for.",
+    "Nobody came out last week.",
+  ])("earns the transfer: %p", (said) => {
+    expect(earns(said)).toBe(true);
+  });
+
+  it.each([
+    "I'd rather not say.",
+    "It's a personal matter.",
+  ])("does not earn it: %p", (said) => {
+    expect(earns(said)).toBe(false);
+  });
+
+  it("recognises the screening question Grace was told to ask", () => {
+    expect(screeningQuestionAsked(["Sure. What's going on with your plumbing?"])).toBe(true);
+    expect(screeningQuestionAsked(["What do you need help with?"])).toBe(true);
+    expect(screeningQuestionAsked(["Can I get your name?"])).toBe(false);
+  });
+
+  it("tells Grace to transfer on that turn and take nothing else", () => {
+    expect(TRANSFER_AFTER_SCREEN_NOTE).toContain("transferToHuman in THIS reply");
+    expect(TRANSFER_AFTER_SCREEN_NOTE).toContain("do not take their name");
+    expect(TRANSFER_AFTER_SCREEN_NOTE).toContain("never say you cannot transfer");
   });
 });
