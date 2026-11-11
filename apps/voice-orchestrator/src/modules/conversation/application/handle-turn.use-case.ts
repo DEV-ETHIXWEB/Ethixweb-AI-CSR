@@ -20,7 +20,7 @@ import {
   TRANSFER_AFTER_SCREEN_NOTE,
   TRANSFER_NOW_NOTE,
   answerEarnsTransfer,
-  screeningQuestionAsked,
+  screenedSinceAskingForAPerson,
   upsetAndWantsAPerson,
 } from "../domain/caller-steering";
 import { collapseSpokenDigits } from "../domain/service-area";
@@ -850,7 +850,7 @@ export class HandleTurnUseCase {
       // whether a record exists: on file or not, one question comes first.
       // Asked once already: a second question would be the interrogation
       // the "do not ask anything first" rule exists to prevent.
-      !screeningQuestionAsked(agentTextsSoFar);
+      !screenedSinceAskingForAPerson(transcriptTurns);
     // See TRANSFER_AFTER_SCREEN_NOTE: the turn the caller ANSWERS the screen.
     // Everything above still outranks it, and a sales pitch answering the
     // screen is still declined rather than put through.
@@ -861,7 +861,7 @@ export class HandleTurnUseCase {
       !upsetWantsPerson &&
       !screenBeforeTransfer &&
       callerTextsSoFar.some((text) => asksForAPerson(text)) &&
-      screeningQuestionAsked(agentTextsSoFar) &&
+      screenedSinceAskingForAPerson(transcriptTurns) &&
       answerEarnsTransfer(command.transcript, problemDescribed);
     // See TRANSFER_NOW_NOTE: the other half of the screen. A request for a
     // person that the screen deliberately does not apply to is transferred

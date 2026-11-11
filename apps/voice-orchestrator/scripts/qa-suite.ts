@@ -2795,6 +2795,49 @@ const SCREEN1111_SCENARIOS: Scenario[] = [
     ],
   },
   {
+    // 2026-11-11, Akash's live call, word for word: a name and an address,
+    // no reason, then a polite "can you just connect me". Went straight
+    // through on v62.
+    id: "screen1111-09-name-given-no-reason-asks-why",
+    category: "screen1111",
+    turns: [
+      "my name is michael",
+      "m i c h e l",
+      "so my street address is c tech near office london i'm just next to your company",
+      "can i can can you just connect me to the human please",
+    ],
+    checks: [
+      neverCallsTool("transferToHuman"),
+      custom("asks what they need on the last turn", (ctx) => {
+        const last = ctx.agentTurns[ctx.agentTurns.length - 1] ?? "";
+        return /\?/.test(last) && /\b(what|help|about|need|calling)\b/i.test(last)
+          ? null
+          : `did not ask why: "${last}"`;
+      }),
+    ],
+  },
+  {
+    // ...and on the answer, they are put through.
+    id: "screen1111-10-name-given-then-reason-transfers",
+    category: "screen1111",
+    turns: [
+      "my name is michael",
+      "can you just connect me to the human please",
+      "it's about the water heater you installed last month, it's making a noise",
+    ],
+    checks: [callsTool("transferToHuman")],
+  },
+  {
+    // Asking WHAT Grace is is not asking to be put through.
+    id: "screen1111-11-are-you-a-real-person",
+    category: "screen1111",
+    turns: ["are you a real person?"],
+    checks: [
+      neverCallsTool("transferToHuman"),
+      saysSomewhere("answers honestly", /\b(ai|virtual|automated)\b/),
+    ],
+  },
+  {
     id: "screen1111-02-answers-then-transfers",
     category: "screen1111",
     turns: [

@@ -721,6 +721,27 @@ describe("HandleTurnUseCase", () => {
         expect(content).toContain("Ask ONE short");
       });
 
+      it("an ordinary intake question earlier does not count as the screen", async () => {
+        const repository = new FakeConversationRepository();
+        repository.seed(
+          baseConversation({
+            transcript: said([
+              ["caller", "my name is michael"],
+              ["agent", "Nice to meet you, Michael. What's going on with the plumbing?"],
+              ["caller", "m i c h e l"],
+              ["agent", "Sorry, could you tell me what's going on with your plumbing?"],
+            ]),
+          }),
+        );
+        const aiProvider = new FakeAiProvider();
+        const { useCase } = buildUseCase({ aiProvider, repository });
+        await useCase.execute(baseCommand({ transcript: ask }));
+        const content = (aiProvider.requests[0]?.messages ?? [])
+          .map((message) => (typeof message.content === "string" ? message.content : ""))
+          .join("\n");
+        expect(content).toContain("Ask ONE short");
+      });
+
       it("still transfers at once when they insist", async () => {
         const content = await annotationFor(
           { customerId: "cust-1", customerDetailsOnFile: true },

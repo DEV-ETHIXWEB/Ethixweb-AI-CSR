@@ -195,6 +195,27 @@ export function screeningQuestionAsked(agentTexts: readonly string[]): boolean {
 }
 
 /**
+ * The screen is the question asked IN REPLY to a request for a person.
+ * QA screen1111-09: an ordinary intake "what's going on with the plumbing?"
+ * earlier in the call counted as the screen, so a later bare "connect me
+ * to the human" went straight through.
+ */
+export function screenedSinceAskingForAPerson(
+  turns: ReadonlyArray<{ speaker: string; text: string }>,
+): boolean {
+  const askedAt = turns.findIndex((turn) => turn.speaker === "caller" && asksForAPerson(turn.text));
+  return (
+    askedAt >= 0 &&
+    screeningQuestionAsked(
+      turns
+        .slice(askedAt + 1)
+        .filter((turn) => turn.speaker === "agent")
+        .map((turn) => turn.text),
+    )
+  );
+}
+
+/**
  * Money owed, which is a reason to reach a person and is not a plumbing
  * problem, so PROBLEM_WORDS does not carry it.
  */

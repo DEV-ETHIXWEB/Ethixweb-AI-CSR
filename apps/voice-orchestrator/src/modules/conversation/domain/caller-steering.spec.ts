@@ -5,9 +5,11 @@ import {
   TRANSFER_NOW_NOTE,
   asksForAPerson,
   screeningQuestionAsked,
+  screenedSinceAskingForAPerson,
   TRANSFER_AFTER_SCREEN_NOTE,
   asksGracesName,
   cannotHearGrace,
+  nameCallerGreetedHerWith,
   declinedTheirName,
   looksLikeSolicitation,
   offersAddress,
@@ -140,6 +142,33 @@ describe("a polite request with 'just' in it", () => {
   ])("is screened, not read as insistent: %p", (said) => {
     expect(asksForAPerson(said)).toBe(true);
     expect(insistsOnAPerson(said)).toBe(false);
+  });
+});
+
+// QA screen1111-09 on the real model: Grace's ordinary intake question
+// ("what's going on with the plumbing?") was counted as the screen, so a
+// later bare request for a person went straight through.
+describe("screenedSinceAskingForAPerson", () => {
+  const turn = (speaker: "caller" | "agent", text: string) => ({ speaker, text });
+  it("an intake question before any request for a person is not the screen", () => {
+    expect(
+      screenedSinceAskingForAPerson([
+        turn("caller", "my name is michael"),
+        turn("agent", "Nice to meet you, Michael. What's going on with the plumbing?"),
+        turn("caller", "m i c h e l"),
+      ]),
+    ).toBe(false);
+  });
+  it("the question asked after the request is the screen", () => {
+    expect(
+      screenedSinceAskingForAPerson([
+        turn("caller", "can you connect me to a human"),
+        turn("agent", "Sure, what's it about?"),
+      ]),
+    ).toBe(true);
+  });
+  it("with no request for a person there is no screen", () => {
+    expect(screenedSinceAskingForAPerson([turn("agent", "How can I help?")])).toBe(false);
   });
 });
 
